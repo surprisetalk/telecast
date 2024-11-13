@@ -151,7 +151,7 @@
         const searchValue = document.getElementById("search").value;
         try {
           const response = await fetch(
-            `https://telecast.pages.dev/search?q=${encodeURIComponent(searchValue)}`,
+            `/search?q=${encodeURIComponent(searchValue)}`,
           );
           if (!response.ok) {
             throw new Error(`Search failed: ${response.status}`);

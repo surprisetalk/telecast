@@ -19,9 +19,7 @@ export async function onRequest({ request, env }) {
     const hash = await crypto.subtle
       .digest(
         "SHA-1",
-        new TextEncoder().encode(
-          env.PODCAST_API_KEY + env.PODCAST_API_SECRET + time,
-        ),
+        new TextEncoder().encode(env.PI_KEY + env.PI_SECRET + time),
       )
       .then((buf) =>
         Array.from(new Uint8Array(buf))
@@ -34,7 +32,7 @@ export async function onRequest({ request, env }) {
       {
         headers: {
           "X-Auth-Date": time.toString(),
-          "X-Auth-Key": env.PODCAST_API_KEY,
+          "X-Auth-Key": env.PI_KEY,
           Authorization: hash,
           "User-Agent": "Telecast/1.0",
         },
