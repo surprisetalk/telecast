@@ -3,208 +3,170 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>telecast</title>
+    <title>Video Explorer</title>
     <style>
-      body {
-        margin: 0;
-        padding: 20px;
-        font-family:
-          system-ui,
-          -apple-system,
-          sans-serif;
-      }
-
-      #app {
-        display: grid;
-        grid-template-columns: 1fr 1fr 2fr;
-        gap: 20px;
-        height: 100vh;
-      }
-
       .flex-rows {
         display: flex;
         flex-direction: column;
-        gap: 10px;
+        gap: 1rem;
       }
-
-      .flex-cols {
-        display: flex;
-        flex-direction: row;
-        gap: 10px;
-        align-items: center;
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 1rem;
       }
-
-      .search-form {
-        padding: 10px;
-        background: #f5f5f5;
-        border-radius: 8px;
-      }
-
-      .channel,
-      .episode {
-        display: flex;
-        padding: 10px;
-        text-decoration: none;
-        color: inherit;
-        background: #fff;
+      .card {
         border: 1px solid #ddd;
         border-radius: 8px;
+        padding: 0.5rem;
         cursor: pointer;
       }
-
-      .channel:hover,
-      .episode:hover {
-        background: #f0f0f0;
+      .card:hover {
+        transform: translateY(-2px);
       }
-
       .thumbnail {
-        width: 120px;
-        height: 67px;
+        width: 100%;
+        aspect-ratio: 16/9;
         object-fit: cover;
         border-radius: 4px;
       }
-
-      .episode .thumbnail {
-        width: 160px;
-        height: 90px;
+      #watch {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        right: 0;
+        background: #fff;
+        padding: 1rem;
+        border-top: 1px solid #ddd;
+        display: none;
       }
-
+      #watch.active {
+        display: block;
+      }
+      video {
+        width: 100%;
+        max-height: 70vh;
+      }
       button {
-        padding: 8px 16px;
+        padding: 0.5rem 1rem;
+        background: #007bff;
+        color: white;
         border: none;
         border-radius: 4px;
-        background: #0070f3;
-        color: white;
-        cursor: pointer;
       }
-
-      button:hover {
-        background: #0051a2;
-      }
-
       input {
-        padding: 8px;
+        flex: 1;
+        padding: 0.5rem;
         border: 1px solid #ddd;
         border-radius: 4px;
       }
-
-      #watch video {
-        width: 100%;
-        max-height: 70vh;
-        border-radius: 8px;
+      .search-bar {
+        display: flex;
+        gap: 1rem;
       }
     </style>
   </head>
   <body>
-    <div id="app">
+    <div id="app" class="flex-rows">
       <div class="flex-rows">
-        <form class="search-form flex-cols" onsubmit="handleSearch(event)">
-          <button type="button" onclick="clearSearch()">Clear Search</button>
-          <input type="text" id="search" placeholder="Search channels..." />
-          <button type="submit">Search</button>
-        </form>
-        <div id="channels" class="flex-rows"></div>
+        <div class="search-bar">
+          <button id="back" style="display: none">←</button>
+          <input id="search" placeholder="Search..." />
+          <button id="search-btn">Search</button>
+        </div>
+        <div id="channels" class="grid"></div>
+        <div id="episodes" class="grid"></div>
       </div>
-      <div id="episodes" class="flex-rows"></div>
-      <div id="watch" class="flex-rows"></div>
+      <div id="watch">
+        <video id="player" controls></video>
+      </div>
     </div>
 
     <script>
-      const FeedStorage = {
-        get: () => {
-          const feed = localStorage.getItem("feed");
-          return feed ? JSON.parse(feed) : { channels: [] };
+      const app = {
+        init() {
+          this.elements = {
+            back: document.getElementById("back"),
+            search: document.getElementById("search"),
+            searchBtn: document.getElementById("search-btn"),
+            channels: document.getElementById("channels"),
+            episodes: document.getElementById("episodes"),
+            watch: document.getElementById("watch"),
+            player: document.getElementById("player"),
+          };
+
+          this.elements.searchBtn.onclick = () => this.handleSearch();
+          this.elements.search.onkeyup = (e) =>
+            e.key === "Enter" && this.handleSearch();
+          this.elements.back.onclick = () => this.handleBack();
         },
-        save: (feed) => {
-          localStorage.setItem("feed", JSON.stringify(feed));
+
+        async handleSearch() {
+          const query = this.elements.search.value.trim();
+          if (!query) return;
+
+          const feeds = await fetch(
+            `/search?q=${encodeURIComponent(query)}`,
+          ).then((r) => r.json());
+          this.renderChannels(feeds);
+          this.elements.back.style.display = "block";
+          this.elements.episodes.innerHTML = "";
+        },
+
+        async handleFeed(id) {
+          const episodes = await fetch(`/episodes?id=${id}`).then((r) =>
+            r.json(),
+          );
+          this.renderEpisodes(episodes);
+          this.elements.channels.innerHTML = "";
+        },
+
+        handlePlay(episode) {
+          this.elements.watch.classList.add("active");
+          this.elements.player.src = episode.src;
+          this.elements.player.play();
+        },
+
+        handleBack() {
+          if (this.elements.episodes.innerHTML) {
+            this.elements.episodes.innerHTML = "";
+            this.elements.channels.innerHTML = this.lastChannels;
+          } else {
+            this.elements.search.value = "";
+            this.elements.channels.innerHTML = "";
+            this.elements.back.style.display = "none";
+          }
+        },
+
+        renderChannels(feeds) {
+          this.lastChannels = feeds
+            .map(
+              (feed) => `
+                    <div class="card" onclick="app.handleFeed(${feed.id})">
+                        <img class="thumbnail" src="${feed.thumbnail}" alt="">
+                        <div>${feed.title}</div>
+                    </div>
+                `,
+            )
+            .join("");
+          this.elements.channels.innerHTML = this.lastChannels;
+        },
+
+        renderEpisodes(episodes) {
+          this.elements.episodes.innerHTML = episodes
+            .map(
+              (episode) => `
+                    <div class="card" onclick='app.handlePlay(${JSON.stringify(episode).replace(/"/g, "&quot;")})'>
+                        <img class="thumbnail" src="${episode.thumbnail}" alt="">
+                        <div>${episode.title}</div>
+                    </div>
+                `,
+            )
+            .join("");
         },
       };
 
-      const Channel = ({ thumbnail, title, id, episodes }) => `
-            <a class="channel flex-cols" onclick="showEpisodes(${JSON.stringify({ thumbnail, title, id, episodes })})">
-                <img class="thumbnail" src="${thumbnail}" alt="${title}">
-                <p>${title}</p>
-            </a>
-        `;
-
-      const Episode = ({ thumbnail, title, id, src }) => `
-            <a class="episode flex-rows" onclick="showWatch(${JSON.stringify({ title, src })})">
-                <img class="thumbnail" src="${thumbnail}" alt="${title}">
-                <p>${title}</p>
-            </a>
-        `;
-
-      const Watch = ({ title, src }) => `
-            <video controls src="${src}"></video>
-            <p>${title}</p>
-        `;
-
-      function clearSearch() {
-        const feed = FeedStorage.get();
-        document.getElementById("channels").innerHTML = feed.channels
-          .map((channel) => Channel(channel))
-          .join("");
-      }
-
-      async function handleSearch(event) {
-        event.preventDefault();
-        const searchValue = document.getElementById("search").value;
-        try {
-          const response = await fetch(
-            `/search?q=${encodeURIComponent(searchValue)}`,
-          );
-          if (!response.ok) {
-            throw new Error(`Search failed: ${response.status}`);
-          }
-          const channels = await response.json();
-          document.getElementById("channels").innerHTML = channels
-            .map((channel) => Channel(channel))
-            .join("");
-        } catch (error) {
-          console.error("Search failed:", error);
-          // You might want to show an error message to the user here
-          document.getElementById("channels").innerHTML = `
-            <div class="error">
-                Search failed. Please try again later.
-            </div>
-        `;
-        }
-      }
-
-      function showEpisodes(channel) {
-        document.getElementById("episodes").innerHTML = `
-                <div class="flex-rows">
-                    <div class="flex-cols">
-                        <p>${channel.title}</p>
-                        <button onclick="saveChannel(${JSON.stringify(channel)})">Save</button>
-                        <button onclick="removeChannel(${JSON.stringify(channel)})">Remove</button>
-                    </div>
-                    <div class="flex-rows">
-                        ${channel.episodes.map((episode) => Episode(episode)).join("")}
-                    </div>
-                </div>
-            `;
-      }
-
-      function showWatch(episode) {
-        document.getElementById("watch").innerHTML = Watch(episode);
-      }
-
-      function saveChannel(channel) {
-        const feed = FeedStorage.get();
-        if (!feed.channels.some((c) => c.id === channel.id)) {
-          feed.channels.push(channel);
-          FeedStorage.save(feed);
-        }
-      }
-
-      function removeChannel(channel) {
-        const feed = FeedStorage.get();
-        feed.channels = feed.channels.filter((c) => c.id !== channel.id);
-        FeedStorage.save(feed);
-      }
-
-      clearSearch();
+      app.init();
     </script>
   </body>
 </html>
