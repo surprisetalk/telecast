@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Telecasts</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="elm.js"></script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+      // Initialize Elm application
+      const app = Elm.Main.init({
+        node: document.getElementById("app"),
+      });
+
+      // Local Storage Keys
+      const CHANNELS_KEY = "telecasts_channels";
+      const EPISODES_KEY = "telecasts_episodes";
+
+      // Port: Save channel to subscriptions
+      app.ports.saveToLocalStorageChannels.subscribe((channel) => {
+        try {
+          const channels = JSON.parse(
+            localStorage.getItem(CHANNELS_KEY) || "[]",
+          );
+          channels.push(channel);
+          localStorage.setItem(CHANNELS_KEY, JSON.stringify(channels));
+          // Send updated subscriptions back to Elm
+          app.ports.subsLoaded.send(channels);
+        } catch (error) {
+          console.error("Error saving channel:", error);
+        }
+      });
+
+      // Port: Remove channel from subscriptions
+      app.ports.removeFromLocalStorageChannels.subscribe((channel) => {
+        try {
+          const channels = JSON.parse(
+            localStorage.getItem(CHANNELS_KEY) || "[]",
+          );
+          const updatedChannels = channels.filter(
+            (ch) => ch.rss !== channel.rss,
+          );
+          localStorage.setItem(CHANNELS_KEY, JSON.stringify(updatedChannels));
+          // Send updated subscriptions back to Elm
+          app.ports.subsLoaded.send(updatedChannels);
+        } catch (error) {
+          console.error("Error removing channel:", error);
+        }
+      });
+
+      // Port: Save episodes for a channel
+      app.ports.saveToLocalStorageEpisodes.subscribe(({ sub, feed }) => {
+        try {
+          const episodesMap = JSON.parse(
+            localStorage.getItem(EPISODES_KEY) || "{}",
+          );
+          episodesMap[sub.rss] = feed.episodes;
+          localStorage.setItem(EPISODES_KEY, JSON.stringify(episodesMap));
+        } catch (error) {
+          console.error("Error saving episodes:", error);
+        }
+      });
+
+      // Load initial subscriptions
+      try {
+        const channels = JSON.parse(localStorage.getItem(CHANNELS_KEY) || "[]");
+        app.ports.subsLoaded.send(channels);
+      } catch (error) {
+        console.error("Error loading initial subscriptions:", error);
+        app.ports.subsLoaded.send([]);
+      }
+    </script>
+  </body>
+</html>

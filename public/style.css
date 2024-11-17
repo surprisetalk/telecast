@@ -1,0 +1,28 @@
+body {
+  background-color: #f4f1ea;
+  font-family: Georgia, serif;
+}
+
+main > div {
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+  overflow-y: auto;
+}
+
+.rows {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.cols {
+  display: flex;
+  flex-direction: row;
+  gap: 1rem;
+  align-items: center;
+}
+
+img,
+video {
+  border-radius: 8px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
