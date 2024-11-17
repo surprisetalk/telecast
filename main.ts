@@ -18,17 +18,17 @@ const app = new Hono();
 
 app.use("/*", cors());
 
+// https://yt3.googleusercontent.com/ytc/UC9-y-6csu5WGm29I7JiwpnA
+
 const youtubeChannels = [
   {
     title: "TED",
-    thumbnail:
-      "https://yt3.googleusercontent.com/ytc/APkrFKZNjxqGx5PsxZUz-E2qv_qaNvWpMa8JYkonRDnc=s176-c-k-c0x00ffffff-no-rj",
+    thumbnail: "/yt.png",
     rss: "https://www.youtube.com/feeds/videos.xml?channel_id=UCAuUUnT6oDeKwE6v1NGQxug",
   },
   {
     title: "Computerphile",
-    thumbnail:
-      "https://yt3.googleusercontent.com/ytc/APkrFKYn4oEHiJnEjSatn6CkOz_BpUTkrtEiWezNn3QTTA=s176-c-k-c0x00ffffff-no-rj",
+    thumbnail: "/yt.png",
     rss: "https://www.youtube.com/feeds/videos.xml?channel_id=UC9-y-6csu5WGm29I7JiwpnA",
   },
 ];

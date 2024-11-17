@@ -6,7 +6,7 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Http
 import Json.Decode as D
-import Task
+import Rss exposing (Feed)
 import Url
 
 
@@ -14,16 +14,16 @@ import Url
 -- PORTS
 
 
-port saveToLocalStorageChannels : Channel -> Cmd msg
+port saveToLocalStorageChannels : Feed -> Cmd msg
 
 
-port removeFromLocalStorageChannels : Channel -> Cmd msg
+port removeFromLocalStorageChannels : Feed -> Cmd msg
 
 
-port saveToLocalStorageEpisodes : { sub : Channel, feed : Feed } -> Cmd msg
+port saveToLocalStorageEpisodes : Feed -> Cmd msg
 
 
-port subsLoaded : (List Channel -> msg) -> Sub msg
+port subsLoaded : (List Feed -> msg) -> Sub msg
 
 
 
@@ -45,12 +45,12 @@ main =
 
 
 type alias Model =
-    { query : String
+    { errors : List String
+    , query : String
     , channels : List Channel
-    , episodes : List Episode
-    , channel : Maybe Channel
+    , feed : Maybe Feed
     , episode : Maybe Episode
-    , subs : List Channel
+    , subs : List Feed
     }
 
 
@@ -71,10 +71,10 @@ type alias Episode =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { query = ""
+    ( { errors = []
+      , query = ""
       , channels = []
-      , episodes = []
-      , channel = Nothing
+      , feed = Nothing
       , episode = Nothing
       , subs = []
       }
@@ -91,11 +91,12 @@ type Msg
     | SearchSubmitting
     | ChannelsFetched (Result Http.Error (List Channel))
     | ChannelClicking Channel
-    | ChannelFetched (Result Http.Error Feed)
+    | FeedClicking Feed
+    | ChannelFetched (Result Http.Error String)
     | EpisodeClicking Episode
-    | ChannelSubbing Channel
-    | ChannelUnsubbing Channel
-    | SubsLoaded (List Channel)
+    | ChannelSubbing Feed
+    | ChannelUnsubbing Feed
+    | SubsLoaded (List Feed)
     | SubFetching Channel
     | SubFetched Channel (Result Http.Error Feed)
 
@@ -107,7 +108,7 @@ update msg model =
             ( { model | query = query }, Cmd.none )
 
         SearchSubmitting ->
-            ( { model | channels = [], episodes = [] }
+            ( { model | channels = [], feed = Nothing }
             , Http.get
                 { url = "/api/channels?q=" ++ model.query
                 , expect = Http.expectJson ChannelsFetched channelsDecoder
@@ -115,30 +116,38 @@ update msg model =
             )
 
         ChannelsFetched (Ok channels) ->
-            ( { model | channels = channels, episodes = [] }, Cmd.none )
+            ( { model | channels = channels, feed = Nothing }, Cmd.none )
 
-        ChannelsFetched (Err _) ->
-            ( model, Cmd.none )
+        ChannelsFetched (Err err) ->
+            ( { model | errors = Debug.toString err :: model.errors }, Cmd.none )
 
         ChannelClicking channel ->
-            ( { model | channel = Just channel, episodes = [] }
+            ( { model | feed = Nothing }
             , Http.get
                 { url = "/api/proxy/rss?url=" ++ Url.percentEncode channel.rss
-                , expect = Http.expectJson ChannelFetched feedDecoder
+                , expect = Http.expectString ChannelFetched
                 }
             )
 
-        ChannelFetched (Ok feed) ->
-            ( { model | episodes = feed.episodes }, Cmd.none )
+        FeedClicking feed ->
+            ( { model | feed = Just feed }, Cmd.none )
 
-        ChannelFetched (Err _) ->
-            ( model, Cmd.none )
+        ChannelFetched (Ok xml) ->
+            case Rss.decodeFeed xml of
+                Ok feed ->
+                    ( { model | feed = Just feed }, Cmd.none )
+
+                Err err ->
+                    ( { model | errors = err :: model.errors }, Cmd.none )
+
+        ChannelFetched (Err err) ->
+            ( { model | errors = Debug.toString err :: model.errors }, Cmd.none )
 
         EpisodeClicking episode ->
             ( { model | episode = Just episode }, Cmd.none )
 
-        ChannelSubbing channel ->
-            ( model, saveToLocalStorageChannels channel )
+        ChannelSubbing feed ->
+            ( model, saveToLocalStorageChannels feed )
 
         ChannelUnsubbing channel ->
             ( model, removeFromLocalStorageChannels channel )
@@ -150,12 +159,12 @@ update msg model =
             ( model
             , Http.get
                 { url = "/api/proxy/rss?url=" ++ Url.percentEncode channel.rss
-                , expect = Http.expectJson ChannelFetched feedDecoder
+                , expect = Http.expectString ChannelFetched
                 }
             )
 
         SubFetched channel (Ok feed) ->
-            ( model, saveToLocalStorageEpisodes { sub = channel, feed = feed } )
+            ( model, saveToLocalStorageEpisodes feed )
 
         SubFetched _ (Err _) ->
             ( model, Cmd.none )
@@ -176,11 +185,19 @@ subscriptions _ =
 
 view : Model -> Html Msg
 view model =
-    main_ []
-        [ viewChannels model
-        , viewChannel model
-        , viewEpisode model
+    div []
+        [ viewErrors model
+        , main_ []
+            [ viewChannels model
+            , viewFeed model
+            , viewEpisode model
+            ]
         ]
+
+
+viewErrors : Model -> Html Msg
+viewErrors model =
+    model.errors |> List.map (\err -> p [] [ text err ]) |> div []
 
 
 viewChannels : Model -> Html Msg
@@ -198,7 +215,7 @@ viewChannels model =
                 , button [] [ text "search" ]
                 ]
             , div [] (List.map viewChannelButton model.channels)
-            , div [] (List.map viewChannelButton model.subs)
+            , div [] (List.map viewFeedButton model.subs)
             ]
         ]
 
@@ -214,28 +231,39 @@ viewChannelButton channel =
         ]
 
 
-viewChannel : Model -> Html Msg
-viewChannel model =
+viewFeedButton : Feed -> Html Msg
+viewFeedButton feed =
+    button
+        [ class "cols"
+        , onClick (FeedClicking feed)
+        ]
+        [ img [ src feed.thumbnail ] []
+        , p [] [ text feed.title ]
+        ]
+
+
+viewFeed : Model -> Html Msg
+viewFeed model =
     div [ class "rows", id "channel" ] <|
-        case model.channel of
+        case model.feed of
             Nothing ->
                 []
 
-            Just channel ->
+            Just feed ->
                 [ div [ class "rows" ]
                     [ div [ class "cols" ]
-                        [ img [ src channel.thumbnail ] []
-                        , h2 [] [ text channel.title ]
+                        [ img [ src feed.thumbnail ] []
+                        , h2 [] [ text feed.title ]
                         ]
-                    , if List.member channel model.subs then
-                        button [ onClick (ChannelUnsubbing channel) ]
+                    , if List.member feed model.subs then
+                        button [ onClick (ChannelUnsubbing feed) ]
                             [ text "unsubscribe" ]
 
                       else
-                        button [ onClick (ChannelSubbing channel) ]
+                        button [ onClick (ChannelSubbing feed) ]
                             [ text "subscribe" ]
                     ]
-                , div [] (List.map viewEpisodeButton model.episodes)
+                , div [] (List.map viewEpisodeButton (Maybe.withDefault [] <| Maybe.map .episodes model.feed))
                 ]
 
 
@@ -259,7 +287,16 @@ viewEpisode model =
 
             Just episode ->
                 [ div [ class "rows" ]
-                    [ video [ src episode.src ] []
+                    [ iframe
+                        [ src episode.src
+                        , width 640
+                        , height 360
+                        , attribute "frameborder" "0"
+                        , attribute "allow" "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                        , attribute "allowfullscreen" "true"
+                        , attribute "loading" "lazy"
+                        ]
+                        []
                     , div [ class "rows" ]
                         [ h3 [] [ text episode.title ]
                         , p [] [ text episode.description ]
@@ -279,24 +316,4 @@ channelsDecoder =
             (D.field "title" D.string)
             (D.field "thumbnail" D.string)
             (D.field "rss" D.string)
-        )
-
-
-type alias Feed =
-    { episodes : List Episode
-    }
-
-
-feedDecoder : D.Decoder Feed
-feedDecoder =
-    D.map Feed
-        (D.field "episodes"
-            (D.list
-                (D.map4 Episode
-                    (D.field "title" D.string)
-                    (D.field "thumbnail" D.string)
-                    (D.field "src" D.string)
-                    (D.field "description" D.string)
-                )
-            )
         )
