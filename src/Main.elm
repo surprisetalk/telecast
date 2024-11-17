@@ -109,7 +109,7 @@ update msg model =
         SearchSubmitting ->
             ( { model | channels = [], episodes = [] }
             , Http.get
-                { url = "/channels?q=" ++ model.query
+                { url = "/api/channels?q=" ++ model.query
                 , expect = Http.expectJson ChannelsFetched channelsDecoder
                 }
             )
