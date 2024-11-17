@@ -60,6 +60,19 @@ async function fetchPodcasts(query: string) {
   }
 }
 
+app.get("/proxy/rss", async (c) => {
+  const url = c.req.query("url");
+  if (!url) return c.json({ error: "URL parameter is required" }, 400);
+  const response = await fetch(url);
+  const text = await response.text();
+  return new Response(text, {
+    headers: {
+      "Content-Type": "application/xml",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+});
+
 app.get("/channels", async (c) => {
   const query = c.req.query("q")?.toLowerCase() || "";
   return c.json([

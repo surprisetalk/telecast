@@ -6,8 +6,8 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Http
 import Json.Decode as D
-import Set exposing (Set)
 import Task
+import Url
 
 
 
@@ -123,7 +123,7 @@ update msg model =
         ChannelClicking channel ->
             ( { model | channel = Just channel, episodes = [] }
             , Http.get
-                { url = channel.rss
+                { url = "/api/proxy/rss?url=" ++ Url.percentEncode channel.rss
                 , expect = Http.expectJson ChannelFetched feedDecoder
                 }
             )
@@ -149,8 +149,8 @@ update msg model =
         SubFetching channel ->
             ( model
             , Http.get
-                { url = channel.rss
-                , expect = Http.expectJson (SubFetched channel) feedDecoder
+                { url = "/api/proxy/rss?url=" ++ Url.percentEncode channel.rss
+                , expect = Http.expectJson ChannelFetched feedDecoder
                 }
             )
 
