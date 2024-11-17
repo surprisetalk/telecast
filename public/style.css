@@ -1,4 +1,3 @@
-/* Base styles */
 body {
   background-color: #121212;
   font-family: Georgia, serif;
@@ -9,7 +8,6 @@ body {
   color: #e0e0e0;
 }
 
-/* Main layout */
 main {
   display: grid;
   grid-template-columns: 300px 300px 1fr;
@@ -17,7 +15,6 @@ main {
   gap: 0;
 }
 
-/* Common section styles */
 main > div {
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.5);
   overflow-y: auto;
@@ -26,7 +23,6 @@ main > div {
   box-sizing: border-box;
 }
 
-/* Channels section */
 #channels {
   background-color: #1e1e1e;
   border-right: 1px solid #333;
@@ -67,7 +63,6 @@ main > div {
   cursor: pointer;
 }
 
-/* Channel details section */
 #channel {
   background-color: #1a1a1a;
 }
@@ -83,7 +78,6 @@ main > div {
   word-break: break-all;
 }
 
-/* Episode section */
 #episode {
   background-color: #1e1e1e;
 }
@@ -101,7 +95,6 @@ iframe {
   margin: 1rem 0;
 }
 
-/* Common components */
 .rows {
   display: flex;
   flex-direction: column;
@@ -115,7 +108,6 @@ iframe {
   align-items: center;
 }
 
-/* Media items */
 img,
 video,
 iframe {
@@ -124,7 +116,6 @@ iframe {
   background: black;
 }
 
-/* Channel and episode buttons */
 button {
   width: 100%;
   text-align: left;
@@ -159,7 +150,6 @@ button p {
   color: #e0e0e0;
 }
 
-/* Accent elements */
 a {
   color: #bb86fc;
   text-decoration: none;
@@ -169,19 +159,16 @@ a:hover {
   color: #9966ff;
 }
 
-/* Error messages */
 #channels > div:first-child {
   color: #cf6679;
   margin-bottom: 1rem;
 }
 
-/* Description text */
 p {
   line-height: 1.6;
   color: #bbb;
 }
 
-/* Responsive breakpoints */
 @media (max-width: 1200px) {
   main {
     grid-template-columns: 250px 250px 1fr;
