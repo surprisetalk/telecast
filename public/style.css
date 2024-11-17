@@ -12,7 +12,7 @@ body {
 /* Main layout */
 main {
   display: grid;
-  grid-template-columns: 300px 1fr 1fr;
+  grid-template-columns: 300px 300px 1fr;
   height: 100vh;
   gap: 0;
 }
@@ -24,24 +24,6 @@ main > div {
   padding: 1.5rem;
   height: 100vh;
   box-sizing: border-box;
-}
-
-/* Custom scrollbar for webkit browsers */
-::-webkit-scrollbar {
-  width: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #1e1e1e;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #333;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #444;
 }
 
 /* Channels section */
@@ -91,14 +73,14 @@ main > div {
 }
 
 #channel img {
-  width: 120px;
-  height: 120px;
+  width: 100%;
   object-fit: cover;
 }
 
 #channel h2 {
   color: #fff;
   margin: 0;
+  word-break: break-all;
 }
 
 /* Episode section */
@@ -106,7 +88,8 @@ main > div {
   background-color: #1e1e1e;
 }
 
-#episode video {
+#episode video,
+iframe {
   width: 100%;
   max-height: 400px;
   margin-bottom: 1rem;
@@ -134,7 +117,8 @@ main > div {
 
 /* Media items */
 img,
-video {
+video,
+iframe {
   border-radius: 8px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   background: black;
@@ -200,7 +184,7 @@ p {
 /* Responsive breakpoints */
 @media (max-width: 1200px) {
   main {
-    grid-template-columns: 250px 1fr 1fr;
+    grid-template-columns: 250px 250px 1fr;
   }
 }
 

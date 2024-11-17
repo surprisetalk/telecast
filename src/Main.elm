@@ -252,9 +252,10 @@ viewFeed model =
             Just feed ->
                 [ div [ class "rows" ]
                     [ div [ class "cols" ]
-                        [ img [ src feed.thumbnail ] []
-                        , h2 [] [ text feed.title ]
-                        ]
+                        -- [ img [ src feed.thumbnail ] []
+                        -- , h2 [] [ text feed.title ]
+                        -- ]
+                        [ h2 [] [ text feed.title ] ]
                     , if List.member feed model.subs then
                         button [ onClick (ChannelUnsubbing feed) ]
                             [ text "unsubscribe" ]
@@ -270,7 +271,7 @@ viewFeed model =
 viewEpisodeButton : Episode -> Html Msg
 viewEpisodeButton episode =
     button
-        [ class "cols"
+        [ class "rows"
         , onClick (EpisodeClicking episode)
         ]
         [ img [ src episode.thumbnail ] []

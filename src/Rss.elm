@@ -27,8 +27,9 @@ decodeFeed =
 feedDecoder : Decoder Feed
 feedDecoder =
     Decode.oneOf
-        [ youtubeFormatDecoder -- Try YouTube format first
-        , standardRssDecoder -- Fall back to standard RSS
+        [ youtubeFormatDecoder
+        , podcastRssDecoder
+        , standardRssDecoder
         ]
 
 
@@ -74,29 +75,102 @@ entryDecoder =
 
 
 
--- Standard RSS 2.0 Format
+-- Podcast RSS Format
+
+
+podcastRssDecoder : Decoder Feed
+podcastRssDecoder =
+    Decode.map4 Feed
+        -- Channel title
+        (Decode.path [ "channel", "title" ]
+            (Decode.single Decode.string)
+        )
+        -- Channel image (support both iTunes and standard RSS image)
+        (Decode.oneOf
+            [ Decode.path [ "channel", "itunes:image" ]
+                (Decode.single (Decode.stringAttr "href"))
+            , Decode.path [ "channel", "image", "url" ]
+                (Decode.single Decode.string)
+            , Decode.succeed "default-podcast.jpg"
+            ]
+        )
+        -- Channel link
+        (Decode.path [ "channel", "link" ]
+            (Decode.single Decode.string)
+        )
+        -- Items/episodes
+        (Decode.path [ "channel" ]
+            (Decode.single podcastItemsDecoder)
+        )
+
+
+podcastItemsDecoder : Decoder (List Episode)
+podcastItemsDecoder =
+    Decode.path [ "item" ]
+        (Decode.list podcastItemDecoder)
+
+
+podcastItemDecoder : Decoder Episode
+podcastItemDecoder =
+    Decode.map4 Episode
+        -- Title
+        (Decode.path [ "title" ]
+            (Decode.single Decode.string)
+        )
+        -- Episode image
+        (Decode.oneOf
+            [ Decode.path [ "itunes:image" ]
+                (Decode.single (Decode.stringAttr "href"))
+            , Decode.path [ "image", "url" ]
+                (Decode.single Decode.string)
+            , Decode.succeed "default-episode.jpg"
+            ]
+        )
+        -- Audio/Video source
+        (Decode.oneOf
+            [ Decode.path [ "enclosure" ]
+                (Decode.single (Decode.stringAttr "url"))
+            , Decode.path [ "media:content" ]
+                (Decode.single (Decode.stringAttr "url"))
+            , Decode.path [ "link" ]
+                (Decode.single Decode.string)
+            ]
+        )
+        -- Description (support both standard and iTunes descriptions)
+        (Decode.oneOf
+            [ Decode.path [ "description" ]
+                (Decode.single Decode.string)
+            , Decode.path [ "itunes:summary" ]
+                (Decode.single Decode.string)
+            , Decode.succeed ""
+            ]
+        )
+
+
+
+-- Standard RSS 2.0 Format (Fallback)
 
 
 standardRssDecoder : Decoder Feed
 standardRssDecoder =
     Decode.map4 Feed
         -- Channel title
-        (Decode.path [ "rss", "channel", "title" ]
+        (Decode.path [ "channel", "title" ]
             (Decode.single Decode.string)
         )
         -- Channel image
         (Decode.oneOf
-            [ Decode.path [ "rss", "channel", "image", "url" ]
+            [ Decode.path [ "channel", "image", "url" ]
                 (Decode.single Decode.string)
             , Decode.succeed "default-thumbnail.jpg"
             ]
         )
         -- Channel link
-        (Decode.path [ "rss", "channel", "link" ]
+        (Decode.path [ "channel", "link" ]
             (Decode.single Decode.string)
         )
         -- Items/episodes
-        (Decode.path [ "rss", "channel" ]
+        (Decode.path [ "channel" ]
             (Decode.single itemsDecoder)
         )
 
@@ -114,9 +188,7 @@ itemDecoder =
             (Decode.single Decode.string)
         )
         (Decode.oneOf
-            [ Decode.path [ "itunes:image" ]
-                (Decode.single (Decode.stringAttr "href"))
-            , Decode.path [ "image", "url" ]
+            [ Decode.path [ "image", "url" ]
                 (Decode.single Decode.string)
             , Decode.succeed "default-thumbnail.jpg"
             ]
@@ -132,8 +204,6 @@ itemDecoder =
         )
         (Decode.oneOf
             [ Decode.path [ "description" ]
-                (Decode.single Decode.string)
-            , Decode.path [ "itunes:summary" ]
                 (Decode.single Decode.string)
             , Decode.succeed ""
             ]
