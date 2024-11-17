@@ -3,68 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Video Explorer</title>
-    <style>
-      .flex-rows {
-        display: flex;
-        flex-direction: column;
-        gap: 1rem;
-      }
-      .grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 1rem;
-      }
-      .card {
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 0.5rem;
-        cursor: pointer;
-      }
-      .card:hover {
-        transform: translateY(-2px);
-      }
-      .thumbnail {
-        width: 100%;
-        aspect-ratio: 16/9;
-        object-fit: cover;
-        border-radius: 4px;
-      }
-      #watch {
-        position: fixed;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        background: #fff;
-        padding: 1rem;
-        border-top: 1px solid #ddd;
-        display: none;
-      }
-      #watch.active {
-        display: block;
-      }
-      video {
-        width: 100%;
-        max-height: 70vh;
-      }
-      button {
-        padding: 0.5rem 1rem;
-        background: #007bff;
-        color: white;
-        border: none;
-        border-radius: 4px;
-      }
-      input {
-        flex: 1;
-        padding: 0.5rem;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-      }
-      .search-bar {
-        display: flex;
-        gap: 1rem;
-      }
-    </style>
+    <title>Telecasts</title>
+    <link rel="stylesheet" href="/style.css" />
   </head>
   <body>
     <div id="app" class="flex-rows">
@@ -83,9 +23,97 @@
     </div>
 
     <script>
+      const state = {
+        favorites: new Set(
+          JSON.parse(localStorage.getItem("favorites") || "[]"),
+        ),
+        watchHistory: new Set(
+          JSON.parse(localStorage.getItem("watchHistory") || "[]"),
+        ),
+        currentChannel: null,
+      };
+
+      const saveFavorites = () =>
+        localStorage.setItem("favorites", JSON.stringify([...state.favorites]));
+      const saveWatchHistory = () =>
+        localStorage.setItem(
+          "watchHistory",
+          JSON.stringify([...state.watchHistory]),
+        );
+
+      const searchInput = document.querySelector("input");
+      const channelsGrid = document.querySelector("#channels");
+      const episodesContainer = document.querySelector("#episodes");
+      const watchContainer = document.querySelector("#watch");
+
+      const renderChannelHeader = (channel) => `
+        <div class="channel-header">
+          <h2>${channel.title}</h2>
+          <p>${channel.description || ""}</p>
+          <button onclick="toggleFavorite('${channel.id}')" class="favorite-btn">
+            ${state.favorites.has(channel.id) ? "Unfollow" : "Follow"}
+          </button>
+        </div>
+      `;
+
+      async function fetchEpisodes(channel) {
+        state.currentChannel = channel;
+        episodesContainer.innerHTML = renderChannelHeader(channel);
+
+        const endpoint =
+          channel.type === "youtube" ? "/yt-episodes" : "/episodes";
+        const response = await fetch(`${endpoint}?id=${channel.id}`);
+        const episodes = await response.json();
+
+        const episodesGrid = document.createElement("div");
+        episodesGrid.className = "grid";
+
+        episodes.forEach((episode) => {
+          const watched = state.watchHistory.has(episode.id);
+          episodesGrid.innerHTML += `
+            <div class="card ${watched ? "watched" : ""}" onclick="playEpisode(${JSON.stringify(episode)})">
+              <img src="${episode.thumbnail}" class="thumbnail" alt="${episode.title}">
+              <h3>${episode.title}</h3>
+            </div>
+          `;
+        });
+
+        episodesContainer.appendChild(episodesGrid);
+      }
+
+      function playEpisode(episode) {
+        state.watchHistory.add(episode.id);
+        saveWatchHistory();
+
+        watchContainer.className = "active";
+        watchContainer.innerHTML = `
+          <video controls autoplay>
+            <source src="${episode.src}" type="video/mp4">
+          </video>
+          <h3>${episode.title}</h3>
+        `;
+      }
+
+      function toggleFavorite(channelId) {
+        if (state.favorites.has(channelId)) {
+          state.favorites.delete(channelId);
+        } else {
+          state.favorites.add(channelId);
+        }
+        saveFavorites();
+
+        if (state.currentChannel) {
+          const header = document.querySelector(".channel-header");
+          header.querySelector(".favorite-btn").textContent =
+            state.favorites.has(channelId) ? "Unfollow" : "Follow";
+        }
+      }
+    </script>
+
+    <script>
       const app = {
         init() {
-          this.elements = {
+          this.elems = {
             back: document.getElementById("back"),
             search: document.getElementById("search"),
             searchBtn: document.getElementById("search-btn"),
@@ -95,46 +123,47 @@
             player: document.getElementById("player"),
           };
 
-          this.elements.searchBtn.onclick = () => this.handleSearch();
-          this.elements.search.onkeyup = (e) =>
+          this.elems.searchBtn.onclick = () => this.handleSearch();
+          this.elems.search.onkeyup = (e) =>
             e.key === "Enter" && this.handleSearch();
-          this.elements.back.onclick = () => this.handleBack();
+          this.elems.back.onclick = () => this.handleBack();
         },
 
         async handleSearch() {
-          const query = this.elements.search.value.trim();
+          const query = this.elems.search.value.trim();
           if (!query) return;
 
           const feeds = await fetch(
-            `/search?q=${encodeURIComponent(query)}`,
+            `/channels?q=${encodeURIComponent(query)}`,
           ).then((r) => r.json());
           this.renderChannels(feeds);
-          this.elements.back.style.display = "block";
-          this.elements.episodes.innerHTML = "";
+          this.elems.back.style.display = "block";
+          this.elems.episodes.innerHTML = "";
         },
 
         async handleFeed(id) {
-          const episodes = await fetch(`/episodes?id=${id}`).then((r) =>
-            r.json(),
+          const route = parseInt(id) ? "episodes" : "yt-episodes";
+          const episodes = await fetch(`/${route}?id=${id}`).then((r) =>
+            r.ok ? r.json() : [],
           );
           this.renderEpisodes(episodes);
-          this.elements.channels.innerHTML = "";
+          this.elems.channels.innerHTML = "";
         },
 
         handlePlay(episode) {
-          this.elements.watch.classList.add("active");
-          this.elements.player.src = episode.src;
-          this.elements.player.play();
+          this.elems.watch.classList.add("active");
+          this.elems.player.src = episode.src;
+          this.elems.player.play();
         },
 
         handleBack() {
-          if (this.elements.episodes.innerHTML) {
-            this.elements.episodes.innerHTML = "";
-            this.elements.channels.innerHTML = this.lastChannels;
+          if (this.elems.episodes.innerHTML) {
+            this.elems.episodes.innerHTML = "";
+            this.elems.channels.innerHTML = this.lastChannels;
           } else {
-            this.elements.search.value = "";
-            this.elements.channels.innerHTML = "";
-            this.elements.back.style.display = "none";
+            this.elems.search.value = "";
+            this.elems.channels.innerHTML = "";
+            this.elems.back.style.display = "none";
           }
         },
 
@@ -142,18 +171,18 @@
           this.lastChannels = feeds
             .map(
               (feed) => `
-                    <div class="card" onclick="app.handleFeed(${feed.id})">
+                    <div class="card" onclick="app.handleFeed('${feed.id}')">
                         <img class="thumbnail" src="${feed.thumbnail}" alt="">
                         <div>${feed.title}</div>
                     </div>
                 `,
             )
             .join("");
-          this.elements.channels.innerHTML = this.lastChannels;
+          this.elems.channels.innerHTML = this.lastChannels;
         },
 
         renderEpisodes(episodes) {
-          this.elements.episodes.innerHTML = episodes
+          this.elems.episodes.innerHTML = episodes
             .map(
               (episode) => `
                     <div class="card" onclick='app.handlePlay(${JSON.stringify(episode).replace(/"/g, "&quot;")})'>
