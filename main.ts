@@ -33,7 +33,8 @@ async function fetchPodcasts(query: string) {
       );
 
     const response = await fetch(
-      `https://api.podcastindex.org/api/1.0/search/byterm?q=${encodeURIComponent(query)}`,
+      // https://api.podcastindex.org/api/1.0/podcasts/bymedium?medium=video
+      `https://api.podcastindex.org/api/1.0/search/byterm?q=video%20${encodeURIComponent(query)}`,
       {
         headers: {
           "X-Auth-Date": time.toString(),
