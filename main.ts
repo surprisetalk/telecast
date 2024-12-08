@@ -7,11 +7,7 @@ import { prettyJSON } from "jsr:@hono/hono/pretty-json";
 import { basicAuth } from "jsr:@hono/hono/basic-auth";
 import { html } from "jsr:@hono/hono/html";
 import { cors } from "jsr:@hono/hono/cors";
-import {
-  getSignedCookie,
-  setSignedCookie,
-  deleteCookie,
-} from "jsr:@hono/hono/cookie";
+import { getSignedCookie, setSignedCookie, deleteCookie } from "jsr:@hono/hono/cookie";
 import { serveStatic } from "jsr:@hono/hono/deno";
 
 const PI_KEY = "TWTGLQDR8H7LKHYUURNT";
@@ -24,13 +20,11 @@ app.use("/*", cors());
 async function fetchPodcasts(query: string) {
   try {
     const time = Math.floor(Date.now() / 1000);
-    const hash = await crypto.subtle
-      .digest("SHA-1", new TextEncoder().encode(PI_KEY + PI_SECRET + time))
-      .then((buf) =>
-        Array.from(new Uint8Array(buf))
-          .map((b) => b.toString(16).padStart(2, "0"))
-          .join(""),
-      );
+    const hash = await crypto.subtle.digest("SHA-1", new TextEncoder().encode(PI_KEY + PI_SECRET + time)).then(buf =>
+      Array.from(new Uint8Array(buf))
+        .map(b => b.toString(16).padStart(2, "0"))
+        .join(""),
+    );
 
     const response = await fetch(
       // https://api.podcastindex.org/api/1.0/podcasts/bymedium?medium=video
@@ -58,7 +52,7 @@ async function fetchPodcasts(query: string) {
   }
 }
 
-app.get("/proxy/rss", async (c) => {
+app.get("/proxy/rss", async c => {
   const url = c.req.query("url");
   if (!url) return c.json({ error: "URL parameter is required" }, 400);
   const response = await fetch(url);
@@ -71,16 +65,16 @@ app.get("/proxy/rss", async (c) => {
   });
 });
 
-app.get("/channels", async (c) => {
+app.get("/channels", async c => {
   const query = c.req.query("q")?.toLowerCase() || "";
   return c.json([
-    ...youtubeChannels.filter((channel) =>
-      channel.title.toLowerCase().includes(query),
-    ).map(x => ({
-      title: x.title,
-      thumbnail: "/yt.png", // TODO
-      rss: `https://www.youtube.com/feeds/videos.xml?channel_id=${x.id}`
-    })),
+    ...youtubeChannels
+      .filter(channel => channel.title.toLowerCase().includes(query))
+      .map(x => ({
+        title: x.title,
+        thumbnail: "/yt.png", // TODO
+        rss: `https://www.youtube.com/feeds/videos.xml?channel_id=${x.id}`,
+      })),
     ...(await fetchPodcasts(query)),
   ]);
 });
@@ -936,5 +930,8 @@ UCzgviV8WkULNua94BJDqI7g;;Engineering Models
 UCzjbia0NqUsSL1_-loJihMg;;CinemaStix
 UCznv7Vf9nBdJYvBagFdAHWw;;Tim Ferriss
 UCzoVCacndDCfGDf41P-z0iA;;JSConf
-`.trim().split(/\n/).map(x => x.split(";;")).map(([id,title]) => ({ id, title }))
-
+`
+  .trim()
+  .split(/\n/)
+  .map(x => x.split(";;"))
+  .map(([id, title]) => ({ id, title }));
