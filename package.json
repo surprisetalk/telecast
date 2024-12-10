@@ -1,7 +1,7 @@
 {
   "name": "telecasts",
   "scripts": {
-    "dev": "wrangler pages dev ."
+    "dev": "wrangler pages dev public"
   },
   "dependencies": {
     "fast-xml-parser": "^4.3.2",

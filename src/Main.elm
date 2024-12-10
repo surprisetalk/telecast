@@ -206,20 +206,19 @@ type alias Episode =
 
 init : D.Value -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url key =
-    ( { library =
+    route url
+        { library =
             flags
                 |> D.decodeValue libraryDecoder
                 |> Result.mapError (always "Could not parse library.")
                 |> Just
                 |> Loadable
-      , query = ""
-      , channels = Loadable Nothing
-      , channel = Loadable Nothing
-      , episode = Nothing
-      , key = key
-      }
-    , Cmd.none
-    )
+        , query = ""
+        , channels = Loadable (Just (Ok []))
+        , channel = Loadable (Just (Ok Nothing))
+        , episode = Nothing
+        , key = key
+        }
 
 
 
@@ -389,11 +388,11 @@ viewSearchResults : Model -> Html Msg
 viewSearchResults model =
     ul [ id "search-results" ]
         (case model.channels of
-            Loadable (Just (Ok channels)) ->
-                List.map viewChannelItem channels
-
             Loadable Nothing ->
                 [ text "Loading..." ]
+
+            Loadable (Just (Ok channels)) ->
+                List.map viewChannelItem channels
 
             Loadable (Just (Err err)) ->
                 [ text ("Error: " ++ err) ]
@@ -729,7 +728,7 @@ route url model =
                         )
                 ]
             )
-        |> Maybe.withDefault ( { model | channel = Loadable Nothing, episode = Nothing }, Cmd.none )
+        |> Maybe.withDefault ( { model | channel = Loadable (Just (Ok Nothing)), episode = Nothing }, Cmd.none )
 
 
 
