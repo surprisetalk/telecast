@@ -1,7 +1,8 @@
 {
   "name": "telecasts",
   "scripts": {
-    "dev": "wrangler pages dev public"
+    "dev-server": "wrangler pages dev public",
+    "dev-client": "watch -n 1 elm make src/Main.elm --debug --output=public/elm.js"
   },
   "dependencies": {
     "fast-xml-parser": "^4.3.2",
