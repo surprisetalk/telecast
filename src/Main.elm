@@ -352,17 +352,13 @@ view : Model -> Browser.Document Msg
 view model =
     { title = "Podcast Player"
     , body =
-        [ viewLayout model ]
-    }
-
-
-viewLayout : Model -> Html Msg
-viewLayout model =
-    div [ class "cols" ]
-        [ viewChannels model
-        , viewChannel model
-        , viewEpisode model
+        [ div [ class "cols" ]
+            [ viewChannels model
+            , viewChannel model
+            , viewEpisode model
+            ]
         ]
+    }
 
 
 viewChannels : Model -> Html Msg
@@ -376,18 +372,13 @@ viewChannels model =
                 ]
                 []
             , button [] [ text "search" ]
-            , viewPacks model
+            , ul [ id "packs" ]
+                -- TODO
+                [ li [] [ a [ href "/", onClick (PackSelecting "news") ] [ text "News" ] ]
+                ]
             ]
         , viewSearchResults model
         , viewLibrary model
-        ]
-
-
-viewPacks : Model -> Html Msg
-viewPacks model =
-    ul [ id "packs" ]
-        -- TODO
-        [ li [] [ a [ onClick (PackSelecting "news") ] [ text "News" ] ]
         ]
 
 
