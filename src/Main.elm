@@ -330,8 +330,15 @@ update msg model =
                 )
                 model
 
-        LinkClicked urlRequest ->
-            handleUrl urlRequest model
+        LinkClicked (Browser.Internal url) ->
+            ( model
+            , Nav.pushUrl model.key (Url.toString url)
+            )
+
+        LinkClicked (Browser.External url) ->
+            ( model
+            , Nav.load url
+            )
 
         UrlChanged url ->
             route url model
@@ -402,7 +409,7 @@ viewSearchResults model =
 viewLibrary : Model -> Html Msg
 viewLibrary model =
     ul [ id "library" ]
-        (li [] [ a [ href "?channel=" ] [ text "My Subscriptions" ] ]
+        (li [] [ a [ href "//" ] [ text "My Subscriptions" ] ]
             :: (case model.library of
                     Loadable (Just (Ok lib)) ->
                         Dict.values lib.channels
@@ -622,8 +629,8 @@ main =
         , view = view
         , update = update
         , subscriptions = subscriptions
-        , onUrlRequest = onUrlRequest
-        , onUrlChange = onUrlChange
+        , onUrlRequest = LinkClicked
+        , onUrlChange = UrlChanged
         }
 
 
@@ -642,34 +649,6 @@ type Msg
     | ChannelUnsubscribing String
     | LinkClicked Browser.UrlRequest
     | UrlChanged Url
-
-
-
--- URL HANDLING
-
-
-onUrlRequest : Browser.UrlRequest -> Msg
-onUrlRequest =
-    LinkClicked
-
-
-onUrlChange : Url -> Msg
-onUrlChange =
-    UrlChanged
-
-
-handleUrl : Browser.UrlRequest -> Model -> ( Model, Cmd Msg )
-handleUrl urlRequest model =
-    case urlRequest of
-        Browser.Internal url ->
-            ( model
-            , Nav.pushUrl model.key (Url.toString url)
-            )
-
-        Browser.External url ->
-            ( model
-            , Nav.load url
-            )
 
 
 
