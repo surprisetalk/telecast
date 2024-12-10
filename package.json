@@ -1,0 +1,13 @@
+{
+  "name": "telecasts",
+  "scripts": {
+    "dev": "wrangler pages dev ."
+  },
+  "dependencies": {
+    "fast-xml-parser": "^4.3.2",
+    "postgres": "^3.4.3"
+  },
+  "devDependencies": {
+    "wrangler": "^3.22.0"
+  }
+}

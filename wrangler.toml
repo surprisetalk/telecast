@@ -1,0 +1,13 @@
+name = "telecasts"
+compatibility_date = "2024-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[r2_buckets]]
+binding = "BUCKET_RSS"
+bucket_name = "rss"
+preview_bucket_name = "rss-dev"
+
+[[r2_buckets]]
+binding = "BUCKET_THUMB" 
+bucket_name = "thumb"
+preview_bucket_name = "thumb-dev"
