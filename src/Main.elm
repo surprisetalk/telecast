@@ -404,7 +404,7 @@ viewSearchResults model =
 viewLibrary : Model -> Html Msg
 viewLibrary model =
     ul [ id "library" ]
-        (li [] [ a [ href "//" ] [ text "My Subscriptions" ] ]
+        (li [] [ a [ href "/" ] [ text "My Subscriptions" ] ]
             :: (case model.library of
                     Loadable (Just (Ok lib)) ->
                         Dict.values lib.channels
@@ -514,6 +514,7 @@ viewPlayer episode =
             , src (Url.toString episode.src)
             , A.width 560
             , A.height 315
+            , A.autoplay True
             ]
             []
 
@@ -653,6 +654,7 @@ type Msg
 route : Url -> Model -> ( Model, Cmd Msg )
 route url model =
     let
+        -- TODO: Inline this
         loadChannel : String -> Maybe String -> ( Model, Cmd Msg )
         loadChannel rss mEid =
             case model.library of
@@ -683,12 +685,39 @@ route url model =
     url
         |> P.parse
             (P.oneOf
-                [ (P.string </> P.oneOf [ P.string |> P.map Just, P.top |> P.map Nothing ])
+                [ (P.s "all" </> P.oneOf [ P.string |> P.map Just, P.top |> P.map Nothing ])
+                    |> P.map
+                        (\mEid ->
+                            case model.library of
+                                Loadable (Just (Ok lib)) ->
+                                    ( { model
+                                        | channel =
+                                            let
+                                                channel : Channel
+                                                channel =
+                                                    { title = "My Subscriptions"
+                                                    , description = ""
+                                                    , thumb = Nothing
+                                                    , rss = Nothing -- TODO: Fix this
+                                                    , updatedAt = ""
+                                                    }
+                                            in
+                                            -- TODO: List first N episodes.
+                                            Loadable (Just (Ok (Just { channel = {}, episodes = Dict.empty })))
+                                        , episode = Nothing
+                                      }
+                                    , Cmd.none
+                                    )
+
+                                _ ->
+                                    ( model, Cmd.none )
+                        )
+                , (P.string </> P.oneOf [ P.string |> P.map Just, P.top |> P.map Nothing ])
                     |> P.map
                         (\rss mEid ->
                             case model.channel of
                                 Loadable (Just (Ok (Just feed))) ->
-                                    if Url.toString feed.channel.rss == rss then
+                                    if Just (Url.toString feed.channel.rss) == Url.percentDecode rss then
                                         ( { model | episode = mEid }, Cmd.none )
 
                                     else
@@ -750,7 +779,7 @@ youtubeFormatDecoder =
     X.map2 Feed
         (X.succeed Channel
             |> X.requiredPath [ "title" ] (X.single X.string)
-            |> X.requiredPath [ "description" ] (X.single X.string)
+            |> X.optionalPath [ "description" ] (X.single X.string) ""
             |> X.possiblePath [ "thumbnail", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.requiredPath [ "author", "uri" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.optionalPath [ "published" ] (X.single X.string) "1970-01-01T00:00:00Z"
@@ -775,8 +804,7 @@ youtubeEntryDecoder =
                     |> X.andThen urlDecoder_
                 )
             )
-        |> X.requiredPath [ "media:group", "media:description" ]
-            (X.single X.string)
+        |> X.optionalPath [ "media:group", "media:description" ] (X.single X.string) ""
 
 
 podcastRssDecoder : X.Decoder Feed
@@ -784,7 +812,7 @@ podcastRssDecoder =
     X.map2 Feed
         (X.succeed Channel
             |> X.requiredPath [ "channel", "title" ] (X.single X.string)
-            |> X.requiredPath [ "channel", "description" ] (X.single X.string)
+            |> X.optionalPath [ "channel", "description" ] (X.single X.string) ""
             |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.requiredPath [ "channel", "link" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.requiredPath [ "channel", "lastBuildDate" ] (X.single X.string)
@@ -802,7 +830,7 @@ podcastItemDecoder =
         |> X.requiredPath [ "title" ] (X.single X.string)
         |> X.possiblePath [ "itunes:image" ] (X.single (X.stringAttr "href" |> X.andThen urlDecoder_))
         |> X.requiredPath [ "enclosure" ] (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
-        |> X.requiredPath [ "description" ] (X.single X.string)
+        |> X.optionalPath [ "description" ] (X.single X.string) ""
 
 
 standardRssDecoder : X.Decoder Feed
@@ -810,7 +838,7 @@ standardRssDecoder =
     X.map2 Feed
         (X.succeed Channel
             |> X.requiredPath [ "channel", "title" ] (X.single X.string)
-            |> X.requiredPath [ "channel", "description" ] (X.single X.string)
+            |> X.optionalPath [ "channel", "description" ] (X.single X.string) ""
             |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.requiredPath [ "channel", "link" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.requiredPath [ "channel", "pubDate" ] (X.single X.string)
@@ -828,7 +856,7 @@ standardItemDecoder =
         |> X.requiredPath [ "title" ] (X.single X.string)
         |> X.possiblePath [ "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
         |> X.requiredPath [ "link" ] (X.single (X.string |> X.andThen urlDecoder_))
-        |> X.requiredPath [ "description" ] (X.single X.string)
+        |> X.optionalPath [ "description" ] (X.single X.string) ""
 
 
 
