@@ -13,8 +13,8 @@ import Json.Encode as E
 import Task
 import Time
 import Url exposing (Url)
-import Url.Builder as B
 import Url.Parser as P exposing ((</>), Parser)
+import Xml.Decode as X
 
 
 
@@ -61,11 +61,14 @@ playbackDecoder =
             )
 
 
-feedDecoder : D.Decoder Feed
-feedDecoder =
-    D.succeed Feed
-        |> D.required "channel" channelDecoder
-        |> D.required "episodes" (D.dict episodeDecoder)
+
+{-
+   feedDecoder : D.Decoder Feed
+   feedDecoder =
+       D.succeed Feed
+           |> D.required "channel" channelDecoder
+           |> D.required "episodes" (D.dict episodeDecoder)
+-}
 
 
 urlDecoder : D.Decoder Url
@@ -632,7 +635,7 @@ main =
 
 type Msg
     = LibraryLoaded (Result D.Error Library)
-    | FeedFetched (Maybe String) (Result Http.Error Feed)
+    | FeedFetched (Maybe String) (Result String Feed)
     | ChannelsFetched (Result Http.Error (List Channel))
     | SearchEditing String
     | SearchSubmitting
@@ -660,10 +663,7 @@ route url model =
                                 | channel = Loadable (Just (Ok (Just { channel = channel, episodes = Dict.get rss lib.episodes |> Maybe.withDefault Dict.empty })))
                                 , episode = mEid
                               }
-                            , Http.get
-                                { url = "/proxy/rss/" ++ rss
-                                , expect = Http.expectJson (FeedFetched mEid) feedDecoder
-                                }
+                            , Cmd.none
                             )
 
                         Nothing ->
@@ -673,7 +673,7 @@ route url model =
                               }
                             , Http.get
                                 { url = "/proxy/rss/" ++ rss
-                                , expect = Http.expectJson (FeedFetched mEid) feedDecoder
+                                , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched mEid)
                                 }
                             )
 
@@ -720,3 +720,123 @@ withLibrary fn model =
 
         _ ->
             ( model, Cmd.none )
+
+
+
+-- XML
+
+
+feedDecoder : X.Decoder Feed
+feedDecoder =
+    X.oneOf
+        [ youtubeFormatDecoder
+        , podcastRssDecoder
+        , standardRssDecoder
+        ]
+
+
+urlDecoder_ : String -> X.Decoder Url
+urlDecoder_ str =
+    case Url.fromString str of
+        Just url ->
+            X.succeed url
+
+        Nothing ->
+            X.fail "Invalid URL"
+
+
+youtubeFormatDecoder : X.Decoder Feed
+youtubeFormatDecoder =
+    X.map2 Feed
+        (X.succeed Channel
+            |> X.requiredPath [ "title" ] (X.single X.string)
+            |> X.requiredPath [ "description" ] (X.single X.string)
+            |> X.possiblePath [ "thumbnail", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "author", "uri" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.optionalPath [ "published" ] (X.single X.string) "1970-01-01T00:00:00Z"
+        )
+        (X.path [ "entry" ]
+            (X.list youtubeEntryDecoder)
+            |> X.map makeEpisodeDict
+        )
+
+
+youtubeEntryDecoder : X.Decoder Episode
+youtubeEntryDecoder =
+    X.succeed Episode
+        |> X.requiredPath [ "id" ] (X.single X.string)
+        |> X.requiredPath [ "title" ] (X.single X.string)
+        |> X.possiblePath [ "media:group", "media:thumbnail" ]
+            (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
+        |> X.requiredPath [ "yt:videoId" ]
+            (X.single
+                (X.string
+                    |> X.map (\videoId -> "https://www.youtube.com/embed/" ++ videoId)
+                    |> X.andThen urlDecoder_
+                )
+            )
+        |> X.requiredPath [ "media:group", "media:description" ]
+            (X.single X.string)
+
+
+podcastRssDecoder : X.Decoder Feed
+podcastRssDecoder =
+    X.map2 Feed
+        (X.succeed Channel
+            |> X.requiredPath [ "channel", "title" ] (X.single X.string)
+            |> X.requiredPath [ "channel", "description" ] (X.single X.string)
+            |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "channel", "link" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "channel", "lastBuildDate" ] (X.single X.string)
+        )
+        (X.path [ "channel", "item" ]
+            (X.list podcastItemDecoder)
+            |> X.map makeEpisodeDict
+        )
+
+
+podcastItemDecoder : X.Decoder Episode
+podcastItemDecoder =
+    X.succeed Episode
+        |> X.requiredPath [ "guid" ] (X.single X.string)
+        |> X.requiredPath [ "title" ] (X.single X.string)
+        |> X.possiblePath [ "itunes:image" ] (X.single (X.stringAttr "href" |> X.andThen urlDecoder_))
+        |> X.requiredPath [ "enclosure" ] (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
+        |> X.requiredPath [ "description" ] (X.single X.string)
+
+
+standardRssDecoder : X.Decoder Feed
+standardRssDecoder =
+    X.map2 Feed
+        (X.succeed Channel
+            |> X.requiredPath [ "channel", "title" ] (X.single X.string)
+            |> X.requiredPath [ "channel", "description" ] (X.single X.string)
+            |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "channel", "link" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "channel", "pubDate" ] (X.single X.string)
+        )
+        (X.path [ "channel", "item" ]
+            (X.list standardItemDecoder)
+            |> X.map makeEpisodeDict
+        )
+
+
+standardItemDecoder : X.Decoder Episode
+standardItemDecoder =
+    X.succeed Episode
+        |> X.requiredPath [ "guid" ] (X.single X.string)
+        |> X.requiredPath [ "title" ] (X.single X.string)
+        |> X.possiblePath [ "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
+        |> X.requiredPath [ "link" ] (X.single (X.string |> X.andThen urlDecoder_))
+        |> X.requiredPath [ "description" ] (X.single X.string)
+
+
+
+-- Helper function to convert a list of episodes to a Dict
+
+
+makeEpisodeDict : List Episode -> Dict Id Episode
+makeEpisodeDict episodes =
+    episodes
+        |> List.map (\episode -> ( episode.id, episode ))
+        |> Dict.fromList
