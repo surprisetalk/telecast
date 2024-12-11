@@ -20,7 +20,7 @@ export async function onRequest({ request, env }) {
         thumb = excluded.thumb,
         updated_at = now()
     `;
-    await env.BUCKET_RSS.put(rssUrl, response.clone());
+    await env.BUCKET_RSS.put(rssUrl, text);
   }
   return new Response(response.body, {
     headers: response.headers,

@@ -661,7 +661,7 @@ route url model =
                                 , episode = mEid
                               }
                             , Http.get
-                                { url = "/proxy/rss/" ++ Url.percentEncode rss
+                                { url = "/proxy/rss/" ++ rss
                                 , expect = Http.expectJson (FeedFetched mEid) feedDecoder
                                 }
                             )
@@ -672,7 +672,7 @@ route url model =
                                 , episode = Nothing
                               }
                             , Http.get
-                                { url = "/proxy/rss/" ++ Url.percentEncode rss
+                                { url = "/proxy/rss/" ++ rss
                                 , expect = Http.expectJson (FeedFetched mEid) feedDecoder
                                 }
                             )
