@@ -293,7 +293,7 @@ video#player {
   background-color: var(--text-secondary);
 }
 
-/* Responsive Design */
+/*
 @media (max-width: 1200px) {
   .cols {
     grid-template-columns: var(--sidebar-width) 1fr;
@@ -347,3 +347,4 @@ video#player {
     visibility: visible;
   }
 }
+*/

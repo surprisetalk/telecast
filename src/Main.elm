@@ -13,6 +13,7 @@ import Json.Encode as E
 import Task
 import Time
 import Url exposing (Url)
+import Url.Builder as B
 import Url.Parser as P exposing ((</>), Parser)
 
 
@@ -33,10 +34,10 @@ channelDecoder : D.Decoder Channel
 channelDecoder =
     D.succeed Channel
         |> D.required "title" D.string
-        |> D.required "description" D.string
-        |> D.required "thumb" urlDecoder
+        |> D.optional "description" D.string ""
+        |> D.required "thumb" (D.maybe urlDecoder)
         |> D.required "rss" urlDecoder
-        |> D.required "fetched" (D.map Time.millisToPosix D.int)
+        |> D.required "updated_at" D.string
 
 
 episodeDecoder : D.Decoder Episode
@@ -44,9 +45,9 @@ episodeDecoder =
     D.succeed Episode
         |> D.required "id" D.string
         |> D.required "title" D.string
-        |> D.required "thumb" urlDecoder
+        |> D.required "thumb" (D.maybe urlDecoder)
         |> D.required "src" urlDecoder
-        |> D.required "description" D.string
+        |> D.optional "description" D.string ""
 
 
 playbackDecoder : D.Decoder Playback
@@ -100,9 +101,9 @@ channelEncoder channel =
     E.object
         [ ( "title", E.string channel.title )
         , ( "description", E.string channel.description )
-        , ( "thumb", urlEncoder channel.thumb )
+        , ( "thumb", channel.thumb |> Maybe.map urlEncoder |> Maybe.withDefault E.null )
         , ( "rss", urlEncoder channel.rss )
-        , ( "fetched", E.int (Time.posixToMillis channel.fetched) )
+        , ( "updated_at", E.string channel.updatedAt )
         ]
 
 
@@ -111,7 +112,7 @@ episodeEncoder episode =
     E.object
         [ ( "id", E.string episode.id )
         , ( "title", E.string episode.title )
-        , ( "thumb", urlEncoder episode.thumb )
+        , ( "thumb", episode.thumb |> Maybe.map urlEncoder |> Maybe.withDefault E.null )
         , ( "src", urlEncoder episode.src )
         , ( "description", E.string episode.description )
         ]
@@ -185,16 +186,16 @@ type alias Playback =
 type alias Channel =
     { title : String
     , description : String
-    , thumb : Url
+    , thumb : Maybe Url
     , rss : Url
-    , fetched : Time.Posix
+    , updatedAt : String
     }
 
 
 type alias Episode =
     { id : Id
     , title : String
-    , thumb : Url
+    , thumb : Maybe Url
     , src : Url
     , description : String
     }
@@ -427,7 +428,7 @@ viewChannel model =
             Loadable (Just (Ok (Just feed))) ->
                 [ div [ id "channel-details" ]
                     [ h1 [] [ text feed.channel.title ]
-                    , p [] [ text ("Last updated " ++ relativeTime feed.channel.fetched) ]
+                    , p [] [ text ("Last updated " ++ feed.channel.updatedAt) ]
                     , viewSubscribeButton feed.channel.rss model
                     , p [] [ text feed.channel.description ]
                     ]
