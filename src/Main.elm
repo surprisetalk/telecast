@@ -698,12 +698,12 @@ route url model =
                                                     { title = "My Subscriptions"
                                                     , description = ""
                                                     , thumb = Nothing
-                                                    , rss = Nothing -- TODO: Fix this
+                                                    , rss = { protocol = Url.Https, host = "localhost", port_ = Nothing, path = "/all", query = Nothing, fragment = Nothing }
                                                     , updatedAt = ""
                                                     }
                                             in
                                             -- TODO: List first N episodes.
-                                            Loadable (Just (Ok (Just { channel = {}, episodes = Dict.empty })))
+                                            Loadable (Just (Ok (Just { channel = channel, episodes = Dict.empty })))
                                         , episode = Nothing
                                       }
                                     , Cmd.none
