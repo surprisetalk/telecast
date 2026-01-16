@@ -5,3 +5,4 @@
 elm.json
 /elm-stuff
 public/elm.js
+.env
