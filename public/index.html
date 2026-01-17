@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -23,7 +23,7 @@
         settings: {},
       };
 
-      app.ports.librarySaving.subscribe((library) => {
+      app.ports.librarySaving.subscribe(library => {
         try {
           localStorage.setItem(KEY, JSON.stringify(library));
           app.ports.libraryLoaded.send(library);
@@ -33,9 +33,7 @@
       });
 
       try {
-        const library =
-          JSON.parse(localStorage.getItem(KEY) || "null") ??
-            defaultLibrary;
+        const library = JSON.parse(localStorage.getItem(KEY) || "null") ?? defaultLibrary;
         console.log(library);
         app.ports.libraryLoaded.send(library);
       } catch (error) {

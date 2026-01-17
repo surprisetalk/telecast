@@ -1,8 +1,6 @@
 export async function onRequest({ request, env }) {
   const url = new URL(request.url);
-  const thumbUrl = decodeURIComponent(
-    url.pathname.slice("/proxy/thumb/".length),
-  );
+  const thumbUrl = decodeURIComponent(url.pathname.slice("/proxy/thumb/".length));
   let response = await env.BUCKET_THUMB.get(thumbUrl);
   if (!response) {
     try {
