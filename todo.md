@@ -1,5 +1,3 @@
-<!-- deno-fmt-ignore-file -->
-
 - [ ] clean up type errors
 - [ ] make everything a bit more resilient. also more terse.
 - [ ] launch
