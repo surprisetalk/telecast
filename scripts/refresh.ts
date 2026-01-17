@@ -16,7 +16,13 @@ async function main() {
   // Get oldest channels (don't update timestamps here - we'll update on success/failure)
   const channels = await sql`
     SELECT * FROM channel
-    ORDER BY updated_at + random() * interval '2 days' ASC
+    ORDER BY 
+      updated_at 
+        + random() * interval '1 day' * consecutive_errors
+        - random() * interval '1 week' * log(1+coalesce(episode_count,0))
+        -- TODO: - random() * interval '1 month' * coalesce((latest_episode_at-first_episode_at)/interval '1 year',0)
+        nulls first, 
+      random()
     LIMIT ${BATCH_SIZE}
   `;
 
