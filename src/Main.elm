@@ -253,11 +253,21 @@ update msg model =
             , Cmd.none
             )
 
-        FeedFetched maybeEpisodeId result ->
+        FeedFetched originalRss maybeEpisodeId result ->
             case result of
                 Ok feed ->
+                    let
+                        -- Use the original RSS URL, not the <link> from the feed
+                        correctedFeed =
+                            case Url.fromString originalRss of
+                                Just rssUrl ->
+                                    { feed | channel = { title = feed.channel.title, description = feed.channel.description, thumb = feed.channel.thumb, rss = rssUrl, updatedAt = feed.channel.updatedAt } }
+
+                                Nothing ->
+                                    feed
+                    in
                     ( { model
-                        | channel = Loadable (Just (Ok (Just feed)))
+                        | channel = Loadable (Just (Ok (Just correctedFeed)))
                         , episode = maybeEpisodeId
                       }
                     , Cmd.none
@@ -597,7 +607,7 @@ main =
 
 type Msg
     = LibraryLoaded (Result D.Error Library)
-    | FeedFetched (Maybe String) (Result String Feed)
+    | FeedFetched String (Maybe String) (Result String Feed)
     | ChannelsFetched (Result Http.Error (List Channel))
     | SearchEditing String
     | SearchSubmitting
@@ -636,7 +646,7 @@ route url model =
                               }
                             , Http.get
                                 { url = "/proxy/rss/" ++ rss
-                                , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched mEid)
+                                , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss mEid)
                                 }
                             )
 
