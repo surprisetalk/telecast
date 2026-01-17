@@ -776,7 +776,7 @@ podcastRssDecoder =
             |> X.optionalPath [ "channel", "description" ] (X.single X.string) ""
             |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.requiredPath [ "channel", "link" ] (X.single (X.string |> X.andThen urlDecoder_))
-            |> X.requiredPath [ "channel", "lastBuildDate" ] (X.single X.string)
+            |> X.optionalPath [ "channel", "lastBuildDate" ] (X.single X.string) ""
         )
         (X.path [ "channel", "item" ]
             (X.list podcastItemDecoder)
@@ -802,7 +802,7 @@ standardRssDecoder =
             |> X.optionalPath [ "channel", "description" ] (X.single X.string) ""
             |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.requiredPath [ "channel", "link" ] (X.single (X.string |> X.andThen urlDecoder_))
-            |> X.requiredPath [ "channel", "pubDate" ] (X.single X.string)
+            |> X.optionalPath [ "channel", "pubDate" ] (X.single X.string) ""
         )
         (X.path [ "channel", "item" ]
             (X.list standardItemDecoder)
