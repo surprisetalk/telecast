@@ -1,7 +1,7 @@
 import db from "postgres";
 import { parseEpisodes } from "../functions/_shared/rss";
 
-const BATCH_SIZE = 100;
+const BATCH_SIZE = 250;
 const FETCH_TIMEOUT_MS = 15_000;
 
 async function main() {
@@ -87,7 +87,7 @@ async function main() {
   await sql.end();
 }
 
-main().catch((e) => {
+main().catch(e => {
   console.error(e);
   process.exit(1);
 });
