@@ -741,12 +741,25 @@ feedDecoder =
 
 urlDecoder_ : String -> X.Decoder Url
 urlDecoder_ str =
-    case Url.fromString str of
+    let
+        trimmed =
+            String.trim str
+
+        -- Try with https:// prefix if URL parsing fails
+        maybeUrl =
+            case Url.fromString trimmed of
+                Just url ->
+                    Just url
+
+                Nothing ->
+                    Url.fromString ("https://" ++ trimmed)
+    in
+    case maybeUrl of
         Just url ->
             X.succeed url
 
         Nothing ->
-            X.fail "Invalid URL"
+            X.fail ("Invalid URL: " ++ str)
 
 
 youtubeFormatDecoder : X.Decoder Feed
@@ -800,12 +813,22 @@ podcastRssDecoder =
 
 podcastItemDecoder : X.Decoder Episode
 podcastItemDecoder =
-    X.succeed Episode
-        |> X.requiredPath [ "guid" ] (X.single X.string)
-        |> X.requiredPath [ "title" ] (X.single X.string)
-        |> X.possiblePath [ "itunes:image" ] (X.single (X.stringAttr "href" |> X.andThen urlDecoder_))
-        |> X.requiredPath [ "enclosure" ] (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
-        |> X.optionalPath [ "description" ] (X.single X.string) ""
+    X.oneOf
+        [ -- With guid
+          X.succeed Episode
+            |> X.requiredPath [ "guid" ] (X.single X.string)
+            |> X.requiredPath [ "title" ] (X.single X.string)
+            |> X.possiblePath [ "itunes:image" ] (X.single (X.stringAttr "href" |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "enclosure" ] (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
+            |> X.optionalPath [ "description" ] (X.single X.string) ""
+        , -- Without guid, use enclosure url as id
+          X.succeed Episode
+            |> X.requiredPath [ "enclosure" ] (X.single (X.stringAttr "url"))
+            |> X.requiredPath [ "title" ] (X.single X.string)
+            |> X.possiblePath [ "itunes:image" ] (X.single (X.stringAttr "href" |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "enclosure" ] (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
+            |> X.optionalPath [ "description" ] (X.single X.string) ""
+        ]
 
 
 standardRssDecoder : X.Decoder Feed
@@ -826,12 +849,22 @@ standardRssDecoder =
 
 standardItemDecoder : X.Decoder Episode
 standardItemDecoder =
-    X.succeed Episode
-        |> X.requiredPath [ "guid" ] (X.single X.string)
-        |> X.requiredPath [ "title" ] (X.single X.string)
-        |> X.possiblePath [ "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
-        |> X.requiredPath [ "link" ] (X.single (X.string |> X.andThen urlDecoder_))
-        |> X.optionalPath [ "description" ] (X.single X.string) ""
+    X.oneOf
+        [ -- With guid
+          X.succeed Episode
+            |> X.requiredPath [ "guid" ] (X.single X.string)
+            |> X.requiredPath [ "title" ] (X.single X.string)
+            |> X.possiblePath [ "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "link" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.optionalPath [ "description" ] (X.single X.string) ""
+        , -- Without guid, use link as id
+          X.succeed Episode
+            |> X.requiredPath [ "link" ] (X.single X.string)
+            |> X.requiredPath [ "title" ] (X.single X.string)
+            |> X.possiblePath [ "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "link" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.optionalPath [ "description" ] (X.single X.string) ""
+        ]
 
 
 

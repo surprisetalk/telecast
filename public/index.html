@@ -22,10 +22,6 @@
   <body>
     <div id="app"></div>
     <script>
-      const app = Elm.Main.init({
-        node: document.getElementById("app"),
-      });
-
       const KEY = "LIBRARY";
 
       const defaultLibrary = {
@@ -35,6 +31,20 @@
         settings: {},
       };
 
+      // Load library before init so it's available for initial routing
+      let library;
+      try {
+        library = JSON.parse(localStorage.getItem(KEY) || "null") ?? defaultLibrary;
+      } catch (error) {
+        console.error("Error loading initial library:", error);
+        library = defaultLibrary;
+      }
+
+      const app = Elm.Main.init({
+        node: document.getElementById("app"),
+        flags: library,
+      });
+
       app.ports.librarySaving.subscribe(library => {
         try {
           localStorage.setItem(KEY, JSON.stringify(library));
@@ -43,15 +53,6 @@
           console.error("Error saving channel:", error);
         }
       });
-
-      try {
-        const library = JSON.parse(localStorage.getItem(KEY) || "null") ?? defaultLibrary;
-        console.log(library);
-        app.ports.libraryLoaded.send(library);
-      } catch (error) {
-        console.error("Error loading initial library:", error);
-        app.ports.libraryLoaded.send(defaultLibrary);
-      }
     </script>
   </body>
 </html>
