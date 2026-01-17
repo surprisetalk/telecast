@@ -1,6 +1,8 @@
 import db from "postgres";
 import type { Env } from "./env";
 
+const BROKEN_THRESHOLD = 3;
+
 export async function onRequest({ request, env }: { request: Request; env: Env }) {
   const sql = db(env.DATABASE_URL!);
   const url = new URL(request.url);
@@ -11,18 +13,22 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
         select c.*
         from channel c
         where ${query.slice(5)} = any(packs)
-        order by updated_at desc nulls last
+          and consecutive_errors < ${BROKEN_THRESHOLD}
+        order by latest_episode_at desc nulls last
         limit 50
       `
     : await sql`
         select c.*
         from channel c
         where websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
+          and consecutive_errors < ${BROKEN_THRESHOLD}
         union
         select c.*
         from episode e
         inner join channel c using (channel_id)
         where websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', e.title || ' ' || coalesce(e.description, ''))
+          and c.consecutive_errors < ${BROKEN_THRESHOLD}
+        order by latest_episode_at desc nulls last
         limit 50
       `;
   return new Response(JSON.stringify(results), {

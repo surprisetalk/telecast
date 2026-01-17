@@ -7,6 +7,11 @@ export interface Channel {
   description: string | null;
   thumb: string | null;
   updated_at: Date;
+  author: string | null;
+  language: string | null;
+  explicit: boolean | null;
+  website: string | null;
+  categories: string[] | null;
 }
 
 export interface Episode {
@@ -15,6 +20,15 @@ export interface Episode {
   title: string;
   description: string | null;
   thumb: string | null;
+  src: string | null;
+  src_type: string | null;
+  src_size_bytes: number | null;
+  duration_seconds: number | null;
+  published_at: Date | null;
+  link: string | null;
+  season: number | null;
+  episode: number | null;
+  explicit: boolean | null;
 }
 
 const parser = new XMLParser({
@@ -77,6 +91,51 @@ function sanitizeText(text: any): string | null {
   return text || null;
 }
 
+function parseDuration(raw: any): number | null {
+  if (!raw) return null;
+  const str = typeof raw === "object" ? raw["#text"] : String(raw);
+
+  // Handle HH:MM:SS or MM:SS format
+  const parts = str.split(":").map(Number);
+  if (parts.some(isNaN)) return null;
+
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 1) return parts[0]; // Already seconds
+  return null;
+}
+
+function parseExplicit(raw: any): boolean | null {
+  if (raw === undefined || raw === null) return null;
+  const str = typeof raw === "object" ? raw["#text"] : String(raw);
+  return str === "yes" || str === "true" || str === "Yes" || str === "True";
+}
+
+function parseCategories(raw: any): string[] | null {
+  if (!raw) return null;
+  const cats = Array.isArray(raw) ? raw : [raw];
+  const result: string[] = [];
+  for (const cat of cats) {
+    const text = cat["@_text"];
+    if (text) result.push(text);
+    // Also check for nested subcategories
+    if (cat["itunes:category"]) {
+      const nested = Array.isArray(cat["itunes:category"]) ? cat["itunes:category"] : [cat["itunes:category"]];
+      for (const sub of nested) {
+        if (sub["@_text"]) result.push(sub["@_text"]);
+      }
+    }
+  }
+  return result.length > 0 ? result : null;
+}
+
+function parseDate(raw: any): Date | null {
+  if (!raw) return null;
+  const str = typeof raw === "object" ? raw["#text"] : String(raw);
+  const date = new Date(str);
+  return isNaN(date.getTime()) ? null : date;
+}
+
 function generateEpisodeId(item: any): string {
   // Prefer guid, then id, then link
   const raw = item.guid?.["#text"] || item.guid || item.id || item.link?.["@_href"] || item.link || "";
@@ -128,12 +187,22 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
     const items = Array.isArray(entries) ? entries : entries ? [entries] : [];
     return items.slice(0, 50).map((item: any) => {
       const thumb = item["media:group"]?.["media:thumbnail"]?.["@_url"];
+      const linkAttr = item.link?.["@_href"];
       return {
         channel_id: channelId,
         episode_id: item["yt:videoId"] || generateEpisodeId(item),
         title: sanitizeText(item.title) || "Untitled",
         description: sanitizeText(item["media:group"]?.["media:description"]),
         thumb: thumb?.startsWith("https://") ? thumb : null,
+        src: null, // YouTube embeds don't have direct media URLs
+        src_type: null,
+        src_size_bytes: null,
+        duration_seconds: null,
+        published_at: parseDate(item.published),
+        link: linkAttr?.startsWith("https://") ? linkAttr : null,
+        season: null,
+        episode: null,
+        explicit: null,
       };
     });
   }
@@ -150,12 +219,25 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
 
   return items.slice(0, 50).map(item => {
     const thumb = findEpisodeThumbnail(item);
+    const enclosure = item.enclosure;
+    const enclosureUrl = enclosure?.["@_url"];
+    const itemLink = item.link?.["@_href"] || (typeof item.link === "string" ? item.link : null);
+    const sizeRaw = enclosure?.["@_length"];
     return {
       channel_id: channelId,
       episode_id: generateEpisodeId(item),
       title: sanitizeText(item.title) || "Untitled",
       description: sanitizeText(item.description || item.summary || item.content),
       thumb: thumb?.startsWith("https://") ? thumb : null,
+      src: enclosureUrl?.startsWith("https://") ? enclosureUrl : null,
+      src_type: enclosure?.["@_type"] || null,
+      src_size_bytes: sizeRaw ? parseInt(sizeRaw, 10) || null : null,
+      duration_seconds: parseDuration(item["itunes:duration"]),
+      published_at: parseDate(item.pubDate || item.published),
+      link: itemLink?.startsWith("https://") ? itemLink : null,
+      season: item["itunes:season"] ? parseInt(item["itunes:season"], 10) || null : null,
+      episode: item["itunes:episode"] ? parseInt(item["itunes:episode"], 10) || null : null,
+      explicit: parseExplicit(item["itunes:explicit"]),
     };
   });
 }
@@ -171,6 +253,11 @@ export function parse(xmlText: string): Channel {
       description: sanitizeText(feed.subtitle),
       thumb: null, // YouTube feed-level thumbnails aren't reliable
       updated_at: new Date(),
+      author: sanitizeText(feed.author?.name) || null,
+      language: null,
+      explicit: null,
+      website: authorUri || `https://www.youtube.com/channel/${channelId}`,
+      categories: null,
     };
   }
 
@@ -182,6 +269,11 @@ export function parse(xmlText: string): Channel {
       description: sanitizeText(channel.description),
       thumb: findThumbnail(channel),
       updated_at: new Date(),
+      author: sanitizeText(channel["itunes:author"]) || null,
+      language: sanitizeText(channel.language) || null,
+      explicit: parseExplicit(channel["itunes:explicit"]),
+      website: channel.link || null,
+      categories: parseCategories(channel["itunes:category"]),
     };
   }
 
@@ -198,6 +290,11 @@ export function parse(xmlText: string): Channel {
       description: sanitizeText(feed.subtitle || feed.description),
       thumb: findAtomThumbnail(feed),
       updated_at: new Date(),
+      author: sanitizeText(feed.author?.name) || null,
+      language: feed["@_xml:lang"] || null,
+      explicit: parseExplicit(feed["itunes:explicit"]),
+      website: link || null,
+      categories: parseCategories(feed["itunes:category"]),
     };
   }
 
@@ -211,6 +308,11 @@ export function parse(xmlText: string): Channel {
       description: sanitizeText(channel.description),
       thumb: findThumbnail(channel),
       updated_at: new Date(),
+      author: sanitizeText(channel["dc:creator"]) || null,
+      language: sanitizeText(channel["dc:language"]) || null,
+      explicit: null,
+      website: channel.link || null,
+      categories: null,
     };
   }
 

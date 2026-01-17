@@ -13,16 +13,11 @@ async function main() {
 
   const sql = db(databaseUrl);
 
-  // Get oldest channels and update their timestamps atomically
+  // Get oldest channels (don't update timestamps here - we'll update on success/failure)
   const channels = await sql`
-    UPDATE channel
-    SET updated_at = now()
-    WHERE channel_id IN (
-      SELECT channel_id FROM channel
-      ORDER BY updated_at + random() * interval '2 days' ASC
-      LIMIT ${BATCH_SIZE}
-    )
-    RETURNING *
+    SELECT * FROM channel
+    ORDER BY updated_at + random() * interval '2 days' ASC
+    LIMIT ${BATCH_SIZE}
   `;
 
   const total = channels.length;
@@ -59,14 +54,51 @@ async function main() {
             SET title = EXCLUDED.title,
                 description = EXCLUDED.description,
                 thumb = EXCLUDED.thumb,
+                src = EXCLUDED.src,
+                src_type = EXCLUDED.src_type,
+                src_size_bytes = EXCLUDED.src_size_bytes,
+                duration_seconds = EXCLUDED.duration_seconds,
+                published_at = EXCLUDED.published_at,
+                link = EXCLUDED.link,
+                season = EXCLUDED.season,
+                episode = EXCLUDED.episode,
+                explicit = EXCLUDED.explicit,
                 updated_at = now()
           `;
         }
+
+        // Update channel stats on success
+        await sql`
+          UPDATE channel SET
+            consecutive_errors = 0,
+            last_error = null,
+            last_error_at = null,
+            last_success_at = now(),
+            updated_at = now(),
+            episode_count = (SELECT count(*) FROM episode WHERE channel_id = ${channel.channel_id}),
+            latest_episode_at = (SELECT max(published_at) FROM episode WHERE channel_id = ${channel.channel_id}),
+            avg_duration_seconds = (SELECT avg(duration_seconds)::integer FROM episode WHERE channel_id = ${channel.channel_id} AND duration_seconds IS NOT NULL)
+          WHERE channel_id = ${channel.channel_id}
+        `;
 
         succeeded++;
         console.log(`[${index}/${total}] ✓ ${shortUrl} (${episodes.length} episodes)`);
       } catch (e) {
         const msg = (e as Error).name === "AbortError" ? "Request timed out" : (e as Error).message;
+        const isRateLimit = msg === "HTTP 429";
+
+        // Track errors (excluding rate-limits which are transient)
+        if (!isRateLimit) {
+          await sql`
+            UPDATE channel SET
+              consecutive_errors = consecutive_errors + 1,
+              last_error = ${msg},
+              last_error_at = now(),
+              updated_at = now()
+            WHERE channel_id = ${channel.channel_id}
+          `;
+        }
+
         failures.push({ rss: channel.rss, error: msg });
         console.log(`[${index}/${total}] ✗ ${shortUrl} → ${msg}`);
       }
