@@ -19,11 +19,10 @@ export async function onRequest({ request, env }) {
         from channel c
         where to_tsquery(${query}) @@ to_tsvector(title || ' ' || coalesce(description, ''))
         union
-        select distinct on (c.channel_id) c.*
+        select c.*
         from episode e
         inner join channel c using (channel_id)
         where to_tsquery(${query}) @@ to_tsvector(e.title || ' ' || coalesce(e.description, ''))
-        order by updated_at desc nulls last
         limit 50
       `;
   return new Response(JSON.stringify(results), {

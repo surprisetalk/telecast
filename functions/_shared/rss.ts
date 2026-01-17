@@ -5,12 +5,23 @@ const parser = new XMLParser({
   attributeNamePrefix: "@_",
 });
 
-function sanitizeText(text: string | null | undefined): string | null {
+function sanitizeText(text: any): string | null {
   if (!text) return null;
+
+  // Handle arrays - take first element (fast-xml-parser returns arrays for duplicate tags)
+  if (Array.isArray(text)) {
+    text = text[0];
+    if (!text) return null;
+  }
 
   // Handle CDATA or object values
   if (typeof text === "object") {
     text = (text as any)["#text"] || String(text);
+  }
+
+  // Ensure we have a string
+  if (typeof text !== "string") {
+    text = String(text);
   }
 
   // Remove HTML tags

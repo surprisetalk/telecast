@@ -2,6 +2,7 @@ import db from "postgres";
 import { parseEpisodes } from "../functions/_shared/rss";
 
 const BATCH_SIZE = 100;
+const FETCH_TIMEOUT_MS = 15_000;
 
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -24,17 +25,28 @@ async function main() {
     RETURNING *
   `;
 
-  console.log(`Processing ${channels.length} channels...`);
+  const total = channels.length;
+  console.log(`Processing ${total} channels...\n`);
 
-  let processed = 0;
-  const errors: { channel_id: string; error: string }[] = [];
+  let completed = 0;
+  let succeeded = 0;
+  const failures: { rss: string; error: string }[] = [];
 
   await Promise.all(
     channels.map(async channel => {
+      const index = ++completed;
+      const shortUrl = channel.rss.replace(/^https?:\/\//, "").slice(0, 50);
+
       try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
         const res = await fetch(channel.rss, {
           headers: { "User-Agent": "Telecasts/1.0" },
+          signal: controller.signal,
         });
+        clearTimeout(timeout);
+
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const text = await res.text();
@@ -50,22 +62,29 @@ async function main() {
                 updated_at = now()
           `;
         }
-        processed++;
+
+        succeeded++;
+        console.log(`[${index}/${total}] ✓ ${shortUrl} (${episodes.length} episodes)`);
       } catch (e) {
-        errors.push({
-          channel_id: channel.channel_id,
-          error: (e as Error).message,
-        });
+        const msg = (e as Error).name === "AbortError" ? "Request timed out" : (e as Error).message;
+        failures.push({ rss: channel.rss, error: msg });
+        console.log(`[${index}/${total}] ✗ ${shortUrl} → ${msg}`);
       }
     }),
   );
 
-  console.log(`Processed: ${processed}/${channels.length}`);
-  if (errors.length > 0) {
-    console.log(`Errors:`, errors);
+  // Summary
+  console.log(`\nDone: ${succeeded} succeeded, ${failures.length} failed`);
+
+  if (failures.length > 0) {
+    console.log("\nFailed:");
+    for (const f of failures) {
+      const shortUrl = f.rss.replace(/^https?:\/\//, "");
+      console.log(`  • ${shortUrl} → ${f.error}`);
+    }
   }
 
   await sql.end();
 }
 
-main();
+await main();
