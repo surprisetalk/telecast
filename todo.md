@@ -1,7 +1,6 @@
-- [x] need a way of flagging and hiding/unhiding broken podcasts
-- [x] consider adding failure counts/messages to channel db after fetching
-- [-] grab richer metadata from yt and podcast index
-- [ ] make everything a bit more resilient. also more terse.
+- [ ] omit/deprioritize unindexed and stale channels from search
+- [ ] remove episode search; store episode description keywords in channel table
+      for search
 - [ ] make it not ugly
 - [ ] launch
 - [ ] support for livestreaming / clubhouse

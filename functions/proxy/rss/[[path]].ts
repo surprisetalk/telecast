@@ -25,11 +25,10 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
     await sql`
       insert into channel ${sql(channel)}
       on conflict (channel_id) do update
-      set 
+      set
         title = excluded.title,
         description = excluded.description,
         thumb = excluded.thumb
-        -- updated_at = now()
     `;
     await env.BUCKET_RSS.put(rssUrl, text);
     return new Response(text, {

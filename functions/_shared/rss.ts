@@ -36,6 +36,14 @@ const parser = new XMLParser({
   attributeNamePrefix: "@_",
 });
 
+function extractText(raw: any): string {
+  return typeof raw === "object" ? raw["#text"] : String(raw);
+}
+
+function httpsUrl(url: string | null | undefined): string | null {
+  return url?.startsWith("https://") ? url : null;
+}
+
 function sanitizeText(text: any): string | null {
   if (!text) return null;
 
@@ -93,7 +101,7 @@ function sanitizeText(text: any): string | null {
 
 function parseDuration(raw: any): number | null {
   if (!raw) return null;
-  const str = typeof raw === "object" ? raw["#text"] : String(raw);
+  const str = extractText(raw);
 
   // Handle HH:MM:SS or MM:SS format
   const parts = str.split(":").map(Number);
@@ -107,7 +115,7 @@ function parseDuration(raw: any): number | null {
 
 function parseExplicit(raw: any): boolean | null {
   if (raw === undefined || raw === null) return null;
-  const str = typeof raw === "object" ? raw["#text"] : String(raw);
+  const str = extractText(raw);
   return str === "yes" || str === "true" || str === "Yes" || str === "True";
 }
 
@@ -131,7 +139,7 @@ function parseCategories(raw: any): string[] | null {
 
 function parseDate(raw: any): Date | null {
   if (!raw) return null;
-  const str = typeof raw === "object" ? raw["#text"] : String(raw);
+  const str = extractText(raw);
   const date = new Date(str);
   return isNaN(date.getTime()) ? null : date;
 }
@@ -193,13 +201,13 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
         episode_id: item["yt:videoId"] || generateEpisodeId(item),
         title: sanitizeText(item.title) || "Untitled",
         description: sanitizeText(item["media:group"]?.["media:description"]),
-        thumb: thumb?.startsWith("https://") ? thumb : null,
+        thumb: httpsUrl(thumb),
         src: null, // YouTube embeds don't have direct media URLs
         src_type: null,
         src_size_bytes: null,
         duration_seconds: null,
         published_at: parseDate(item.published),
-        link: linkAttr?.startsWith("https://") ? linkAttr : null,
+        link: httpsUrl(linkAttr),
         season: null,
         episode: null,
         explicit: null,
@@ -228,13 +236,13 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
       episode_id: generateEpisodeId(item),
       title: sanitizeText(item.title) || "Untitled",
       description: sanitizeText(item.description || item.summary || item.content),
-      thumb: thumb?.startsWith("https://") ? thumb : null,
-      src: enclosureUrl?.startsWith("https://") ? enclosureUrl : null,
+      thumb: httpsUrl(thumb),
+      src: httpsUrl(enclosureUrl),
       src_type: enclosure?.["@_type"] || null,
       src_size_bytes: sizeRaw ? parseInt(sizeRaw, 10) || null : null,
       duration_seconds: parseDuration(item["itunes:duration"]),
       published_at: parseDate(item.pubDate || item.published),
-      link: itemLink?.startsWith("https://") ? itemLink : null,
+      link: httpsUrl(itemLink),
       season: item["itunes:season"] ? parseInt(item["itunes:season"], 10) || null : null,
       episode: item["itunes:episode"] ? parseInt(item["itunes:episode"], 10) || null : null,
       explicit: parseExplicit(item["itunes:explicit"]),
@@ -242,128 +250,100 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
   });
 }
 
+function generateChannelId(url: string): string {
+  try {
+    const urlObj = new URL(url);
+    return urlObj.hostname + urlObj.pathname;
+  } catch (e) {
+    return Buffer.from(url).toString("base64").slice(0, 32);
+  }
+}
+
+function findThumbnail(channel: any): string | null {
+  if (channel.image?.url) return channel.image.url;
+  if (channel["itunes:image"]?.["@_href"]) return channel["itunes:image"]["@_href"];
+  if (channel["media:thumbnail"]?.["@_url"]) return channel["media:thumbnail"]["@_url"];
+  return null;
+}
+
+function findAtomThumbnail(feed: any): string | null {
+  if (feed.icon) return feed.icon;
+  if (feed.logo) return feed.logo;
+  if (feed["media:thumbnail"]?.["@_url"]) return feed["media:thumbnail"]["@_url"];
+  return null;
+}
+
+function parseYouTubeFeed(feed: any): Channel {
+  const channelId = feed["yt:channelId"];
+  const authorUri = feed.author?.uri;
+  return {
+    channel_id: `youtube.com/channel/${channelId}`,
+    rss: authorUri || `https://www.youtube.com/channel/${channelId}`,
+    title: sanitizeText(feed.title),
+    description: sanitizeText(feed.subtitle),
+    thumb: null,
+    updated_at: new Date(),
+    author: sanitizeText(feed.author?.name) || null,
+    language: null,
+    explicit: null,
+    website: authorUri || `https://www.youtube.com/channel/${channelId}`,
+    categories: null,
+  };
+}
+
+function parseRss2Feed(channel: any): Channel {
+  return {
+    channel_id: generateChannelId(channel.link),
+    rss: channel.link,
+    title: sanitizeText(channel.title),
+    description: sanitizeText(channel.description),
+    thumb: findThumbnail(channel),
+    updated_at: new Date(),
+    author: sanitizeText(channel["itunes:author"]) || null,
+    language: sanitizeText(channel.language) || null,
+    explicit: parseExplicit(channel["itunes:explicit"]),
+    website: channel.link || null,
+    categories: parseCategories(channel["itunes:category"]),
+  };
+}
+
+function parseAtomFeed(feed: any): Channel {
+  const link = Array.isArray(feed.link)
+    ? feed.link.find((l: any) => l["@_rel"] === "alternate")?.["@_href"] || feed.link[0]["@_href"]
+    : feed.link["@_href"];
+  return {
+    channel_id: generateChannelId(link),
+    rss: link,
+    title: sanitizeText(feed.title),
+    description: sanitizeText(feed.subtitle || feed.description),
+    thumb: findAtomThumbnail(feed),
+    updated_at: new Date(),
+    author: sanitizeText(feed.author?.name) || null,
+    language: feed["@_xml:lang"] || null,
+    explicit: parseExplicit(feed["itunes:explicit"]),
+    website: link || null,
+    categories: parseCategories(feed["itunes:category"]),
+  };
+}
+
+function parseRdfFeed(rdf: any): Channel {
+  const channel = rdf.channel;
+  return {
+    channel_id: generateChannelId(channel.link),
+    rss: channel.link,
+    title: sanitizeText(channel.title),
+    description: sanitizeText(channel.description),
+    thumb: findThumbnail(channel),
+    updated_at: new Date(),
+    author: sanitizeText(channel["dc:creator"]) || null,
+    language: sanitizeText(channel["dc:language"]) || null,
+    explicit: null,
+    website: channel.link || null,
+    categories: null,
+  };
+}
+
 export function parse(xmlText: string): Channel {
-  function parseYouTubeFeed(feed: any): Channel {
-    const channelId = feed["yt:channelId"];
-    const authorUri = feed.author?.uri;
-    return {
-      channel_id: `youtube.com/channel/${channelId}`,
-      rss: authorUri || `https://www.youtube.com/channel/${channelId}`,
-      title: sanitizeText(feed.title),
-      description: sanitizeText(feed.subtitle),
-      thumb: null, // YouTube feed-level thumbnails aren't reliable
-      updated_at: new Date(),
-      author: sanitizeText(feed.author?.name) || null,
-      language: null,
-      explicit: null,
-      website: authorUri || `https://www.youtube.com/channel/${channelId}`,
-      categories: null,
-    };
-  }
-
-  function parseRss2Feed(channel: any): Channel {
-    return {
-      channel_id: generateChannelId(channel.link),
-      rss: channel.link,
-      title: sanitizeText(channel.title),
-      description: sanitizeText(channel.description),
-      thumb: findThumbnail(channel),
-      updated_at: new Date(),
-      author: sanitizeText(channel["itunes:author"]) || null,
-      language: sanitizeText(channel.language) || null,
-      explicit: parseExplicit(channel["itunes:explicit"]),
-      website: channel.link || null,
-      categories: parseCategories(channel["itunes:category"]),
-    };
-  }
-
-  function parseAtomFeed(feed: any): Channel {
-    // Get primary link (rel="alternate" or first link)
-    const link = Array.isArray(feed.link)
-      ? feed.link.find((l: any) => l["@_rel"] === "alternate")?.["@_href"] || feed.link[0]["@_href"]
-      : feed.link["@_href"];
-
-    return {
-      channel_id: generateChannelId(link),
-      rss: link,
-      title: sanitizeText(feed.title),
-      description: sanitizeText(feed.subtitle || feed.description),
-      thumb: findAtomThumbnail(feed),
-      updated_at: new Date(),
-      author: sanitizeText(feed.author?.name) || null,
-      language: feed["@_xml:lang"] || null,
-      explicit: parseExplicit(feed["itunes:explicit"]),
-      website: link || null,
-      categories: parseCategories(feed["itunes:category"]),
-    };
-  }
-
-  function parseRdfFeed(rdf: any): Channel {
-    const channel = rdf.channel;
-
-    return {
-      channel_id: generateChannelId(channel.link),
-      rss: channel.link,
-      title: sanitizeText(channel.title),
-      description: sanitizeText(channel.description),
-      thumb: findThumbnail(channel),
-      updated_at: new Date(),
-      author: sanitizeText(channel["dc:creator"]) || null,
-      language: sanitizeText(channel["dc:language"]) || null,
-      explicit: null,
-      website: channel.link || null,
-      categories: null,
-    };
-  }
-
-  function findThumbnail(channel: any): string | null {
-    // Try standard RSS image
-    if (channel.image?.url) {
-      return channel.image.url;
-    }
-
-    // Try itunes:image
-    if (channel["itunes:image"]?.["@_href"]) {
-      return channel["itunes:image"]["@_href"];
-    }
-
-    // Try media:thumbnail
-    if (channel["media:thumbnail"]?.["@_url"]) {
-      return channel["media:thumbnail"]["@_url"];
-    }
-
-    return null;
-  }
-
-  function findAtomThumbnail(feed: any): string | null {
-    // Try icon
-    if (feed.icon) {
-      return feed.icon;
-    }
-
-    // Try logo
-    if (feed.logo) {
-      return feed.logo;
-    }
-
-    // Try media:thumbnail
-    if (feed["media:thumbnail"]?.["@_url"]) {
-      return feed["media:thumbnail"]["@_url"];
-    }
-
-    return null;
-  }
-
-  function generateChannelId(url: string): string {
-    try {
-      const urlObj = new URL(url);
-      return urlObj.hostname + urlObj.pathname;
-    } catch (e) {
-      // If URL parsing fails, hash the original string
-      return Buffer.from(url).toString("base64").slice(0, 32);
-    }
-  }
-
   const xml = parser.parse(xmlText);
 
   // Handle different feed formats

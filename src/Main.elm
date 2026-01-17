@@ -62,15 +62,6 @@ playbackDecoder =
 
 
 
-{-
-   feedDecoder : D.Decoder Feed
-   feedDecoder =
-       D.succeed Feed
-           |> D.required "channel" channelDecoder
-           |> D.required "episodes" (D.dict episodeDecoder)
--}
-
-
 urlDecoder : D.Decoder Url
 urlDecoder =
     D.string
@@ -104,8 +95,8 @@ channelEncoder channel =
     E.object
         [ ( "title", E.string channel.title )
         , ( "description", E.string channel.description )
-        , ( "thumb", channel.thumb |> Maybe.map urlEncoder |> Maybe.withDefault E.null )
-        , ( "rss", urlEncoder channel.rss )
+        , ( "thumb", channel.thumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
+        , ( "rss", E.string (Url.toString channel.rss) )
         , ( "updated_at", E.string channel.updatedAt )
         ]
 
@@ -115,8 +106,8 @@ episodeEncoder episode =
     E.object
         [ ( "id", E.string episode.id )
         , ( "title", E.string episode.title )
-        , ( "thumb", episode.thumb |> Maybe.map urlEncoder |> Maybe.withDefault E.null )
-        , ( "src", urlEncoder episode.src )
+        , ( "thumb", episode.thumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
+        , ( "src", E.string (Url.toString episode.src) )
         , ( "description", E.string episode.description )
         ]
 
@@ -127,12 +118,6 @@ playbackEncoder playback =
         [ ( "t", E.int (Time.posixToMillis playback.t) )
         , ( "s", E.list E.int [ Tuple.first playback.s, Tuple.second playback.s ] )
         ]
-
-
-urlEncoder : Url -> E.Value
-urlEncoder url =
-    E.string (Url.toString url)
-
 
 
 -- PORTS
@@ -257,11 +242,13 @@ update msg model =
             case result of
                 Ok feed ->
                     let
-                        -- Use the original RSS URL, not the <link> from the feed
+                        oldChannel =
+                            feed.channel
+
                         correctedFeed =
                             case Url.fromString originalRss of
                                 Just rssUrl ->
-                                    { feed | channel = { title = feed.channel.title, description = feed.channel.description, thumb = feed.channel.thumb, rss = rssUrl, updatedAt = feed.channel.updatedAt } }
+                                    { feed | channel = { oldChannel | rss = rssUrl } }
 
                                 Nothing ->
                                     feed
@@ -387,7 +374,6 @@ viewChannels model =
                 []
             , button [] [ text "search" ]
             , ul [ id "packs" ]
-                -- TODO
                 [ li [] [ a [ href "/", onClick (PackSelecting "news") ] [ text "News" ] ]
                 ]
             ]
@@ -624,35 +610,6 @@ type Msg
 
 route : Url -> Model -> ( Model, Cmd Msg )
 route url model =
-    let
-        -- TODO: Inline this
-        loadChannel : String -> Maybe String -> ( Model, Cmd Msg )
-        loadChannel rss mEid =
-            case model.library of
-                Loadable (Just (Ok lib)) ->
-                    case Dict.get rss lib.channels of
-                        Just channel ->
-                            ( { model
-                                | channel = Loadable (Just (Ok (Just { channel = channel, episodes = Dict.get rss lib.episodes |> Maybe.withDefault Dict.empty })))
-                                , episode = mEid
-                              }
-                            , Cmd.none
-                            )
-
-                        Nothing ->
-                            ( { model
-                                | channel = Loadable Nothing
-                                , episode = Nothing
-                              }
-                            , Http.get
-                                { url = "/proxy/rss/" ++ rss
-                                , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss mEid)
-                                }
-                            )
-
-                _ ->
-                    ( model, Cmd.none )
-    in
     url
         |> P.parse
             (P.oneOf
@@ -673,7 +630,6 @@ route url model =
                                                     , updatedAt = ""
                                                     }
                                             in
-                                            -- TODO: List first N episodes.
                                             Loadable (Just (Ok (Just { channel = channel, episodes = Dict.empty })))
                                         , episode = Nothing
                                       }
@@ -689,17 +645,43 @@ route url model =
                             let
                                 decodedEid =
                                     Maybe.andThen Url.percentDecode mEid
+
+                                isCurrentChannel =
+                                    case model.channel of
+                                        Loadable (Just (Ok (Just feed))) ->
+                                            Url.percentDecode (Url.toString feed.channel.rss) == Url.percentDecode rss
+
+                                        _ ->
+                                            False
                             in
-                            case model.channel of
-                                Loadable (Just (Ok (Just feed))) ->
-                                    if Url.percentDecode (Url.toString feed.channel.rss) == Url.percentDecode rss then
-                                        ( { model | episode = decodedEid }, Cmd.none )
+                            if isCurrentChannel then
+                                ( { model | episode = decodedEid }, Cmd.none )
 
-                                    else
-                                        loadChannel rss decodedEid
+                            else
+                                case model.library of
+                                    Loadable (Just (Ok lib)) ->
+                                        case Dict.get rss lib.channels of
+                                            Just channel ->
+                                                ( { model
+                                                    | channel = Loadable (Just (Ok (Just { channel = channel, episodes = Dict.get rss lib.episodes |> Maybe.withDefault Dict.empty })))
+                                                    , episode = decodedEid
+                                                  }
+                                                , Cmd.none
+                                                )
 
-                                _ ->
-                                    loadChannel rss decodedEid
+                                            Nothing ->
+                                                ( { model
+                                                    | channel = Loadable Nothing
+                                                    , episode = Nothing
+                                                  }
+                                                , Http.get
+                                                    { url = "/proxy/rss/" ++ rss
+                                                    , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss decodedEid)
+                                                    }
+                                                )
+
+                                    _ ->
+                                        ( model, Cmd.none )
                         )
                 ]
             )
@@ -813,22 +795,13 @@ podcastRssDecoder =
 
 podcastItemDecoder : X.Decoder Episode
 podcastItemDecoder =
-    X.oneOf
-        [ -- With guid
-          X.succeed Episode
-            |> X.requiredPath [ "guid" ] (X.single X.string)
-            |> X.requiredPath [ "title" ] (X.single X.string)
-            |> X.possiblePath [ "itunes:image" ] (X.single (X.stringAttr "href" |> X.andThen urlDecoder_))
-            |> X.requiredPath [ "enclosure" ] (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
-            |> X.optionalPath [ "description" ] (X.single X.string) ""
-        , -- Without guid, use enclosure url as id
-          X.succeed Episode
-            |> X.requiredPath [ "enclosure" ] (X.single (X.stringAttr "url"))
-            |> X.requiredPath [ "title" ] (X.single X.string)
-            |> X.possiblePath [ "itunes:image" ] (X.single (X.stringAttr "href" |> X.andThen urlDecoder_))
-            |> X.requiredPath [ "enclosure" ] (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
-            |> X.optionalPath [ "description" ] (X.single X.string) ""
-        ]
+    itemDecoderWith
+        { thumbPath = [ "itunes:image" ]
+        , thumbDecoder = X.stringAttr "href" |> X.andThen urlDecoder_
+        , srcPath = [ "enclosure" ]
+        , srcAsString = X.stringAttr "url"
+        , srcAsUrl = X.stringAttr "url" |> X.andThen urlDecoder_
+        }
 
 
 standardRssDecoder : X.Decoder Feed
@@ -849,20 +822,36 @@ standardRssDecoder =
 
 standardItemDecoder : X.Decoder Episode
 standardItemDecoder =
+    itemDecoderWith
+        { thumbPath = [ "image", "url" ]
+        , thumbDecoder = X.string |> X.andThen urlDecoder_
+        , srcPath = [ "link" ]
+        , srcAsString = X.string
+        , srcAsUrl = X.string |> X.andThen urlDecoder_
+        }
+
+
+itemDecoderWith :
+    { thumbPath : List String
+    , thumbDecoder : X.Decoder Url
+    , srcPath : List String
+    , srcAsString : X.Decoder String
+    , srcAsUrl : X.Decoder Url
+    }
+    -> X.Decoder Episode
+itemDecoderWith { thumbPath, thumbDecoder, srcPath, srcAsString, srcAsUrl } =
     X.oneOf
-        [ -- With guid
-          X.succeed Episode
+        [ X.succeed Episode
             |> X.requiredPath [ "guid" ] (X.single X.string)
             |> X.requiredPath [ "title" ] (X.single X.string)
-            |> X.possiblePath [ "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
-            |> X.requiredPath [ "link" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.possiblePath thumbPath (X.single thumbDecoder)
+            |> X.requiredPath srcPath (X.single srcAsUrl)
             |> X.optionalPath [ "description" ] (X.single X.string) ""
-        , -- Without guid, use link as id
-          X.succeed Episode
-            |> X.requiredPath [ "link" ] (X.single X.string)
+        , X.succeed Episode
+            |> X.requiredPath srcPath (X.single srcAsString)
             |> X.requiredPath [ "title" ] (X.single X.string)
-            |> X.possiblePath [ "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
-            |> X.requiredPath [ "link" ] (X.single (X.string |> X.andThen urlDecoder_))
+            |> X.possiblePath thumbPath (X.single thumbDecoder)
+            |> X.requiredPath srcPath (X.single srcAsUrl)
             |> X.optionalPath [ "description" ] (X.single X.string) ""
         ]
 
