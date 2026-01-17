@@ -1,4 +1,5 @@
 - [-] make it not ugly
+- [ ] discover/recommended/explore/packs
 - [ ] launch
 - [ ] support for livestreaming / clubhouse
 - [ ] copy keywords from episode description to channel table for search
