@@ -1,7 +1,8 @@
 import * as rss from "../../_shared/rss";
 import db from "postgres";
+import type { Env } from "../../env";
 
-export async function onRequest({ request, env }) {
+export async function onRequest({ request, env }: { request: Request; env: Env }) {
   const url = new URL(request.url);
   const rssUrl = decodeURIComponent(url.pathname.slice("/proxy/rss/".length));
   let response = await env.BUCKET_RSS.get(rssUrl);
@@ -36,6 +37,6 @@ export async function onRequest({ request, env }) {
     });
   }
   return new Response(response.body, {
-    headers: response.headers,
+    headers: { "content-type": "application/xml" },
   });
 }

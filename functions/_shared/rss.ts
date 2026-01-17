@@ -68,8 +68,8 @@ function sanitizeText(text: any): string | null {
     text = text.replaceAll(entity, char);
   }
   // Decode numeric entities: &#123; and &#x1F;
-  text = text.replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)));
-  text = text.replace(/&#x([0-9a-fA-F]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)));
+  text = text.replace(/&#(\d+);/g, (_: string, code: string) => String.fromCodePoint(parseInt(code, 10)));
+  text = text.replace(/&#x([0-9a-fA-F]+);/gi, (_: string, hex: string) => String.fromCodePoint(parseInt(hex, 16)));
 
   // Normalize whitespace
   text = text.replace(/\s+/g, " ").trim();
@@ -188,7 +188,7 @@ export function parse(xmlText: string): Channel {
   function parseAtomFeed(feed: any): Channel {
     // Get primary link (rel="alternate" or first link)
     const link = Array.isArray(feed.link)
-      ? feed.link.find(l => l["@_rel"] === "alternate")?.["@_href"] || feed.link[0]["@_href"]
+      ? feed.link.find((l: any) => l["@_rel"] === "alternate")?.["@_href"] || feed.link[0]["@_href"]
       : feed.link["@_href"];
 
     return {

@@ -1,6 +1,7 @@
 import db from "postgres";
+import type { Env } from "./env";
 
-export async function onRequest({ request, env }) {
+export async function onRequest({ request, env }: { request: Request; env: Env }) {
   const sql = db(env.DATABASE_URL!);
   const url = new URL(request.url);
   const query = url.searchParams.get("q");
