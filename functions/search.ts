@@ -17,12 +17,12 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
     : await sql`
         select c.*
         from channel c
-        where to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
+        where websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
         union
         select c.*
         from episode e
         inner join channel c using (channel_id)
-        where to_tsquery('english', ${query}) @@ to_tsvector('english', e.title || ' ' || coalesce(e.description, ''))
+        where websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', e.title || ' ' || coalesce(e.description, ''))
         limit 50
       `;
   return new Response(JSON.stringify(results), {
