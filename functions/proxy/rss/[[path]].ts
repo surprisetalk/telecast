@@ -9,7 +9,9 @@ export async function onRequest({ request, env }) {
     const sql = db(env.DATABASE_URL!);
     response = await fetch(rssUrl);
     const text = await response.clone().text();
-    if (!/<(feed|rss|RDF)[\s>]/.test(text)) return new Response("Invalid RSS feed", { status: 400 });
+    if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
+      return new Response("Invalid RSS feed", { status: 400 });
+    }
     const channel = rss.parse(text);
     await sql`
       insert into channel ${sql(channel)}

@@ -32,7 +32,8 @@ function sanitizeText(text: string | null | undefined): string | null {
 
 function generateEpisodeId(item: any): string {
   // Prefer guid, then id, then link
-  const raw = item.guid?.["#text"] || item.guid || item.id || item.link?.["@_href"] || item.link || "";
+  const raw = item.guid?.["#text"] || item.guid || item.id ||
+    item.link?.["@_href"] || item.link || "";
   const str = typeof raw === "object" ? JSON.stringify(raw) : String(raw);
 
   // Create a simple hash for deterministic IDs
@@ -57,8 +58,12 @@ function findEpisodeThumbnail(item: any): string | null {
   // Try media:content with medium="image"
   const mediaContent = item["media:content"];
   if (mediaContent) {
-    const contents = Array.isArray(mediaContent) ? mediaContent : [mediaContent];
-    const image = contents.find((c) => c["@_medium"] === "image" || c["@_type"]?.startsWith("image/"));
+    const contents = Array.isArray(mediaContent)
+      ? mediaContent
+      : [mediaContent];
+    const image = contents.find((c) =>
+      c["@_medium"] === "image" || c["@_type"]?.startsWith("image/")
+    );
     if (image?.["@_url"]) return image["@_url"];
   }
 
@@ -79,7 +84,9 @@ export function parseEpisodes(xmlText: string, channelId: string) {
   if (xml.feed?.entry) {
     items = Array.isArray(xml.feed.entry) ? xml.feed.entry : [xml.feed.entry];
   } else if (xml.rss?.channel?.item) {
-    items = Array.isArray(xml.rss.channel.item) ? xml.rss.channel.item : [xml.rss.channel.item];
+    items = Array.isArray(xml.rss.channel.item)
+      ? xml.rss.channel.item
+      : [xml.rss.channel.item];
   } else if (xml.RDF?.item) {
     items = Array.isArray(xml.RDF.item) ? xml.RDF.item : [xml.RDF.item];
   }
@@ -90,7 +97,9 @@ export function parseEpisodes(xmlText: string, channelId: string) {
       channel_id: channelId,
       episode_id: generateEpisodeId(item),
       title: sanitizeText(item.title) || "Untitled",
-      description: sanitizeText(item.description || item.summary || item.content),
+      description: sanitizeText(
+        item.description || item.summary || item.content,
+      ),
       thumb: thumb?.startsWith("https://") ? thumb : null,
     };
   });
@@ -111,7 +120,8 @@ export function parse(xmlText) {
   function parseAtomFeed(feed) {
     // Get primary link (rel="alternate" or first link)
     const link = Array.isArray(feed.link)
-      ? feed.link.find(l => l["@_rel"] === "alternate")?.["@_href"] || feed.link[0]["@_href"]
+      ? feed.link.find((l) => l["@_rel"] === "alternate")?.["@_href"] ||
+        feed.link[0]["@_href"]
       : feed.link["@_href"];
 
     return {
