@@ -14,6 +14,7 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
         from channel c
         where ${query.slice(5)} = any(packs)
           and consecutive_errors < ${BROKEN_THRESHOLD}
+          and last_success_at is not null
         order by latest_episode_at desc nulls last
         limit 50
       `
@@ -22,12 +23,7 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
         from channel c
         where websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
           and consecutive_errors < ${BROKEN_THRESHOLD}
-        union
-        select c.*
-        from episode e
-        inner join channel c using (channel_id)
-        where websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', e.title || ' ' || coalesce(e.description, ''))
-          and c.consecutive_errors < ${BROKEN_THRESHOLD}
+          and last_success_at is not null
         order by latest_episode_at desc nulls last
         limit 50
       `;
