@@ -1,6 +1,7 @@
 - [ ] clean up type errors
 - [ ] make everything a bit more resilient. also more terse.
 - [ ] make it not ugly
+- [ ] consider adding failure counts/messages to channel db after fetching
 - [ ] grab kagismallweb yt ids and create a pack
 - [ ] launch
 - [ ] support for livestreaming / clubhouse
