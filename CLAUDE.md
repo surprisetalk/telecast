@@ -9,6 +9,7 @@ code in this repository.
 npm run dev-server    # Wrangler Pages dev server (localhost:8788)
 npm run dev-client    # Elm watch/compile with debug mode
 elm make src/Main.elm --output=public/elm.js  # Production build
+npx tsx scripts/refresh.ts  # Batch refresh feeds (runs via GitHub Actions every 5 min)
 ```
 
 Requires `.env` with `DATABASE_URL` (Neon PostgreSQL connection string).
@@ -41,6 +42,42 @@ Supports RSS 2.0, Atom, RDF, and YouTube channel feeds. Feed parsing logic in
 2. Frontend requests `/proxy/rss/{url}` → Worker fetches/caches feed, upserts to
    PostgreSQL
 3. Episodes render in middle column → playback tracked client-side
+
+### R2 Buckets
+
+Workers use two R2 bindings (see `wrangler.toml`):
+- `BUCKET_RSS` - cached feed XML
+- `BUCKET_THUMB` - cached channel/episode images
+
+### Search
+
+Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `pack:{pack_id}`
+filters channels by pack membership (channels have a `packs text[]` column).
+
+## Elm Frontend
+
+### Core Types
+
+```elm
+type alias Library = { channels, episodes, history, settings }
+type alias Channel = { title, description, thumb, rss, updatedAt }
+type alias Episode = { id, title, thumb, src, description }
+type alias Playback = { t : Time.Posix, s : (current, duration) }
+```
+
+### Ports
+
+Two-way localStorage sync:
+- `libraryLoaded` (incoming) - receives library on load
+- `librarySaving` (outgoing) - persists library on change
+
+### Loading Pattern
+
+```elm
+type Loadable a = Loadable (Maybe (Result String a))
+```
+
+Used for channels/episodes that may be unloaded, loading, loaded, or errored.
 
 ## Code Style
 
