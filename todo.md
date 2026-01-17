@@ -2,6 +2,4 @@
 - [ ] make everything a bit more resilient. also more terse.
 - [ ] launch
 - [ ] grab kagismallweb yt ids and create a pack
-- [ ] https://github.com/chen-zhitao/Youtube-Channels-Dataset
-- [ ] https://github.com/Code-Gym/python-dataset/blob/master/youtube-channels-data-from-socialblade.csv
 - [ ] support for livestreaming / clubhouse
