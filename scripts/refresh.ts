@@ -19,7 +19,7 @@ async function main() {
     SET updated_at = now()
     WHERE channel_id IN (
       SELECT channel_id FROM channel
-      ORDER BY updated_at ASC
+      ORDER BY updated_at + random() * interval '1 week' ASC
       LIMIT ${BATCH_SIZE}
     )
     RETURNING *
