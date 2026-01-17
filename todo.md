@@ -1,7 +1,6 @@
 - [ ] clean up type errors
 - [ ] make everything a bit more resilient. also more terse.
 - [ ] make it not ugly
-- [-] open podcast index sqlite3
 - [ ] grab kagismallweb yt ids and create a pack
 - [ ] launch
 - [ ] support for livestreaming / clubhouse
