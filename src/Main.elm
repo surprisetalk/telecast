@@ -487,7 +487,7 @@ viewSubscribeButton rss_ model =
 viewEpisodeItem : Url -> Episode -> Html Msg
 viewEpisodeItem rss episode =
     li []
-        [ a [ href ("/" ++ Url.percentEncode (Url.toString rss) ++ "/" ++ episode.id) ]
+        [ a [ href ("/" ++ Url.percentEncode (Url.toString rss) ++ "/" ++ Url.percentEncode episode.id) ]
             [ text episode.title ]
         ]
 
@@ -676,16 +676,20 @@ route url model =
                 , (P.string </> P.oneOf [ P.string |> P.map Just, P.top |> P.map Nothing ])
                     |> P.map
                         (\rss mEid ->
+                            let
+                                decodedEid =
+                                    Maybe.andThen Url.percentDecode mEid
+                            in
                             case model.channel of
                                 Loadable (Just (Ok (Just feed))) ->
                                     if Url.percentDecode (Url.toString feed.channel.rss) == Url.percentDecode rss then
-                                        ( { model | episode = mEid }, Cmd.none )
+                                        ( { model | episode = decodedEid }, Cmd.none )
 
                                     else
-                                        loadChannel rss mEid
+                                        loadChannel rss decodedEid
 
                                 _ ->
-                                    loadChannel rss mEid
+                                    loadChannel rss decodedEid
                         )
                 ]
             )
