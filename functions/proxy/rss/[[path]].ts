@@ -17,8 +17,8 @@ export async function onRequest({ request, env }) {
       set 
         title = excluded.title,
         description = excluded.description,
-        thumb = excluded.thumb,
-        updated_at = now()
+        thumb = excluded.thumb
+        -- updated_at = now()
     `;
     await env.BUCKET_RSS.put(rssUrl, text);
   }
