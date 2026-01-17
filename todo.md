@@ -1,5 +1,6 @@
 - [ ] need a way of flagging and hiding/unhiding broken podcasts
 - [ ] consider adding failure counts/messages to channel db after fetching
+- [ ] grab richer metadata from yt and podcast index
 - [ ] make everything a bit more resilient. also more terse.
 - [ ] make it not ugly
 - [ ] grab kagismallweb yt ids and create a pack
