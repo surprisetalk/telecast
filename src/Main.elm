@@ -287,7 +287,7 @@ update msg model =
                     )
 
                 Err err ->
-                    ( { model | channels = Loadable (Just (Err (Debug.toString err))) }
+                    ( { model | channels = Loadable (Just (Err (httpErrorToString err))) }
                     , Cmd.none
                     )
 
@@ -388,30 +388,40 @@ viewChannels model =
 
 viewSearchResults : Model -> Html Msg
 viewSearchResults model =
-    ul [ id "search-results" ]
+    ul [ id "search-results", class "custom-scrollbar" ]
         (case model.channels of
             Loadable Nothing ->
-                [ text "Loading..." ]
+                [ li [] [ div [ class "loading" ] [] ] ]
+
+            Loadable (Just (Ok [])) ->
+                [ li [ class "empty-state" ] [ text "No results found" ] ]
 
             Loadable (Just (Ok channels)) ->
                 List.map viewChannelItem channels
 
             Loadable (Just (Err err)) ->
-                [ text ("Error: " ++ err) ]
+                [ li [] [ div [ class "error" ] [ text err ] ] ]
         )
 
 
 viewLibrary : Model -> Html Msg
 viewLibrary model =
-    ul [ id "library" ]
+    ul [ id "library", class "custom-scrollbar" ]
         (li [] [ a [ href "/" ] [ text "My Subscriptions" ] ]
             :: (case model.library of
-                    Loadable (Just (Ok lib)) ->
-                        Dict.values lib.channels
-                            |> List.map viewChannelItem
+                    Loadable Nothing ->
+                        [ li [] [ div [ class "loading" ] [] ] ]
 
-                    _ ->
-                        []
+                    Loadable (Just (Ok lib)) ->
+                        if Dict.isEmpty lib.channels then
+                            [ li [ class "empty-state" ] [ text "No subscriptions yet" ] ]
+
+                        else
+                            Dict.values lib.channels
+                                |> List.map viewChannelItem
+
+                    Loadable (Just (Err err)) ->
+                        [ li [] [ div [ class "error" ] [ text err ] ] ]
                )
         )
 
@@ -435,20 +445,20 @@ viewChannel model =
                     , viewSubscribeButton feed.channel.rss model
                     , p [] [ text feed.channel.description ]
                     ]
-                , ul [ id "episodes" ]
+                , ul [ id "episodes", class "custom-scrollbar" ]
                     (Dict.values feed.episodes
                         |> List.map (viewEpisodeItem feed.channel.rss)
                     )
                 ]
 
             Loadable Nothing ->
-                [ text "Loading..." ]
+                [ div [ class "loading" ] [] ]
 
             Loadable (Just (Err err)) ->
-                [ text ("Error: " ++ err) ]
+                [ div [ class "error" ] [ text err ] ]
 
             _ ->
-                [ text "Select a channel" ]
+                [ div [ class "empty-state" ] [ text "Select a channel" ] ]
         )
 
 
@@ -495,25 +505,40 @@ viewEpisode model =
                         ]
 
                     Nothing ->
-                        [ text "Episode not found" ]
+                        [ div [ class "empty-state" ] [ text "Select an episode to play" ] ]
 
             _ ->
-                []
+                [ div [ class "empty-state" ] [ text "Select an episode to play" ] ]
         )
 
 
 viewPlayer : Episode -> Html Msg
 viewPlayer episode =
     let
+        srcStr =
+            Url.toString episode.src
+
         isYoutube =
-            String.contains "youtube" (Url.toString episode.src)
+            String.contains "youtube" srcStr
+
+        isAudio =
+            String.endsWith ".mp3" srcStr || String.endsWith ".m4a" srcStr
     in
     if isYoutube then
         iframe
             [ id "player"
-            , src (Url.toString episode.src)
+            , src srcStr
             , A.width 560
             , A.height 315
+            , A.autoplay True
+            ]
+            []
+
+    else if isAudio then
+        audio
+            [ id "player"
+            , src srcStr
+            , A.controls True
             , A.autoplay True
             ]
             []
@@ -521,74 +546,11 @@ viewPlayer episode =
     else
         video
             [ id "player"
-            , src (Url.toString episode.src)
+            , src srcStr
             , A.controls True
             ]
             []
 
-
-
--- HELPERS
-
-
-relativeTime : Time.Posix -> String
-relativeTime timestamp =
-    let
-        now =
-            Time.millisToPosix (Time.posixToMillis timestamp + 1000)
-
-        -- temporary mock current time
-        diff =
-            Time.posixToMillis now - Time.posixToMillis timestamp
-
-        minutes =
-            diff // 60000
-
-        hours =
-            minutes // 60
-
-        days =
-            hours // 24
-    in
-    if diff < 60000 then
-        "just now"
-
-    else if minutes < 60 then
-        String.fromInt minutes ++ " minutes ago"
-
-    else if hours < 24 then
-        String.fromInt hours ++ " hours ago"
-
-    else
-        String.fromInt days ++ " days ago"
-
-
-filterChannels : String -> List Channel -> List Channel
-filterChannels query channels =
-    let
-        lowerQuery =
-            String.toLower query
-
-        matchesQuery channel =
-            String.contains lowerQuery (String.toLower channel.title)
-                || String.contains lowerQuery (String.toLower channel.description)
-    in
-    List.filter matchesQuery channels
-
-
-isSubscribed : String -> Library -> Bool
-isSubscribed rss lib =
-    Dict.member rss lib.channels
-
-
-getEpisodeFromModel : Model -> Maybe Episode
-getEpisodeFromModel model =
-    case ( model.channel, model.episode ) of
-        ( Loadable (Just (Ok (Just feed))), Just episodeId ) ->
-            Dict.get episodeId feed.episodes
-
-        _ ->
-            Nothing
 
 
 
@@ -717,7 +679,7 @@ route url model =
                         (\rss mEid ->
                             case model.channel of
                                 Loadable (Just (Ok (Just feed))) ->
-                                    if Just (Url.toString feed.channel.rss) == Url.percentDecode rss then
+                                    if Url.percentDecode (Url.toString feed.channel.rss) == Url.percentDecode rss then
                                         ( { model | episode = mEid }, Cmd.none )
 
                                     else
