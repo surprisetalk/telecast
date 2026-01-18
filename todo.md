@@ -1,5 +1,6 @@
 - [-] make it not ugly
 - [ ] discover/recommended/explore/packs
 - [ ] launch
+- [ ] ship bubbletea tui
 - [ ] support for livestreaming / clubhouse
 - [ ] copy keywords from episode description to channel table for search
