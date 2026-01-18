@@ -517,8 +517,20 @@ viewPlayer episode =
         isYoutube =
             String.contains "youtube" srcStr
 
+        isPeerTubeDownload =
+            String.contains "/download/videos/" srcStr
+
         isAudio =
             String.endsWith ".mp3" srcStr || String.endsWith ".m4a" srcStr
+
+        peerTubeEmbedUrl =
+            if isPeerTubeDownload then
+                episode.id
+                    |> String.replace "/w/" "/videos/embed/"
+                    |> String.replace "/videos/watch/" "/videos/embed/"
+
+            else
+                ""
     in
     if isYoutube then
         iframe
@@ -527,6 +539,18 @@ viewPlayer episode =
             , A.width 560
             , A.height 315
             , A.autoplay True
+            ]
+            []
+
+    else if isPeerTubeDownload && String.contains "/videos/embed/" peerTubeEmbedUrl then
+        iframe
+            [ id "player"
+            , src peerTubeEmbedUrl
+            , A.width 560
+            , A.height 315
+            , A.autoplay True
+            , A.attribute "allowfullscreen" "true"
+            , A.attribute "sandbox" "allow-same-origin allow-scripts allow-popups allow-forms"
             ]
             []
 
