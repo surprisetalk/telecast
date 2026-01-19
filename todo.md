@@ -1,5 +1,6 @@
 - [-] make it not ugly
 - [ ] fetch/refresh feeds; add new episodes to watch queue
+- [ ] the search bar should have examples and quick links and recents next to it
 - [ ] launch
 - [ ] ship bubbletea tui
 - [ ] support for livestreaming / clubhouse
