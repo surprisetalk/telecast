@@ -8,9 +8,6 @@
 - [ ] copy keywords from episode description to channel table for search
 
 <!--
-
-TODO: to edit your subs/eps, just redirect to ?tag=mine
-
 body.rows
   case episode of
     some ep ->
@@ -28,10 +25,30 @@ body.rows
     nothing ->
       let channel = model.channel |> default my_feed
       div#channel.rows
-        div
-          h1 channel.name
-          todo
-        todo
+        div.rows
+          case is_my_feed of
+            false ->
+              div.cols
+                img profileimg
+                h1 username
+                a href=/?tag=saved "my saved channels"
+            true ->
+              div.cols
+                img channel.thumb
+                h1 channel.name
+                case todo of
+                  _ -> button subscribe
+                  _ -> button unsubscribe
+          p description
+        div.autogrid
+          -- todo: filter out already watched episodes from feed?
+          list.map channel.episodes
+            div
+              case member ep.id feed of
+                true -> button x
+                false -> button +
+              ch.thumb
+              ch.title
     just search ->
       div#search.rows
         h1 search
