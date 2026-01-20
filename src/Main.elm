@@ -497,24 +497,27 @@ view model =
     , body =
         [ div [ class "rows", id "body" ]
             [ header [ class "cols" ]
-                [ div [ class "cols" ]
-                    [ case ( model.search, model.channel ) of
-                        ( Just _, _ ) ->
-                            button [ onClick GoBack, class "back" ] [ text "<" ]
-
-                        ( Nothing, Just _ ) ->
-                            button [ onClick GoBack, class "back" ] [ text "<" ]
-
-                        ( Nothing, Nothing ) ->
-                            text ""
-                    , a [ href "/" ] [ text "telecasts" ]
-                    ]
-                , case model.search of
-                    Just _ ->
-                        text ""
-
-                    Nothing ->
-                        a [ href "/?q=" ] [ text "search" ]
+                [ div [ class "cols" ] <|
+                    List.intersperse (span [] [ text "/" ]) <|
+                        List.concat
+                            [ [ a [ href "/" ] [ text "telecasts" ] ]
+                            , model.search
+                                -- TODO: Build url properly or just clear the channel/episode.
+                                |> Maybe.map (\{ query } -> [ a [ href ("/?q=" ++ query), class "back" ] [ text ("\"" ++ query ++ "\"") ] ])
+                                |> Maybe.withDefault []
+                            , model.channel
+                                |> Maybe.map
+                                    (\( _, _ ) ->
+                                        -- TODO: Build urls properly.
+                                        [ a [ href ("/" ++ "TODO") ] [ text "TODO" ]
+                                        , a [ href ("/" ++ "TODO") ] [ text "TODO" ]
+                                        ]
+                                    )
+                                |> Maybe.withDefault []
+                            ]
+                , model.search
+                    |> Maybe.map (\_ -> a [ href "?" ] [ text "X" ])
+                    |> Maybe.withDefault (a [ href "/?q=" ] [ text "search" ])
                 ]
             , case findSelectedEpisode model of
                 Just ( episode, maybeChannel ) ->
