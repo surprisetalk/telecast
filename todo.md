@@ -1,7 +1,7 @@
 - [-] make it not ugly
 - [ ] simplify style.css
+- [ ] autoplay
 - [ ] switch pack: to tag:. search should parse out all the tags from q
-- [ ] inline single-use variables
 - [ ] need to add ranking/popularity for sorting
 - [ ] the search bar should have examples and quick links and recents next to it
 - [ ] fetch/refresh feeds; add new episodes to watch queue
