@@ -4,7 +4,6 @@ import Browser
 import Browser.Navigation as Nav
 import Char
 import Dict exposing (Dict)
-import Set exposing (Set)
 import Html exposing (..)
 import Html.Attributes as A exposing (class, href, id, src, value)
 import Html.Events exposing (onClick, onInput, onSubmit)
@@ -12,7 +11,7 @@ import Http
 import Json.Decode as D
 import Json.Decode.Pipeline as D
 import Json.Encode as E
-import Task
+import Set exposing (Set)
 import Time
 import Url exposing (Url)
 import Url.Parser as P exposing ((</>), Parser)
@@ -65,18 +64,14 @@ playbackDecoder =
             )
 
 
-
 urlDecoder : D.Decoder Url
 urlDecoder =
     D.string
         |> D.andThen
-            (\str ->
-                case Url.fromString str of
-                    Just url ->
-                        D.succeed url
-
-                    Nothing ->
-                        D.fail "Invalid URL"
+            (identity
+                >> Url.fromString
+                >> Maybe.map D.succeed
+                >> Maybe.withDefault (D.fail "Invalid URL")
             )
 
 
@@ -126,6 +121,7 @@ playbackEncoder playback =
         ]
 
 
+
 -- PORTS
 
 
@@ -143,7 +139,12 @@ type alias Id =
     String
 
 
-type Loadable a
+type
+    Loadable a
+    -- Nothing                 -- inert
+    -- Just (Err "Loading...") -- loading
+    -- Just (Err err)          -- err
+    -- Just (Ok a)             -- a
     = Loadable (Maybe (Result String a))
 
 
@@ -213,16 +214,13 @@ type alias Episode =
 
 init : D.Value -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url key =
-    let
-        library =
+    route url
+        { library =
             flags
                 |> D.decodeValue libraryDecoder
                 |> Result.mapError (always "Could not parse library.")
                 |> Just
                 |> Loadable
-    in
-    route url
-        { library = library
         , key = key
         , view = ViewMyFeed
         , episode = Nothing
@@ -242,6 +240,7 @@ subscriptions model =
 
 
 -- UPDATE
+-- TODO: The ViewSearch state should be global so we don't have to match on model.view.
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -257,41 +256,36 @@ update msg model =
             , Cmd.none
             )
 
-        FeedFetched originalRss maybeEpisodeId result ->
-            case result of
-                Ok feed ->
-                    let
-                        oldChannel =
-                            feed.channel
+        FeedFetched originalRss maybeEpisodeId (Ok feed) ->
+            let
+                oldChannel =
+                    feed.channel
 
-                        correctedFeed =
-                            case Url.fromString originalRss of
-                                Just parsedRssUrl ->
-                                    { feed | channel = { oldChannel | rss = parsedRssUrl } }
+                correctedFeed =
+                    Url.fromString originalRss
+                        |> Maybe.map (\parsedRssUrl -> { feed | channel = { oldChannel | rss = parsedRssUrl } })
+                        |> Maybe.withDefault feed
 
-                                Nothing ->
-                                    feed
+                finalRssUrl =
+                    Url.fromString originalRss
+                        |> Maybe.withDefault correctedFeed.channel.rss
+            in
+            ( { model
+                | view = ViewChannel finalRssUrl (Loadable (Just (Ok correctedFeed)))
+                , episode = maybeEpisodeId
+              }
+            , Cmd.none
+            )
 
-                        finalRssUrl =
-                            Url.fromString originalRss
-                                |> Maybe.withDefault correctedFeed.channel.rss
-                    in
-                    ( { model
-                        | view = ViewChannel finalRssUrl (Loadable (Just (Ok correctedFeed)))
-                        , episode = maybeEpisodeId
-                      }
+        FeedFetched originalRss maybeEpisodeId (Err err) ->
+            case model.view of
+                ViewChannel rssUrl _ ->
+                    ( { model | view = ViewChannel rssUrl (Loadable (Just (Err err))) }
                     , Cmd.none
                     )
 
-                Err err ->
-                    case model.view of
-                        ViewChannel rssUrl _ ->
-                            ( { model | view = ViewChannel rssUrl (Loadable (Just (Err err))) }
-                            , Cmd.none
-                            )
-
-                        _ ->
-                            ( model, Cmd.none )
+                _ ->
+                    ( model, Cmd.none )
 
         ChannelsFetched result ->
             case model.view of
@@ -384,16 +378,12 @@ update msg model =
 
         EpisodeQueued episode ->
             withLibrary
-                (\lib ->
-                    { lib | queue = Dict.insert episode.id episode lib.queue }
-                )
+                (\lib -> { lib | queue = Dict.insert episode.id episode lib.queue })
                 model
 
         EpisodeWatched episodeId ->
             withLibrary
-                (\lib ->
-                    { lib | watched = Set.insert episodeId lib.watched }
-                )
+                (\lib -> { lib | watched = Set.insert episodeId lib.watched })
                 model
 
         GoBack ->
@@ -455,40 +445,39 @@ viewPlayerSection model =
 
 findSelectedEpisode : Model -> Maybe ( Episode, Maybe Channel )
 findSelectedEpisode model =
-    case model.episode of
-        Nothing ->
-            Nothing
+    model.episode
+        |> Maybe.andThen
+            (\episodeId ->
+                case model.view of
+                    ViewChannel _ (Loadable (Just (Ok feed))) ->
+                        Dict.get episodeId feed.episodes
+                            |> Maybe.map (\ep -> ( ep, Just feed.channel ))
 
-        Just episodeId ->
-            case model.view of
-                ViewChannel _ (Loadable (Just (Ok feed))) ->
-                    Dict.get episodeId feed.episodes
-                        |> Maybe.map (\ep -> ( ep, Just feed.channel ))
+                    ViewMyFeed ->
+                        case model.library of
+                            Loadable (Just (Ok lib)) ->
+                                -- Look in queue first (no channel), then in subscribed episodes
+                                Dict.get episodeId lib.queue
+                                    |> Maybe.map (\ep -> Just ( ep, Nothing ))
+                                    |> Maybe.withDefault
+                                        -- Find episode and its channel
+                                        (lib.episodes
+                                            |> Dict.toList
+                                            |> List.filterMap
+                                                (\( rss, eps ) ->
+                                                    eps
+                                                        |> Dict.get episodeId
+                                                        |> Maybe.map (\ep -> ( ep, Dict.get rss lib.channels ))
+                                                )
+                                            |> List.head
+                                        )
 
-                ViewMyFeed ->
-                    case model.library of
-                        Loadable (Just (Ok lib)) ->
-                            -- Look in queue first (no channel), then in subscribed episodes
-                            case Dict.get episodeId lib.queue of
-                                Just ep ->
-                                    Just ( ep, Nothing )
+                            _ ->
+                                Nothing
 
-                                Nothing ->
-                                    -- Find episode and its channel
-                                    lib.episodes
-                                        |> Dict.toList
-                                        |> List.filterMap
-                                            (\( rss, eps ) ->
-                                                Dict.get episodeId eps
-                                                    |> Maybe.map (\ep -> ( ep, Dict.get rss lib.channels ))
-                                            )
-                                        |> List.head
-
-                        _ ->
-                            Nothing
-
-                _ ->
-                    Nothing
+                    _ ->
+                        Nothing
+            )
 
 
 viewHeader : Model -> Html Msg
@@ -705,12 +694,6 @@ viewSearchPage searchState model =
 viewEpisodeCard : Library -> Maybe Url -> Episode -> Html Msg
 viewEpisodeCard lib maybeRss episode =
     let
-        isWatched =
-            Set.member episode.id lib.watched
-
-        isQueued =
-            Dict.member episode.id lib.queue
-
         episodeUrl =
             case maybeRss of
                 Just rss ->
@@ -729,10 +712,10 @@ viewEpisodeCard lib maybeRss episode =
                     div [ class "episode-thumb-placeholder" ] []
             , div [ class "episode-title" ] [ text episode.title ]
             ]
-        , if isWatched then
+        , if Set.member episode.id lib.watched then
             text ""
 
-          else if isQueued then
+          else if Dict.member episode.id lib.queue then
             button [ onClick (EpisodeWatched episode.id), class "watched-btn" ] [ text "x" ]
 
           else

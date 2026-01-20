@@ -1,6 +1,10 @@
 - [-] make it not ugly
-- [ ] fetch/refresh feeds; add new episodes to watch queue
+- [ ] simplify style.css
+- [ ] switch pack: to tag:. search should parse out all the tags from q
+- [ ] inline single-use variables
+- [ ] need to add ranking/popularity for sorting
 - [ ] the search bar should have examples and quick links and recents next to it
+- [ ] fetch/refresh feeds; add new episodes to watch queue
 - [ ] launch
 - [ ] ship bubbletea tui
 - [ ] support for livestreaming / clubhouse

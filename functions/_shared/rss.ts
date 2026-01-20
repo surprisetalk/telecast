@@ -48,20 +48,14 @@ function sanitizeText(text: any): string | null {
   if (!text) return null;
 
   // Handle arrays - take first element (fast-xml-parser returns arrays for duplicate tags)
-  if (Array.isArray(text)) {
-    text = text[0];
-    if (!text) return null;
-  }
+  if (Array.isArray(text)) text = text[0];
+  if (!text) return null;
 
   // Handle CDATA or object values
-  if (typeof text === "object") {
-    text = (text as any)["#text"] || String(text);
-  }
+  if (typeof text === "object") text = (text as any)["#text"] || String(text);
 
   // Ensure we have a string
-  if (typeof text !== "string") {
-    text = String(text);
-  }
+  if (typeof text !== "string") text = String(text);
 
   // Remove HTML tags
   text = text.replace(/<[^>]*>/g, "");
@@ -159,14 +153,10 @@ function generateEpisodeId(item: any): string {
 
 function findEpisodeThumbnail(item: any): string | null {
   // Try itunes:image
-  if (item["itunes:image"]?.["@_href"]) {
-    return item["itunes:image"]["@_href"];
-  }
+  if (item["itunes:image"]?.["@_href"]) return item["itunes:image"]["@_href"];
 
   // Try media:thumbnail
-  if (item["media:thumbnail"]?.["@_url"]) {
-    return item["media:thumbnail"]["@_url"];
-  }
+  if (item["media:thumbnail"]?.["@_url"]) return item["media:thumbnail"]["@_url"];
 
   // Try media:content with medium="image"
   const mediaContent = item["media:content"];
@@ -178,9 +168,7 @@ function findEpisodeThumbnail(item: any): string | null {
 
   // Try enclosure with image type
   const enclosure = item.enclosure;
-  if (enclosure?.["@_type"]?.startsWith("image/") && enclosure["@_url"]) {
-    return enclosure["@_url"];
-  }
+  if (enclosure?.["@_type"]?.startsWith("image/") && enclosure["@_url"]) return enclosure["@_url"];
 
   return null;
 }
@@ -194,20 +182,18 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
     const entries = xml.feed.entry;
     const items = Array.isArray(entries) ? entries : entries ? [entries] : [];
     return items.slice(0, 50).map((item: any) => {
-      const thumb = item["media:group"]?.["media:thumbnail"]?.["@_url"];
-      const linkAttr = item.link?.["@_href"];
       return {
         channel_id: channelId,
         episode_id: item["yt:videoId"] || generateEpisodeId(item),
         title: sanitizeText(item.title) || "Untitled",
         description: sanitizeText(item["media:group"]?.["media:description"]),
-        thumb: httpsUrl(thumb),
+        thumb: httpsUrl(item["media:group"]?.["media:thumbnail"]?.["@_url"]),
         src: null, // YouTube embeds don't have direct media URLs
         src_type: null,
         src_size_bytes: null,
         duration_seconds: null,
         published_at: parseDate(item.published),
-        link: httpsUrl(linkAttr),
+        link: httpsUrl(item.link?.["@_href"]),
         season: null,
         episode: null,
         explicit: null,
@@ -217,13 +203,9 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
 
   // Extract items from RSS/Atom/RDF
   let items: any[] = [];
-  if (xml.feed?.entry) {
-    items = Array.isArray(xml.feed.entry) ? xml.feed.entry : [xml.feed.entry];
-  } else if (xml.rss?.channel?.item) {
-    items = Array.isArray(xml.rss.channel.item) ? xml.rss.channel.item : [xml.rss.channel.item];
-  } else if (xml.RDF?.item) {
-    items = Array.isArray(xml.RDF.item) ? xml.RDF.item : [xml.RDF.item];
-  }
+  if (xml.feed?.entry) items = Array.isArray(xml.feed.entry) ? xml.feed.entry : [xml.feed.entry];
+  else if (xml.rss?.channel?.item) items = Array.isArray(xml.rss.channel.item) ? xml.rss.channel.item : [xml.rss.channel.item];
+  else if (xml.RDF?.item) items = Array.isArray(xml.RDF.item) ? xml.RDF.item : [xml.RDF.item];
 
   return items.slice(0, 50).map(item => {
     const thumb = findEpisodeThumbnail(item);

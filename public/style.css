@@ -24,22 +24,22 @@
   --font-mono: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Mono", monospace;
 
   /* Type Scale */
-  --text-xs: 0.75rem;   /* 12px */
-  --text-sm: 0.875rem;  /* 14px */
-  --text-base: 1rem;    /* 16px */
-  --text-lg: 1.125rem;  /* 18px */
-  --text-xl: 1.25rem;   /* 20px */
-  --text-2xl: 1.5rem;   /* 24px */
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.875rem; /* 14px */
+  --text-base: 1rem; /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.25rem; /* 20px */
+  --text-2xl: 1.5rem; /* 24px */
   --text-3xl: 1.875rem; /* 30px */
 
   /* Spacing Scale */
-  --space-1: 0.25rem;   /* 4px */
-  --space-2: 0.5rem;    /* 8px */
-  --space-3: 0.75rem;   /* 12px */
-  --space-4: 1rem;      /* 16px */
-  --space-5: 1.25rem;   /* 20px */
-  --space-6: 1.5rem;    /* 24px */
-  --space-8: 2rem;      /* 32px */
+  --space-1: 0.25rem; /* 4px */
+  --space-2: 0.5rem; /* 8px */
+  --space-3: 0.75rem; /* 12px */
+  --space-4: 1rem; /* 16px */
+  --space-5: 1.25rem; /* 20px */
+  --space-6: 1.5rem; /* 24px */
+  --space-8: 2rem; /* 32px */
 
   /* Layout */
   --sidebar-width: clamp(280px, 25vw, 360px);
@@ -108,7 +108,10 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-h1, h2, h3, h4 {
+h1,
+h2,
+h3,
+h4 {
   font-family: var(--font-heading);
   font-weight: 500;
   line-height: 1.25;
@@ -270,7 +273,9 @@ header button.back:hover {
   background: var(--bg-color);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  transition: border-color var(--anim), box-shadow var(--anim);
+  transition:
+    border-color var(--anim),
+    box-shadow var(--anim);
 }
 
 #search input::placeholder {
@@ -323,7 +328,9 @@ header button.back:hover {
   color: var(--text-secondary);
   background: var(--hover-bg);
   border-radius: var(--radius-sm);
-  transition: background var(--anim), color var(--anim);
+  transition:
+    background var(--anim),
+    color var(--anim);
 }
 
 #packs li a:hover {
@@ -565,7 +572,9 @@ audio#player {
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border-color);
-  transition: border-color var(--anim), box-shadow var(--anim);
+  transition:
+    border-color var(--anim),
+    box-shadow var(--anim);
 }
 
 .episode-card:hover {
@@ -615,7 +624,9 @@ audio#player {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   opacity: 0;
-  transition: opacity var(--anim), background var(--anim);
+  transition:
+    opacity var(--anim),
+    background var(--anim);
 }
 
 .episode-card:hover button {
@@ -635,7 +646,9 @@ audio#player {
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border-color);
-  transition: border-color var(--anim), box-shadow var(--anim);
+  transition:
+    border-color var(--anim),
+    box-shadow var(--anim);
 }
 
 .channel-card:hover {
@@ -685,7 +698,9 @@ audio#player {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   opacity: 0;
-  transition: opacity var(--anim), background var(--anim);
+  transition:
+    opacity var(--anim),
+    background var(--anim);
 }
 
 .channel-card:hover button {
@@ -772,7 +787,10 @@ audio#player {
   background: var(--surface-elevated);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  transition: background var(--anim), color var(--anim), border-color var(--anim);
+  transition:
+    background var(--anim),
+    color var(--anim),
+    border-color var(--anim);
 }
 
 .tag:hover {
@@ -821,7 +839,9 @@ audio#player {
   background: var(--bg-color);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  transition: border-color var(--anim), box-shadow var(--anim);
+  transition:
+    border-color var(--anim),
+    box-shadow var(--anim);
 }
 
 #search input:focus {
