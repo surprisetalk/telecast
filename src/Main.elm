@@ -101,6 +101,22 @@ type alias Episode =
 
 
 
+-- MAIN
+
+
+main : Program D.Value Model Msg
+main =
+    Browser.application
+        { init = init
+        , view = view
+        , update = update
+        , subscriptions = subscriptions
+        , onUrlRequest = LinkClicked
+        , onUrlChange = UrlChanged
+        }
+
+
+
 -- INIT
 
 
@@ -129,6 +145,25 @@ subscriptions _ =
     Sub.batch
         [ libraryLoaded (D.decodeValue libraryDecoder >> LibraryLoaded)
         ]
+
+
+
+-- MSG
+
+
+type Msg
+    = LibraryLoaded (Result D.Error Library)
+    | FeedFetched String (Maybe Id) (Result String Feed)
+    | ChannelsFetched (Result Http.Error (List Channel))
+    | SearchEditing String
+    | SearchSubmitting
+    | ChannelSubscribing String
+    | ChannelUnsubscribing String
+    | EpisodeQueued Episode
+    | EpisodeWatched Id
+    | GoBack
+    | LinkClicked Browser.UrlRequest
+    | UrlChanged Url
 
 
 
@@ -283,6 +318,173 @@ update msg model =
 
         UrlChanged url ->
             route url model
+
+
+
+-- ROUTING
+
+
+route : Url -> Model -> ( Model, Cmd Msg )
+route url model =
+    let
+        -- TODO: Use Url.Parser
+        parseQueryParams : String -> Dict String String
+        parseQueryParams query =
+            query
+                |> String.split "&"
+                |> List.filterMap
+                    (\pair ->
+                        case String.split "=" pair of
+                            [ key, value ] ->
+                                Just ( key, Url.percentDecode value |> Maybe.withDefault value )
+
+                            [ key ] ->
+                                Just ( key, "" )
+
+                            _ ->
+                                Nothing
+                    )
+                |> Dict.fromList
+
+        -- Parse query params
+        queryParams =
+            url.query
+                |> Maybe.map parseQueryParams
+                |> Maybe.withDefault Dict.empty
+
+        searchQuery =
+            Dict.get "q" queryParams
+
+        tagFilter =
+            Dict.get "tag" queryParams
+
+        episodeId =
+            Dict.get "e" queryParams
+                |> Maybe.andThen Url.percentDecode
+    in
+    case ( url.path, searchQuery, tagFilter ) of
+        -- Saved channels: /?tag=saved
+        ( "/", Nothing, Just "saved" ) ->
+            ( { model
+                | search = Just { query = "", results = Loadable (Just (Ok (getLibrary model |> Maybe.map (.channels >> Dict.values) |> Maybe.withDefault []))) }
+                , channel = Nothing
+                , episode = episodeId
+              }
+            , Cmd.none
+            )
+
+        -- Tag/pack filter: /?tag={tag}
+        ( "/", Nothing, Just tag ) ->
+            ( { model
+                | search = Just { query = "pack:" ++ tag, results = Loadable Nothing }
+                , channel = Nothing
+                , episode = episodeId
+              }
+            , Http.get
+                { url = "/search?q=" ++ Url.percentEncode ("pack:" ++ tag)
+                , expect = Http.expectJson ChannelsFetched (D.list channelDecoder)
+                }
+            )
+
+        -- Search mode: /?q=...
+        ( "/", Just query, _ ) ->
+            case model.search of
+                -- Already in search mode, just update query (don't reset results or trigger search)
+                Just currentState ->
+                    ( { model
+                        | search = Just { currentState | query = query }
+                        , channel = Nothing
+                        , episode = episodeId
+                      }
+                    , Cmd.none
+                    )
+
+                -- Entering search mode fresh
+                Nothing ->
+                    ( { model
+                        | search = Just { query = query, results = Loadable (Just (Ok [])) }
+                        , channel = Nothing
+                        , episode = episodeId
+                      }
+                    , if String.isEmpty query then
+                        Cmd.none
+
+                      else
+                        Http.get
+                            { url = "/search?q=" ++ Url.percentEncode query
+                            , expect = Http.expectJson ChannelsFetched (D.list channelDecoder)
+                            }
+                    )
+
+        -- My Feed: /
+        ( "/", Nothing, _ ) ->
+            ( { model
+                | search = Nothing
+                , channel = Nothing
+                , episode = episodeId
+              }
+            , Cmd.none
+            )
+
+        -- Channel view: /{rss}
+        _ ->
+            let
+                rssEncoded =
+                    String.dropLeft 1 url.path
+
+                rss =
+                    Url.percentDecode rssEncoded
+                        |> Maybe.withDefault rssEncoded
+            in
+            case model.channel of
+                Just ( currentRss, _ ) ->
+                    -- Same channel, just update episode
+                    if Url.toString currentRss == rss then
+                        ( { model | episode = episodeId }, Cmd.none )
+
+                    else
+                        loadChannel rss episodeId model
+
+                Nothing ->
+                    loadChannel rss episodeId model
+
+
+loadChannel : String -> Maybe Id -> Model -> ( Model, Cmd Msg )
+loadChannel rss episodeId model =
+    case ( Url.fromString rss, model.library ) of
+        ( Just rssUrl, Loadable (Just (Ok lib)) ) ->
+            case Dict.get rss lib.channels of
+                Just channel ->
+                    let
+                        episodes =
+                            Dict.get rss lib.episodes
+                                |> Maybe.withDefault Dict.empty
+                    in
+                    ( { model
+                        | channel = Just ( rssUrl, Loadable (Just (Ok { channel = channel, episodes = episodes })) )
+                        , search = Nothing
+                        , episode = episodeId
+                      }
+                    , Cmd.none
+                    )
+
+                Nothing ->
+                    ( { model
+                        | channel = Just ( rssUrl, Loadable Nothing )
+                        , search = Nothing
+                        , episode = Nothing
+                      }
+                    , Http.get
+                        { url = "/proxy/rss/" ++ Url.percentEncode rss
+                        , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss episodeId)
+                        }
+                    )
+
+        ( Nothing, _ ) ->
+            ( { model | search = Nothing, channel = Nothing }, Cmd.none )
+
+        _ ->
+            ( model, Cmd.none )
 
 
 
@@ -521,27 +723,6 @@ findSelectedEpisode model =
             )
 
 
-discoverTags : List ( String, String )
-discoverTags =
-    [ ( "tech-talks", "Tech Talks" )
-    , ( "standup", "Stand-up Comedy" )
-    , ( "interviews", "Interviews" )
-    , ( "documentaries", "Documentaries" )
-    , ( "music", "Music" )
-    , ( "gaming", "Gaming" )
-    , ( "science", "Science" )
-    , ( "history", "History" )
-    , ( "cooking", "Cooking" )
-    , ( "fitness", "Fitness" )
-    , ( "news", "News" )
-    , ( "film-analysis", "Film Analysis" )
-    , ( "philosophy", "Philosophy" )
-    , ( "true-crime", "True Crime" )
-    , ( "diy", "DIY & Crafts" )
-    , ( "language", "Language Learning" )
-    ]
-
-
 viewTagLink : ( String, String ) -> Html Msg
 viewTagLink ( tag, label ) =
     a [ href ("/?tag=" ++ tag), class "tag" ] [ text label ]
@@ -563,16 +744,6 @@ viewEpisodeCard lib maybeRss episode =
           else
             button [ onClick (EpisodeQueued episode), class "queue-btn" ] [ text "+" ]
         ]
-
-
-episodeUrl : Maybe Url -> Id -> String
-episodeUrl maybeRss id =
-    case maybeRss of
-        Just rss ->
-            "/" ++ Url.percentEncode (Url.toString rss) ++ "?e=" ++ Url.percentEncode id
-
-        Nothing ->
-            "/?e=" ++ Url.percentEncode id
 
 
 viewChannelCard : Model -> Channel -> Html Msg
@@ -599,6 +770,50 @@ viewChannelCard model channel =
         ]
 
 
+viewThumb : String -> Maybe Url -> Html msg
+viewThumb className maybeUrl =
+    case maybeUrl of
+        Just url ->
+            img [ class className, src (Url.toString url) ] []
+
+        Nothing ->
+            div [ class (className ++ "-placeholder") ] []
+
+
+viewLoadable : (a -> Html msg) -> Loadable a -> Html msg
+viewLoadable viewOk loadable =
+    case loadable of
+        Loadable Nothing ->
+            div [ class "loading" ] []
+
+        Loadable (Just (Err err)) ->
+            div [ class "error" ] [ text err ]
+
+        Loadable (Just (Ok a)) ->
+            viewOk a
+
+
+discoverTags : List ( String, String )
+discoverTags =
+    [ ( "tech-talks", "Tech Talks" )
+    , ( "standup", "Stand-up Comedy" )
+    , ( "interviews", "Interviews" )
+    , ( "documentaries", "Documentaries" )
+    , ( "music", "Music" )
+    , ( "gaming", "Gaming" )
+    , ( "science", "Science" )
+    , ( "history", "History" )
+    , ( "cooking", "Cooking" )
+    , ( "fitness", "Fitness" )
+    , ( "news", "News" )
+    , ( "film-analysis", "Film Analysis" )
+    , ( "philosophy", "Philosophy" )
+    , ( "true-crime", "True Crime" )
+    , ( "diy", "DIY & Crafts" )
+    , ( "language", "Language Learning" )
+    ]
+
+
 
 -- ERROR HANDLING
 
@@ -623,208 +838,6 @@ httpErrorToString error =
 
 
 
--- MAIN
-
-
-main : Program D.Value Model Msg
-main =
-    Browser.application
-        { init = init
-        , view = view
-        , update = update
-        , subscriptions = subscriptions
-        , onUrlRequest = LinkClicked
-        , onUrlChange = UrlChanged
-        }
-
-
-
--- MSG
-
-
-type Msg
-    = LibraryLoaded (Result D.Error Library)
-    | FeedFetched String (Maybe Id) (Result String Feed)
-    | ChannelsFetched (Result Http.Error (List Channel))
-    | SearchEditing String
-    | SearchSubmitting
-    | ChannelSubscribing String
-    | ChannelUnsubscribing String
-    | EpisodeQueued Episode
-    | EpisodeWatched Id
-    | GoBack
-    | LinkClicked Browser.UrlRequest
-    | UrlChanged Url
-
-
-
--- ROUTING
-
-
-route : Url -> Model -> ( Model, Cmd Msg )
-route url model =
-    let
-        -- TODO: Use Url.Parser
-        parseQueryParams : String -> Dict String String
-        parseQueryParams query =
-            query
-                |> String.split "&"
-                |> List.filterMap
-                    (\pair ->
-                        case String.split "=" pair of
-                            [ key, value ] ->
-                                Just ( key, Url.percentDecode value |> Maybe.withDefault value )
-
-                            [ key ] ->
-                                Just ( key, "" )
-
-                            _ ->
-                                Nothing
-                    )
-                |> Dict.fromList
-
-        -- Parse query params
-        queryParams =
-            url.query
-                |> Maybe.map parseQueryParams
-                |> Maybe.withDefault Dict.empty
-
-        searchQuery =
-            Dict.get "q" queryParams
-
-        tagFilter =
-            Dict.get "tag" queryParams
-
-        episodeId =
-            Dict.get "e" queryParams
-                |> Maybe.andThen Url.percentDecode
-    in
-    case ( url.path, searchQuery, tagFilter ) of
-        -- Saved channels: /?tag=saved
-        ( "/", Nothing, Just "saved" ) ->
-            ( { model
-                | search = Just { query = "", results = Loadable (Just (Ok (getLibrary model |> Maybe.map (.channels >> Dict.values) |> Maybe.withDefault []))) }
-                , channel = Nothing
-                , episode = episodeId
-              }
-            , Cmd.none
-            )
-
-        -- Tag/pack filter: /?tag={tag}
-        ( "/", Nothing, Just tag ) ->
-            ( { model
-                | search = Just { query = "pack:" ++ tag, results = Loadable Nothing }
-                , channel = Nothing
-                , episode = episodeId
-              }
-            , Http.get
-                { url = "/search?q=" ++ Url.percentEncode ("pack:" ++ tag)
-                , expect = Http.expectJson ChannelsFetched (D.list channelDecoder)
-                }
-            )
-
-        -- Search mode: /?q=...
-        ( "/", Just query, _ ) ->
-            case model.search of
-                -- Already in search mode, just update query (don't reset results or trigger search)
-                Just currentState ->
-                    ( { model
-                        | search = Just { currentState | query = query }
-                        , channel = Nothing
-                        , episode = episodeId
-                      }
-                    , Cmd.none
-                    )
-
-                -- Entering search mode fresh
-                Nothing ->
-                    ( { model
-                        | search = Just { query = query, results = Loadable (Just (Ok [])) }
-                        , channel = Nothing
-                        , episode = episodeId
-                      }
-                    , if String.isEmpty query then
-                        Cmd.none
-
-                      else
-                        Http.get
-                            { url = "/search?q=" ++ Url.percentEncode query
-                            , expect = Http.expectJson ChannelsFetched (D.list channelDecoder)
-                            }
-                    )
-
-        -- My Feed: /
-        ( "/", Nothing, _ ) ->
-            ( { model
-                | search = Nothing
-                , channel = Nothing
-                , episode = episodeId
-              }
-            , Cmd.none
-            )
-
-        -- Channel view: /{rss}
-        _ ->
-            let
-                rssEncoded =
-                    String.dropLeft 1 url.path
-
-                rss =
-                    Url.percentDecode rssEncoded
-                        |> Maybe.withDefault rssEncoded
-            in
-            case model.channel of
-                Just ( currentRss, _ ) ->
-                    -- Same channel, just update episode
-                    if Url.toString currentRss == rss then
-                        ( { model | episode = episodeId }, Cmd.none )
-
-                    else
-                        loadChannel rss episodeId model
-
-                Nothing ->
-                    loadChannel rss episodeId model
-
-
-loadChannel : String -> Maybe Id -> Model -> ( Model, Cmd Msg )
-loadChannel rss episodeId model =
-    case ( Url.fromString rss, model.library ) of
-        ( Just rssUrl, Loadable (Just (Ok lib)) ) ->
-            case Dict.get rss lib.channels of
-                Just channel ->
-                    let
-                        episodes =
-                            Dict.get rss lib.episodes
-                                |> Maybe.withDefault Dict.empty
-                    in
-                    ( { model
-                        | channel = Just ( rssUrl, Loadable (Just (Ok { channel = channel, episodes = episodes })) )
-                        , search = Nothing
-                        , episode = episodeId
-                      }
-                    , Cmd.none
-                    )
-
-                Nothing ->
-                    ( { model
-                        | channel = Just ( rssUrl, Loadable Nothing )
-                        , search = Nothing
-                        , episode = Nothing
-                      }
-                    , Http.get
-                        { url = "/proxy/rss/" ++ Url.percentEncode rss
-                        , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss episodeId)
-                        }
-                    )
-
-        ( Nothing, _ ) ->
-            ( { model | search = Nothing, channel = Nothing }, Cmd.none )
-
-        _ ->
-            ( model, Cmd.none )
-
-
-
 -- HELPERS
 
 
@@ -845,27 +858,14 @@ getLibrary model =
             Nothing
 
 
-viewThumb : String -> Maybe Url -> Html msg
-viewThumb className maybeUrl =
-    case maybeUrl of
-        Just url ->
-            img [ class className, src (Url.toString url) ] []
+episodeUrl : Maybe Url -> Id -> String
+episodeUrl maybeRss id =
+    case maybeRss of
+        Just rss ->
+            "/" ++ Url.percentEncode (Url.toString rss) ++ "?e=" ++ Url.percentEncode id
 
         Nothing ->
-            div [ class (className ++ "-placeholder") ] []
-
-
-viewLoadable : (a -> Html msg) -> Loadable a -> Html msg
-viewLoadable viewOk loadable =
-    case loadable of
-        Loadable Nothing ->
-            div [ class "loading" ] []
-
-        Loadable (Just (Err err)) ->
-            div [ class "error" ] [ text err ]
-
-        Loadable (Just (Ok a)) ->
-            viewOk a
+            "/?e=" ++ Url.percentEncode id
 
 
 withLibrary : (Library -> Library) -> Model -> ( Model, Cmd Msg )
