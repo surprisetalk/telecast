@@ -1,11 +1,10 @@
-- [-] make it not ugly
-- [ ] simplify style.css
-- [ ] autoplay
-- [-] make tons of high-quality tag packs
-- [-] switch pack: to tag:. search should parse out all the tags from q
 - [ ] need to add ranking/popularity for sorting
+- [-] make tons of high-quality tag packs
 - [ ] the search bar should have examples and quick links and recents next to it
 - [ ] fetch/refresh feeds; add new episodes to watch queue
+- [ ] autoplay
+- [ ] simplify style.css
+- [-] make it not ugly
 - [ ] launch
 - [ ] ship bubbletea tui
 - [ ] support for livestreaming / clubhouse
