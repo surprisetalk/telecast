@@ -1,7 +1,7 @@
 import db from "postgres";
 import type { Env } from "./env";
 
-const BROKEN_THRESHOLD = 3;
+const QUALITY_THRESHOLD = 10;
 
 export async function onRequest({ request, env }: { request: Request; env: Env }) {
   const sql = db(env.DATABASE_URL!);
@@ -13,18 +13,16 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
         select c.*
         from channel c
         where ${query.slice(4)} = any(tags)
-          and consecutive_errors < ${BROKEN_THRESHOLD}
-          and last_success_at is not null
-        order by latest_episode_at desc nulls last
+          and quality >= ${QUALITY_THRESHOLD}
+        order by quality desc
         limit 50
       `
     : await sql`
         select c.*
         from channel c
         where websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
-          and consecutive_errors < ${BROKEN_THRESHOLD}
-          and last_success_at is not null
-        order by latest_episode_at desc nulls last
+          and quality >= ${QUALITY_THRESHOLD}
+        order by quality desc
         limit 50
       `;
   return new Response(JSON.stringify(results), {

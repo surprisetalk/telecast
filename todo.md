@@ -1,4 +1,3 @@
-- [ ] need to add ranking/popularity for sorting
 - [-] make tons of high-quality tag packs
 - [ ] the search bar should have examples and quick links and recents next to it
 - [ ] fetch/refresh feeds; add new episodes to watch queue

@@ -83,7 +83,28 @@ async function main() {
             updated_at = now(),
             episode_count = (SELECT count(*) FROM episode WHERE channel_id = ${channel.channel_id}),
             latest_episode_at = (SELECT max(published_at) FROM episode WHERE channel_id = ${channel.channel_id}),
-            avg_duration_seconds = (SELECT avg(duration_seconds)::integer FROM episode WHERE channel_id = ${channel.channel_id} AND duration_seconds IS NOT NULL)
+            avg_duration_seconds = (SELECT avg(duration_seconds)::integer FROM episode WHERE channel_id = ${channel.channel_id} AND duration_seconds IS NOT NULL),
+            quality = (
+              SELECT GREATEST(0, LEAST(100, (
+                -- Freshness: 0-40 points (linear decay over 2 years)
+                CASE
+                  WHEN max(published_at) IS NULL THEN 0
+                  ELSE GREATEST(0, 40 - EXTRACT(EPOCH FROM (NOW() - max(published_at))) / 86400 / 730 * 40)
+                END
+                -- Volume: 0-30 points (logarithmic)
+                + LEAST(30, LN(1 + count(*)) * 7.5)
+                -- Reliability: 20 points (no errors in this success path)
+                + 20
+                -- Depth: 0-10 points
+                + CASE
+                    WHEN AVG(duration_seconds) IS NULL THEN 5
+                    WHEN AVG(duration_seconds) >= 1800 THEN 10
+                    WHEN AVG(duration_seconds) >= 600 THEN 7
+                    ELSE 3
+                  END
+              )))::integer
+              FROM episode WHERE channel_id = ${channel.channel_id}
+            )
           WHERE channel_id = ${channel.channel_id}
         `;
 
@@ -100,7 +121,32 @@ async function main() {
               consecutive_errors = consecutive_errors + 1,
               last_error = ${msg},
               last_error_at = now(),
-              updated_at = now()
+              updated_at = now(),
+              quality = (
+                SELECT GREATEST(0, LEAST(100, (
+                  -- Freshness: 0-40 points (linear decay over 2 years)
+                  CASE
+                    WHEN max(published_at) IS NULL THEN 0
+                    ELSE GREATEST(0, 40 - EXTRACT(EPOCH FROM (NOW() - max(published_at))) / 86400 / 730 * 40)
+                  END
+                  -- Volume: 0-30 points (logarithmic)
+                  + LEAST(30, LN(1 + count(*)) * 7.5)
+                  -- Reliability: 0-20 points (penalty based on new error count)
+                  + CASE
+                      WHEN ${channel.consecutive_errors + 1} = 0 THEN 20
+                      WHEN ${channel.consecutive_errors + 1} = 1 THEN 10
+                      ELSE 0
+                    END
+                  -- Depth: 0-10 points
+                  + CASE
+                      WHEN AVG(duration_seconds) IS NULL THEN 5
+                      WHEN AVG(duration_seconds) >= 1800 THEN 10
+                      WHEN AVG(duration_seconds) >= 600 THEN 7
+                      ELSE 3
+                    END
+                )))::integer
+                FROM episode WHERE channel_id = ${channel.channel_id}
+              )
             WHERE channel_id = ${channel.channel_id}
           `;
         }

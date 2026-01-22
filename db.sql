@@ -19,6 +19,7 @@ create table channel (
   explicit boolean,
   website text,
   categories text [],
+  quality integer not null default 0,
   primary key (channel_id)
 );
 
@@ -29,6 +30,8 @@ create index channel_tags_idx on channel using gin (tags);
 create index channel_updated_at_idx on channel (updated_at);
 
 create index channel_consecutive_errors_idx on channel (consecutive_errors);
+
+create index channel_quality_idx on channel (quality desc);
 
 create table episode (
   channel_id text not null,
