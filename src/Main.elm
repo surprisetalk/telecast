@@ -373,15 +373,15 @@ route url model =
             , Cmd.none
             )
 
-        -- Tag/pack filter: /?tag={tag}
+        -- Tag filter: /?tag={tag}
         ( "/", Nothing, Just tag ) ->
             ( { model
-                | search = Just { query = "pack:" ++ tag, results = Loadable Nothing }
+                | search = Just { query = "tag:" ++ tag, results = Loadable Nothing }
                 , channel = Nothing
                 , episode = episodeId
               }
             , Http.get
-                { url = "/search?q=" ++ Url.percentEncode ("pack:" ++ tag)
+                { url = "/search?q=" ++ Url.percentEncode ("tag:" ++ tag)
                 , expect = Http.expectJson ChannelsFetched (D.list channelDecoder)
                 }
             )
@@ -570,9 +570,9 @@ view model =
                             if String.isEmpty searchState.query then
                                 "My Channels"
 
-                            else if String.startsWith "pack:" searchState.query then
+                            else if String.startsWith "tag:" searchState.query then
                                 searchState.query
-                                    |> String.dropLeft 5
+                                    |> String.dropLeft 4
                                     |> String.replace "-" " "
                                     |> String.words
                                     |> List.map capitalize
@@ -798,22 +798,22 @@ viewLoadable viewOk loadable =
 
 discoverTags : List ( String, String )
 discoverTags =
-    [ ( "tech-talks", "Tech Talks" )
-    , ( "standup", "Stand-up Comedy" )
-    , ( "interviews", "Interviews" )
-    , ( "documentaries", "Documentaries" )
-    , ( "music", "Music" )
-    , ( "gaming", "Gaming" )
+    [ ( "technology", "Technology" )
     , ( "science", "Science" )
-    , ( "history", "History" )
-    , ( "cooking", "Cooking" )
-    , ( "fitness", "Fitness" )
+    , ( "education", "Education" )
+    , ( "comedy", "Comedy" )
     , ( "news", "News" )
-    , ( "film-analysis", "Film Analysis" )
-    , ( "philosophy", "Philosophy" )
-    , ( "true-crime", "True Crime" )
-    , ( "diy", "DIY & Crafts" )
-    , ( "language", "Language Learning" )
+    , ( "film", "Film & TV" )
+    , ( "music", "Music" )
+    , ( "games", "Gaming" )
+    , ( "fitness", "Fitness" )
+    , ( "arts", "Arts" )
+    , ( "history", "History" )
+    , ( "business", "Business" )
+    , ( "health", "Health" )
+    , ( "hobbies", "Hobbies" )
+    , ( "language", "Language" )
+    , ( "how to", "How To" )
     ]
 
 

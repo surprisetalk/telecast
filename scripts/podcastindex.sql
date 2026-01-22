@@ -19,7 +19,7 @@ LOAD postgres;
 ATTACH '$DATABASE_URL' AS dst (TYPE postgres);
 
 -- Import video feeds with transformations
-INSERT INTO dst.channel (channel_id, rss, thumb, title, description, packs, created_at, updated_at)
+INSERT INTO dst.channel (channel_id, rss, thumb, title, description, tags, created_at, updated_at)
 SELECT
   COALESCE(NULLIF(trim(podcastGuid), ''), CAST(id AS TEXT)) as channel_id,
   regexp_replace(url, '^[Hh][Tt][Tt][Pp]://', 'https://') as rss,
@@ -30,7 +30,7 @@ SELECT
   NULLIF(trim(description), '') as description,
   list_filter([category1, category2, category3, category4, category5,
                category6, category7, category8, category9, category10],
-              x -> x IS NOT NULL AND trim(x) != '') as packs,
+              x -> x IS NOT NULL AND trim(x) != '') as tags,
   now() as created_at,
   now() as updated_at
 FROM src.podcasts
@@ -46,5 +46,5 @@ ON CONFLICT (channel_id) DO UPDATE SET
   thumb = EXCLUDED.thumb,
   title = EXCLUDED.title,
   description = EXCLUDED.description,
-  packs = EXCLUDED.packs,
+  tags = EXCLUDED.tags,
   updated_at = now();

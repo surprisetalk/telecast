@@ -4,7 +4,7 @@ create table channel (
   thumb text check (thumb ilike 'https://%'),
   title text not null,
   description text,
-  packs text [],
+  tags text [],
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   consecutive_errors integer not null default 0,
@@ -24,7 +24,7 @@ create table channel (
 
 create index channel_search_idx on channel using gin (to_tsvector('english', title || ' ' || coalesce(description, '')));
 
-create index channel_packs_idx on channel using gin (packs);
+create index channel_tags_idx on channel using gin (tags);
 
 create index channel_updated_at_idx on channel (updated_at);
 

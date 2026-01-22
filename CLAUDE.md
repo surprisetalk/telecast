@@ -51,8 +51,8 @@ Workers use two R2 bindings (see `wrangler.toml`):
 
 ### Search
 
-Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `pack:{pack_id}`
-filters channels by pack membership (channels have a `packs text[]` column).
+Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `tag:{tag_name}`
+filters channels by tag membership (channels have a `tags text[]` column).
 
 ## Elm Frontend
 
