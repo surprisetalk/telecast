@@ -1,5 +1,6 @@
 - [-] make tons of high-quality tag packs
 - [ ] the search bar should have examples and quick links and recents next to it
+- [ ] add a bunch of archive.org content
 - [ ] fetch/refresh feeds; add new episodes to watch queue
 - [ ] autoplay
 - [ ] simplify style.css
