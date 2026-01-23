@@ -2,7 +2,9 @@
 - [ ] add filters to search for specific platforms/distributors like yt,
       fediverse, etc
 - [ ] the search bar should have examples and quick links and recents next to it
+- [ ] channel episodes page should sort by new
 - [ ] add archive.org feeds/channels?
+- [ ] integrate atproto?
 - [ ] fetch/refresh feeds; add new episodes to watch queue
 - [ ] autoplay
 - [ ] simplify style.css
