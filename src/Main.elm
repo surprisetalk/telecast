@@ -775,12 +775,19 @@ viewChannelCard model channel =
 
 viewThumb : String -> Maybe Url -> Html msg
 viewThumb className maybeUrl =
-    case maybeUrl of
-        Just url ->
-            img [ class className, src (Url.toString url) ] []
+    div [ class (className ++ "-wrapper") ]
+        [ case maybeUrl of
+            Just url ->
+                img
+                    [ class className
+                    , src (Url.toString url)
+                    , A.attribute "onerror" "this.style.visibility='hidden'"
+                    ]
+                    []
 
-        Nothing ->
-            div [ class (className ++ "-placeholder") ] []
+            Nothing ->
+                text ""
+        ]
 
 
 viewLoadable : (a -> Html msg) -> Loadable a -> Html msg
