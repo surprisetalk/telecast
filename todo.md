@@ -1,6 +1,8 @@
 - [-] make tons of high-quality tag packs
+- [ ] add filters to search for specific platforms/distributors like yt,
+      fediverse, etc
 - [ ] the search bar should have examples and quick links and recents next to it
-- [ ] add a bunch of archive.org content
+- [ ] add archive.org feeds/channels?
 - [ ] fetch/refresh feeds; add new episodes to watch queue
 - [ ] autoplay
 - [ ] simplify style.css

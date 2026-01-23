@@ -1,5 +1,5 @@
 import db from "postgres";
-import { parseEpisodes } from "../functions/_shared/rss";
+import { parse, parseEpisodes } from "../functions/_shared/rss";
 
 const BATCH_SIZE = 250;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -52,6 +52,7 @@ async function main() {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
         const text = await res.text();
+        const channelInfo = parse(text);
         const episodes = parseEpisodes(text, channel.channel_id);
 
         if (episodes.length > 0) {
@@ -74,9 +75,17 @@ async function main() {
           `;
         }
 
-        // Update channel stats on success
+        // Update channel metadata and stats on success
         await sql`
           UPDATE channel SET
+            title = coalesce(${channelInfo.title}, title),
+            description = coalesce(${channelInfo.description}, description),
+            thumb = coalesce(${channelInfo.thumb}, thumb),
+            author = coalesce(${channelInfo.author}, author),
+            language = coalesce(${channelInfo.language}, language),
+            explicit = coalesce(${channelInfo.explicit}, explicit),
+            website = coalesce(${channelInfo.website}, website),
+            categories = coalesce(${channelInfo.categories}, categories),
             consecutive_errors = 0,
             last_error = null,
             last_error_at = null,
