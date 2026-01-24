@@ -258,12 +258,18 @@ function findAtomThumbnail(feed: any): string | null {
 function parseYouTubeFeed(feed: any): Channel {
   const channelId = feed["yt:channelId"];
   const authorUri = feed.author?.uri;
+
+  // Use first video thumbnail as channel thumb (YouTube RSS doesn't include channel avatars)
+  const entries = feed.entry;
+  const firstEntry = Array.isArray(entries) ? entries[0] : entries;
+  const thumb = httpsUrl(firstEntry?.["media:group"]?.["media:thumbnail"]?.["@_url"]);
+
   return {
     channel_id: `youtube.com/channel/${channelId}`,
     rss: authorUri || `https://www.youtube.com/channel/${channelId}`,
     title: sanitizeText(feed.title),
     description: sanitizeText(feed.subtitle),
-    thumb: null,
+    thumb,
     updated_at: new Date(),
     author: sanitizeText(feed.author?.name) || null,
     language: null,

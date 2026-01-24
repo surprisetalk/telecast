@@ -613,7 +613,7 @@ view model =
                             Loadable (Just (Ok feed)) ->
                                 [ div [ class "rows" ]
                                     [ div [ class "cols" ]
-                                        [ viewThumb "channel-thumb" feed.channel.thumb
+                                        [ viewThumb "channel-thumb" (channelThumbWithFallback feed.channel.thumb feed.episodes)
                                         , h1 [] [ text feed.channel.title ]
                                         , case model.library of
                                             Loadable (Just (Ok lib)) ->
@@ -771,6 +771,18 @@ viewChannelCard model channel =
             _ ->
                 button [ onClick (ChannelSubscribing rss), class "sub-btn" ] [ text "+" ]
         ]
+
+
+channelThumbWithFallback : Maybe Url -> Dict String Episode -> Maybe Url
+channelThumbWithFallback channelThumb episodes =
+    case channelThumb of
+        Just _ ->
+            channelThumb
+
+        Nothing ->
+            Dict.values episodes
+                |> List.head
+                |> Maybe.andThen .thumb
 
 
 viewThumb : String -> Maybe Url -> Html msg
