@@ -97,6 +97,7 @@ type alias Episode =
     , thumb : Maybe Url
     , src : Url
     , description : String
+    , index : Int
     }
 
 
@@ -548,7 +549,7 @@ view model =
                             audio [ id "player", src srcStr, A.controls True, A.autoplay True ] []
 
                           else
-                            video [ id "player", src srcStr, A.controls True ] []
+                            video [ id "player", src srcStr, A.controls True, A.autoplay True ] []
                         , div [ id "player-info" ]
                             [ h2 [] [ text episode.title ]
                             , case maybeChannel of
@@ -636,12 +637,14 @@ view model =
                                     Loadable (Just (Ok lib)) ->
                                         div [ class "autogrid" ]
                                             (Dict.values feed.episodes
+                                                |> List.sortBy .index
                                                 |> List.map (viewEpisodeCard lib (Just rss))
                                             )
 
                                     _ ->
                                         div [ class "autogrid" ]
                                             (Dict.values feed.episodes
+                                                |> List.sortBy .index
                                                 |> List.map
                                                     (\episode ->
                                                         div [ class "episode-card" ]
@@ -950,6 +953,7 @@ episodeDecoder =
         |> D.required "thumb" (D.maybe urlDecoder)
         |> D.required "src" urlDecoder
         |> D.optional "description" D.string ""
+        |> D.optional "index" D.int 0
 
 
 playbackDecoder : D.Decoder Playback
@@ -1009,6 +1013,7 @@ episodeEncoder episode =
         , ( "thumb", episode.thumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
         , ( "src", E.string (Url.toString episode.src) )
         , ( "description", E.string episode.description )
+        , ( "index", E.int episode.index )
         ]
 
 
@@ -1022,6 +1027,14 @@ playbackEncoder playback =
 
 
 -- XML
+
+
+{-| Helper for XML decoders: creates Episode with default index (0).
+    The actual index gets assigned in makeEpisodeDict.
+-}
+mkEpisode : Id -> String -> Maybe Url -> Url -> String -> Episode
+mkEpisode id title thumb srcUrl desc =
+    Episode id title thumb srcUrl desc 0
 
 
 urlDecoder_ : String -> X.Decoder Url
@@ -1065,7 +1078,7 @@ youtubeFormatDecoder =
 
 youtubeEntryDecoder : X.Decoder Episode
 youtubeEntryDecoder =
-    X.succeed Episode
+    X.succeed mkEpisode
         |> X.requiredPath [ "id" ] (X.single X.string)
         |> X.requiredPath [ "title" ] (X.single X.string)
         |> X.possiblePath [ "media:group", "media:thumbnail" ]
@@ -1144,13 +1157,13 @@ itemDecoderWith :
     -> X.Decoder Episode
 itemDecoderWith { thumbPath, thumbDecoder, srcPath, srcAsString, srcAsUrl } =
     X.oneOf
-        [ X.succeed Episode
+        [ X.succeed mkEpisode
             |> X.requiredPath [ "guid" ] (X.single X.string)
             |> X.requiredPath [ "title" ] (X.single X.string)
             |> X.possiblePath thumbPath (X.single thumbDecoder)
             |> X.requiredPath srcPath (X.single srcAsUrl)
             |> X.optionalPath [ "description" ] (X.single X.string) ""
-        , X.succeed Episode
+        , X.succeed mkEpisode
             |> X.requiredPath srcPath (X.single srcAsString)
             |> X.requiredPath [ "title" ] (X.single X.string)
             |> X.possiblePath thumbPath (X.single thumbDecoder)
@@ -1162,5 +1175,5 @@ itemDecoderWith { thumbPath, thumbDecoder, srcPath, srcAsString, srcAsUrl } =
 makeEpisodeDict : List Episode -> Dict Id Episode
 makeEpisodeDict episodes =
     episodes
-        |> List.map (\episode -> ( episode.id, episode ))
+        |> List.indexedMap (\i ep -> ( ep.id, { ep | index = i } ))
         |> Dict.fromList

@@ -1,7 +1,7 @@
-- [ ] channel episodes page should sort by new
-- [ ] autoplay
-- [ ] add filters to search for specific platforms/distributors like yt,
-      fediverse, etc
+- [-] channel episodes page should sort by new
+- [-] autoplay
+- [-] add filters to search for specific platforms/distributors like yt,
+  fediverse, etc
 - [ ] the search bar should have examples and quick links and recents next to it
 - [ ] fetch/refresh feeds; add new episodes to watch queue
 - [ ] simplify style.css
