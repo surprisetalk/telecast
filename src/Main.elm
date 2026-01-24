@@ -780,7 +780,7 @@ viewThumb className maybeUrl =
             Just url ->
                 img
                     [ class className
-                    , src (Url.toString url)
+                    , src ("/proxy/thumb/" ++ Url.percentEncode (Url.toString url))
                     , A.attribute "onerror" "this.style.visibility='hidden'"
                     ]
                     []
