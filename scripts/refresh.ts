@@ -1,8 +1,80 @@
 import db from "postgres";
-import { parse, parseEpisodes } from "../functions/_shared/rss";
+import { parse, parseEpisodes, Episode, Channel } from "../functions/_shared/rss";
 
 const BATCH_SIZE = 250;
 const FETCH_TIMEOUT_MS = 15_000;
+
+// Language code to tag mapping
+const LANGUAGE_MAP: Record<string, string> = {
+  en: "english",
+  "en-us": "english",
+  "en-US": "english",
+  "en-gb": "english",
+  "en-GB": "english",
+  de: "german",
+  "de-DE": "german",
+  "de-de": "german",
+  fr: "french",
+  "fr-FR": "french",
+  "fr-fr": "french",
+  es: "spanish",
+  "es-ES": "spanish",
+  "es-es": "spanish",
+  ja: "japanese",
+  "ja-JP": "japanese",
+  pt: "portuguese",
+  "pt-BR": "portuguese",
+  "pt-PT": "portuguese",
+  it: "italian",
+  "it-IT": "italian",
+  nl: "dutch",
+  "nl-NL": "dutch",
+  ru: "russian",
+  "ru-RU": "russian",
+  zh: "chinese",
+  "zh-CN": "chinese",
+  "zh-TW": "chinese",
+  ko: "korean",
+  "ko-KR": "korean",
+  pl: "polish",
+  "pl-PL": "polish",
+  sv: "swedish",
+  "sv-SE": "swedish",
+};
+
+function inferContentTags(episodes: Episode[]): string[] {
+  const hasVideo = episodes.some(e => e.src_type?.startsWith("video/"));
+  const hasAudio = episodes.some(e => e.src_type?.startsWith("audio/"));
+  const tags: string[] = [];
+  if (hasVideo) tags.push("video");
+  if (hasAudio && !hasVideo) tags.push("audio");
+  return tags;
+}
+
+function languageTag(lang: string | null): string | null {
+  if (!lang) return null;
+  const base = lang.split("-")[0]?.toLowerCase() ?? "";
+  return LANGUAGE_MAP[lang] || LANGUAGE_MAP[base] || null;
+}
+
+function inferAllTags(channelInfo: Channel, episodes: Episode[]): string[] {
+  const tags: string[] = [];
+
+  // Platform tags from parser
+  if (channelInfo.tags) tags.push(...channelInfo.tags);
+
+  // Content type tags
+  tags.push(...inferContentTags(episodes));
+
+  // Language tag
+  const langTag = languageTag(channelInfo.language);
+  if (langTag) tags.push(langTag);
+
+  // Explicit tag
+  if (channelInfo.explicit === true) tags.push("explicit");
+
+  return tags;
+}
 
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -75,6 +147,9 @@ async function main() {
           `;
         }
 
+        // Infer tags from channel metadata and episodes
+        const inferredTags = inferAllTags(channelInfo, episodes);
+
         // Update channel metadata and stats on success
         await sql`
           UPDATE channel SET
@@ -86,6 +161,11 @@ async function main() {
             explicit = coalesce(${channelInfo.explicit}, explicit),
             website = coalesce(${channelInfo.website}, website),
             categories = coalesce(${channelInfo.categories}, categories),
+            tags = CASE
+              WHEN ${inferredTags}::text[] IS NOT NULL AND array_length(${inferredTags}::text[], 1) > 0
+              THEN (SELECT array_agg(DISTINCT t) FROM unnest(coalesce(tags, '{}') || ${inferredTags}::text[]) AS t)
+              ELSE tags
+            END,
             consecutive_errors = 0,
             last_error = null,
             last_error_at = null,

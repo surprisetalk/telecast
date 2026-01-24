@@ -12,6 +12,7 @@ export interface Channel {
   explicit: boolean | null;
   website: string | null;
   categories: string[] | null;
+  tags: string[] | null;
 }
 
 export interface Episode {
@@ -276,6 +277,7 @@ function parseYouTubeFeed(feed: any): Channel {
     explicit: null,
     website: authorUri || `https://www.youtube.com/channel/${channelId}`,
     categories: null,
+    tags: ["youtube"],
   };
 }
 
@@ -292,6 +294,7 @@ function parseRss2Feed(channel: any): Channel {
     explicit: parseExplicit(channel["itunes:explicit"]),
     website: channel.link || null,
     categories: parseCategories(channel["itunes:category"]),
+    tags: null,
   };
 }
 
@@ -311,6 +314,7 @@ function parseAtomFeed(feed: any): Channel {
     explicit: parseExplicit(feed["itunes:explicit"]),
     website: link || null,
     categories: parseCategories(feed["itunes:category"]),
+    tags: null,
   };
 }
 
@@ -328,6 +332,7 @@ function parseRdfFeed(rdf: any): Channel {
     explicit: null,
     website: channel.link || null,
     categories: null,
+    tags: null,
   };
 }
 

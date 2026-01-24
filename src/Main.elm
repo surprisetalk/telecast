@@ -593,6 +593,8 @@ view model =
                                 []
                             , button [] [ text "search" ]
                             ]
+                        , div [ class "quick-tags" ]
+                            (List.map viewTagLink quickSearchTags)
                         , case searchState.results of
                             Loadable Nothing ->
                                 div [ class "loading" ] []
@@ -816,6 +818,19 @@ viewLoadable viewOk loadable =
 
         Loadable (Just (Ok a)) ->
             viewOk a
+
+
+quickSearchTags : List ( String, String )
+quickSearchTags =
+    [ ( "youtube", "YouTube" )
+    , ( "video", "Video" )
+    , ( "audio", "Audio" )
+    , ( "english", "English" )
+    , ( "german", "German" )
+    , ( "technology", "Tech" )
+    , ( "comedy", "Comedy" )
+    , ( "science", "Science" )
+    ]
 
 
 discoverTags : List ( String, String )

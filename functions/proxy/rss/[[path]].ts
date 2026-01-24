@@ -28,7 +28,12 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
       set
         title = excluded.title,
         description = excluded.description,
-        thumb = excluded.thumb
+        thumb = excluded.thumb,
+        tags = CASE
+          WHEN excluded.tags IS NOT NULL
+          THEN (SELECT array_agg(DISTINCT t) FROM unnest(coalesce(channel.tags, '{}') || excluded.tags) AS t)
+          ELSE channel.tags
+        END
     `;
     await env.BUCKET_RSS.put(rssUrl, text);
     return new Response(text, {
