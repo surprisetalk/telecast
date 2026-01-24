@@ -660,6 +660,16 @@ audio#player {
   z-index: 1;
 }
 
+/* Placeholder div should not cover the ::before icon */
+.thumb-placeholder {
+  z-index: 0 !important;
+}
+
+/* Hide images that fail to load */
+.thumb-error img {
+  visibility: hidden;
+}
+
 .channel-title {
   padding: var(--space-3);
   font-size: var(--text-sm);

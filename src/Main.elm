@@ -793,12 +793,12 @@ viewThumb className maybeUrl =
                 img
                     [ class className
                     , src ("/proxy/thumb/" ++ Url.percentEncode (Url.toString url))
-                    , A.attribute "onerror" "this.style.visibility='hidden'"
+                    , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
                     ]
                     []
 
             Nothing ->
-                text ""
+                div [ class (className ++ " thumb-placeholder") ] []
         ]
 
 
