@@ -1,4 +1,3 @@
-- [-] make tons of high-quality tag packs
 - [ ] add filters to search for specific platforms/distributors like yt,
       fediverse, etc
 - [ ] the search bar should have examples and quick links and recents next to it
