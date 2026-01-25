@@ -12,6 +12,7 @@ import Json.Decode as D
 import Json.Decode.Pipeline as D
 import Json.Encode as E
 import Set exposing (Set)
+import Task
 import Time
 import Url exposing (Url)
 import Url.Parser as P exposing ((</>), Parser)
@@ -51,6 +52,7 @@ type alias Model =
     , channel : Maybe ( Url, Loadable Feed )
     , search : Maybe SearchState
     , episode : Maybe Id -- episode ID
+    , refreshing : Maybe (Set String) -- Nothing = idle, Just pending = refreshing RSS URLs
     }
 
 
@@ -143,6 +145,7 @@ init flags url key =
         , channel = Nothing
         , search = Nothing
         , episode = Nothing
+        , refreshing = Nothing
         }
 
 
@@ -174,6 +177,8 @@ type Msg
     | GoBack
     | LinkClicked Browser.UrlRequest
     | UrlChanged Url
+    | RefreshFeeds
+    | RefreshFeedFetched String (Result String Feed)
 
 
 
@@ -185,7 +190,7 @@ update msg model =
     case msg of
         LibraryLoaded (Ok lib) ->
             ( { model | library = Loadable (Just (Ok lib)) }
-            , Cmd.none
+            , Task.perform (always RefreshFeeds) (Task.succeed ())
             )
 
         LibraryLoaded (Err _) ->
@@ -338,6 +343,106 @@ update msg model =
 
         UrlChanged url ->
             route url model
+
+        RefreshFeeds ->
+            case model.library of
+                Loadable (Just (Ok lib)) ->
+                    let
+                        rssUrls =
+                            Dict.keys lib.channels
+
+                        cmds =
+                            rssUrls
+                                |> List.map
+                                    (\rss ->
+                                        Http.get
+                                            { url = "/proxy/rss/" ++ Url.percentEncode rss
+                                            , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> RefreshFeedFetched rss)
+                                            }
+                                    )
+                    in
+                    if List.isEmpty rssUrls then
+                        ( model, Cmd.none )
+
+                    else
+                        ( { model | refreshing = Just (Set.fromList rssUrls) }
+                        , Cmd.batch cmds
+                        )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        RefreshFeedFetched rss result ->
+            case ( model.library, model.refreshing ) of
+                ( Loadable (Just (Ok lib)), Just pending ) ->
+                    let
+                        newPending =
+                            Set.remove rss pending
+
+                        refreshDone =
+                            Set.isEmpty newPending
+                    in
+                    case result of
+                        Ok feed ->
+                            let
+                                -- Enrich episodes with channel info
+                                enrichEpisode ep =
+                                    { ep
+                                        | channelTitle = Just feed.channel.title
+                                        , channelThumb = feed.channel.thumb
+                                    }
+
+                                enrichedFeedEpisodes =
+                                    Dict.map (\_ ep -> enrichEpisode ep) feed.episodes
+
+                                -- Get existing stored episodes for this channel
+                                existingEpisodes =
+                                    Dict.get rss lib.episodes
+                                        |> Maybe.withDefault Dict.empty
+
+                                -- Find new episodes: in feed but not in stored episodes and not watched
+                                newEpisodes =
+                                    enrichedFeedEpisodes
+                                        |> Dict.filter
+                                            (\epId _ ->
+                                                not (Dict.member epId existingEpisodes)
+                                                    && not (Set.member epId lib.watched)
+                                            )
+
+                                -- Update library
+                                updatedLib =
+                                    { lib
+                                        | episodes = Dict.insert rss enrichedFeedEpisodes lib.episodes
+                                        , queue = Dict.union newEpisodes lib.queue
+                                    }
+                            in
+                            ( { model
+                                | library = Loadable (Just (Ok updatedLib))
+                                , refreshing =
+                                    if refreshDone then
+                                        Nothing
+
+                                    else
+                                        Just newPending
+                              }
+                            , librarySaving (libraryEncoder updatedLib)
+                            )
+
+                        Err _ ->
+                            -- On error, just remove from pending and continue
+                            ( { model
+                                | refreshing =
+                                    if refreshDone then
+                                        Nothing
+
+                                    else
+                                        Just newPending
+                              }
+                            , Cmd.none
+                            )
+
+                _ ->
+                    ( model, Cmd.none )
 
 
 
