@@ -17,6 +17,12 @@ function serveFallback(): Response {
   });
 }
 
+function transformYouTubeThumb(url: string): string {
+  const ytMatch = url.match(/^(https?:\/\/i\d?\.ytimg\.com\/vi\/[^/]+\/)(?:hq|mq|)default\.jpg$/);
+  if (ytMatch) return ytMatch[1] + "sddefault.jpg";
+  return url;
+}
+
 export async function onRequest({ request, env }: { request: Request; env: Env }) {
   const url = new URL(request.url);
   const thumbUrl = decodeURIComponent(url.pathname.slice("/proxy/thumb/".length));
@@ -33,7 +39,8 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
     });
   }
   try {
-    const fetchResponse = await fetch(thumbUrl, {
+    const fetchUrl = transformYouTubeThumb(thumbUrl);
+    const fetchResponse = await fetch(fetchUrl, {
       cf: {
         image: {
           width: SMALL_WIDTH,
