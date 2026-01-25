@@ -865,8 +865,9 @@ viewThumbInner className maybeUrl =
 
 
 {-| Render layered channel thumbnail with blurred background and contained foreground.
+Returns a list of elements to be placed directly in the wrapper.
 -}
-viewChannelThumbLayered : Maybe Url -> Html msg
+viewChannelThumbLayered : Maybe Url -> List (Html msg)
 viewChannelThumbLayered maybeUrl =
     case maybeUrl of
         Just url ->
@@ -874,23 +875,22 @@ viewChannelThumbLayered maybeUrl =
                 thumbUrl =
                     "/proxy/thumb/" ++ Url.percentEncode (Url.toString url)
             in
-            div []
-                [ img
-                    [ class "channel-thumb-bg"
-                    , src thumbUrl
-                    , A.attribute "aria-hidden" "true"
-                    ]
-                    []
-                , img
-                    [ class "channel-thumb-fg"
-                    , src thumbUrl
-                    , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
-                    ]
-                    []
+            [ img
+                [ class "channel-thumb-bg"
+                , src thumbUrl
+                , A.attribute "aria-hidden" "true"
                 ]
+                []
+            , img
+                [ class "channel-thumb-fg"
+                , src thumbUrl
+                , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
+                ]
+                []
+            ]
 
         Nothing ->
-            div [ class "channel-thumb thumb-placeholder" ] []
+            [ div [ class "channel-thumb thumb-placeholder" ] [] ]
 
 
 {-| Simple episode card without queue/watch buttons (for unauthenticated view).
@@ -949,14 +949,15 @@ viewChannelCard model channel =
     div [ class "channel-card" ]
         [ a [ href ("/" ++ Url.percentEncode rss) ]
             [ div [ class "channel-thumb-wrapper" ]
-                [ viewChannelThumbLayered channel.thumb
-                , case channel.episodeCount of
-                    Just count ->
-                        span [ class "episode-count-badge" ] [ text (String.fromInt count ++ " eps") ]
+                (viewChannelThumbLayered channel.thumb
+                    ++ [ case channel.episodeCount of
+                            Just count ->
+                                span [ class "episode-count-badge" ] [ text (String.fromInt count ++ " eps") ]
 
-                    Nothing ->
-                        text ""
-                ]
+                            Nothing ->
+                                text ""
+                       ]
+                )
             , div [ class "channel-info" ]
                 [ div [ class "channel-title" ] [ text channel.title ]
                 , case channel.author of
