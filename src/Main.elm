@@ -959,8 +959,8 @@ channelThumbWithFallback channelThumb episodes =
 
         Nothing ->
             Dict.values episodes
+                |> List.filterMap .thumb
                 |> List.head
-                |> Maybe.andThen .thumb
 
 
 viewThumb : String -> Maybe Url -> Html msg
@@ -1128,12 +1128,29 @@ channelDecoder =
     D.succeed Channel
         |> D.required "title" D.string
         |> D.optional "description" D.string ""
-        |> D.required "thumb" (D.maybe urlDecoder)
+        |> thumbWithFallbackDecoder
         |> D.required "rss" urlDecoder
         |> D.required "updated_at" D.string
         |> D.optional "author" (D.maybe D.string) Nothing
         |> D.optional "episode_count" (D.maybe D.int) Nothing
         |> D.optional "categories" (D.maybe (D.list D.string)) Nothing
+
+
+thumbWithFallbackDecoder : D.Decoder (Maybe Url -> b) -> D.Decoder b
+thumbWithFallbackDecoder =
+    D.custom
+        (D.map2
+            (\thumb episodeThumb ->
+                case thumb of
+                    Just _ ->
+                        thumb
+
+                    Nothing ->
+                        episodeThumb
+            )
+            (D.field "thumb" (D.maybe urlDecoder))
+            (D.maybe (D.field "episode_thumb" urlDecoder))
+        )
 
 
 episodeDecoder : D.Decoder Episode

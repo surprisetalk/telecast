@@ -181,9 +181,9 @@ function findEpisodeThumbnail(item: any): string | null {
 export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
   const xml = parser.parse(xmlText);
 
-  // Check for YouTube feed
+  // Check for YouTube feed (yt:channelId exists but may not have "UC" prefix at channel level)
   const ytChannelId = xml.feed?.["yt:channelId"];
-  if (typeof ytChannelId === "string" && ytChannelId.startsWith("UC")) {
+  if (typeof ytChannelId === "string" && ytChannelId.length > 0) {
     const entries = xml.feed.entry;
     const items = Array.isArray(entries) ? entries : entries ? [entries] : [];
     return items.slice(0, 50).map((item: any) => {

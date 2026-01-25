@@ -10,7 +10,13 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
   if (!query) return new Response("Query parameter required", { status: 400 });
   const results = query.startsWith("tag:")
     ? await sql`
-        select c.*
+        select c.*, (
+          select thumb from episode e
+          where e.channel_id = c.channel_id
+            and e.thumb is not null
+          order by published_at desc nulls last
+          limit 1
+        ) as episode_thumb
         from channel c
         where ${query.slice(4)} = any(tags)
           and quality >= ${QUALITY_THRESHOLD}
@@ -18,7 +24,13 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
         limit 50
       `
     : await sql`
-        select c.*
+        select c.*, (
+          select thumb from episode e
+          where e.channel_id = c.channel_id
+            and e.thumb is not null
+          order by published_at desc nulls last
+          limit 1
+        ) as episode_thumb
         from channel c
         where websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
           and quality >= ${QUALITY_THRESHOLD}
