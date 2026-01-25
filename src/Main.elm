@@ -864,6 +864,35 @@ viewThumbInner className maybeUrl =
             div [ class (className ++ " thumb-placeholder") ] []
 
 
+{-| Render layered channel thumbnail with blurred background and contained foreground.
+-}
+viewChannelThumbLayered : Maybe Url -> Html msg
+viewChannelThumbLayered maybeUrl =
+    case maybeUrl of
+        Just url ->
+            let
+                thumbUrl =
+                    "/proxy/thumb/" ++ Url.percentEncode (Url.toString url)
+            in
+            div []
+                [ img
+                    [ class "channel-thumb-bg"
+                    , src thumbUrl
+                    , A.attribute "aria-hidden" "true"
+                    ]
+                    []
+                , img
+                    [ class "channel-thumb-fg"
+                    , src thumbUrl
+                    , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
+                    ]
+                    []
+                ]
+
+        Nothing ->
+            div [ class "channel-thumb thumb-placeholder" ] []
+
+
 {-| Simple episode card without queue/watch buttons (for unauthenticated view).
 -}
 viewSimpleEpisodeCard : Maybe Url -> Episode -> Html msg
@@ -920,7 +949,7 @@ viewChannelCard model channel =
     div [ class "channel-card" ]
         [ a [ href ("/" ++ Url.percentEncode rss) ]
             [ div [ class "channel-thumb-wrapper" ]
-                [ viewThumbInner "channel-thumb" channel.thumb
+                [ viewChannelThumbLayered channel.thumb
                 , case channel.episodeCount of
                     Just count ->
                         span [ class "episode-count-badge" ] [ text (String.fromInt count ++ " eps") ]
