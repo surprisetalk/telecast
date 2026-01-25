@@ -88,6 +88,9 @@ type alias Channel =
     , thumb : Maybe Url
     , rss : Url
     , updatedAt : String
+    , author : Maybe String
+    , episodeCount : Maybe Int
+    , categories : Maybe (List String)
     }
 
 
@@ -98,6 +101,12 @@ type alias Episode =
     , src : Url
     , description : String
     , index : Int
+    , durationSeconds : Maybe Int
+    , publishedAt : Maybe String
+    , season : Maybe Int
+    , episodeNum : Maybe Int
+    , channelTitle : Maybe String
+    , channelThumb : Maybe Url
     }
 
 
@@ -263,9 +272,19 @@ update msg model =
             case model.channel of
                 Just ( _, Loadable (Just (Ok feed)) ) ->
                     let
-                        -- Add most recent 3 episodes to queue
+                        -- Enrich episodes with channel info
+                        enrichEpisode ep =
+                            { ep
+                                | channelTitle = Just feed.channel.title
+                                , channelThumb = feed.channel.thumb
+                            }
+
+                        enrichedEpisodes =
+                            Dict.map (\_ ep -> enrichEpisode ep) feed.episodes
+
+                        -- Add most recent 3 episodes to queue (enriched)
                         recentEpisodes =
-                            feed.episodes
+                            enrichedEpisodes
                                 |> Dict.values
                                 |> List.take 3
                                 |> List.map (\ep -> ( ep.id, ep ))
@@ -275,7 +294,7 @@ update msg model =
                         (\lib ->
                             { lib
                                 | channels = Dict.insert channelId feed.channel lib.channels
-                                , episodes = Dict.insert channelId feed.episodes lib.episodes
+                                , episodes = Dict.insert channelId enrichedEpisodes lib.episodes
                                 , queue = Dict.union recentEpisodes lib.queue
                             }
                         )
@@ -614,10 +633,19 @@ view model =
                     div [ class "rows", id "channel" ]
                         (case loadableFeed of
                             Loadable (Just (Ok feed)) ->
-                                [ div [ class "rows" ]
+                                [ div [ class "rows channel-header" ]
                                     [ div [ class "cols" ]
                                         [ viewThumb "channel-thumb" (channelThumbWithFallback feed.channel.thumb feed.episodes)
-                                        , h1 [] [ text feed.channel.title ]
+                                        , div [ class "rows channel-header-info" ]
+                                            [ h1 [] [ text feed.channel.title ]
+                                            , div [ class "channel-header-meta" ]
+                                                (List.filterMap identity
+                                                    [ feed.channel.author |> Maybe.map (\a -> span [] [ text a ])
+                                                    , feed.channel.episodeCount |> Maybe.map (\c -> span [] [ text (String.fromInt c ++ " episodes") ])
+                                                    ]
+                                                    |> List.intersperse (span [ class "meta-sep" ] [ text " · " ])
+                                                )
+                                            ]
                                         , case model.library of
                                             Loadable (Just (Ok lib)) ->
                                                 if Dict.member (Url.toString rss) lib.channels then
@@ -634,6 +662,13 @@ view model =
                                                 text ""
                                         ]
                                     , p [] [ text feed.channel.description ]
+                                    , case feed.channel.categories of
+                                        Just cats ->
+                                            div [ class "channel-categories" ]
+                                                (List.map (\cat -> span [ class "category-tag" ] [ text cat ]) cats)
+
+                                        Nothing ->
+                                            text ""
                                     ]
                                 , case model.library of
                                     Loadable (Just (Ok lib)) ->
@@ -647,15 +682,7 @@ view model =
                                         div [ class "autogrid" ]
                                             (Dict.values feed.episodes
                                                 |> List.sortBy .index
-                                                |> List.map
-                                                    (\episode ->
-                                                        div [ class "episode-card" ]
-                                                            [ a [ href (episodeUrl (Just rss) episode.id) ]
-                                                                [ viewThumb "episode-thumb" episode.thumb
-                                                                , div [ class "episode-title" ] [ text episode.title ]
-                                                                ]
-                                                            ]
-                                                    )
+                                                |> List.map (viewSimpleEpisodeCard (Just rss))
                                             )
                                 ]
 
@@ -738,10 +765,76 @@ viewTagLink ( tag, label ) =
 
 viewEpisodeCard : Library -> Maybe Url -> Episode -> Html Msg
 viewEpisodeCard lib maybeRss episode =
+    let
+        -- Format duration as "1:23:45" or "12:34"
+        formatDuration seconds =
+            let
+                h =
+                    seconds // 3600
+
+                m =
+                    modBy 60 (seconds // 60)
+
+                s =
+                    modBy 60 seconds
+
+                pad n =
+                    if n < 10 then
+                        "0" ++ String.fromInt n
+
+                    else
+                        String.fromInt n
+            in
+            if h > 0 then
+                String.fromInt h ++ ":" ++ pad m ++ ":" ++ pad s
+
+            else
+                String.fromInt m ++ ":" ++ pad s
+
+        -- Build episode number prefix like "S2 E5 · " or "E5 · "
+        episodePrefix =
+            case ( episode.season, episode.episodeNum ) of
+                ( Just s, Just e ) ->
+                    "S" ++ String.fromInt s ++ " E" ++ String.fromInt e ++ " · "
+
+                ( Nothing, Just e ) ->
+                    "E" ++ String.fromInt e ++ " · "
+
+                _ ->
+                    ""
+    in
     div [ class "episode-card" ]
         [ a [ href (episodeUrl maybeRss episode.id) ]
-            [ viewThumb "episode-thumb" episode.thumb
-            , div [ class "episode-title" ] [ text episode.title ]
+            [ div [ class "episode-thumb-wrapper" ]
+                [ viewThumbInner "episode-thumb" episode.thumb
+                , case episode.durationSeconds of
+                    Just seconds ->
+                        span [ class "duration-badge" ] [ text (formatDuration seconds) ]
+
+                    Nothing ->
+                        text ""
+                ]
+            , div [ class "episode-info" ]
+                [ div [ class "episode-title" ]
+                    [ text (episodePrefix ++ episode.title) ]
+                , case ( maybeRss, episode.channelTitle, episode.publishedAt ) of
+                    -- On channel page, only show date
+                    ( Just _, _, Just date ) ->
+                        div [ class "episode-meta" ] [ text date ]
+
+                    -- In queue/feed, show channel name and date
+                    ( Nothing, Just channelName, Just date ) ->
+                        div [ class "episode-meta" ] [ text (channelName ++ " · " ++ date) ]
+
+                    ( Nothing, Just channelName, Nothing ) ->
+                        div [ class "episode-meta" ] [ text channelName ]
+
+                    ( Nothing, Nothing, Just date ) ->
+                        div [ class "episode-meta" ] [ text date ]
+
+                    _ ->
+                        text ""
+                ]
             ]
         , if Set.member episode.id lib.watched then
             text ""
@@ -754,6 +847,70 @@ viewEpisodeCard lib maybeRss episode =
         ]
 
 
+{-| Render just the thumbnail image (without wrapper div).
+-}
+viewThumbInner : String -> Maybe Url -> Html msg
+viewThumbInner className maybeUrl =
+    case maybeUrl of
+        Just url ->
+            img
+                [ class className
+                , src ("/proxy/thumb/" ++ Url.percentEncode (Url.toString url))
+                , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
+                ]
+                []
+
+        Nothing ->
+            div [ class (className ++ " thumb-placeholder") ] []
+
+
+{-| Simple episode card without queue/watch buttons (for unauthenticated view).
+-}
+viewSimpleEpisodeCard : Maybe Url -> Episode -> Html msg
+viewSimpleEpisodeCard maybeRss episode =
+    let
+        formatDuration seconds =
+            let
+                h =
+                    seconds // 3600
+
+                m =
+                    modBy 60 (seconds // 60)
+
+                s =
+                    modBy 60 seconds
+
+                pad n =
+                    if n < 10 then
+                        "0" ++ String.fromInt n
+
+                    else
+                        String.fromInt n
+            in
+            if h > 0 then
+                String.fromInt h ++ ":" ++ pad m ++ ":" ++ pad s
+
+            else
+                String.fromInt m ++ ":" ++ pad s
+    in
+    div [ class "episode-card" ]
+        [ a [ href (episodeUrl maybeRss episode.id) ]
+            [ div [ class "episode-thumb-wrapper" ]
+                [ viewThumbInner "episode-thumb" episode.thumb
+                , case episode.durationSeconds of
+                    Just seconds ->
+                        span [ class "duration-badge" ] [ text (formatDuration seconds) ]
+
+                    Nothing ->
+                        text ""
+                ]
+            , div [ class "episode-info" ]
+                [ div [ class "episode-title" ] [ text episode.title ]
+                ]
+            ]
+        ]
+
+
 viewChannelCard : Model -> Channel -> Html Msg
 viewChannelCard model channel =
     let
@@ -762,8 +919,24 @@ viewChannelCard model channel =
     in
     div [ class "channel-card" ]
         [ a [ href ("/" ++ Url.percentEncode rss) ]
-            [ viewThumb "channel-thumb" channel.thumb
-            , div [ class "channel-title" ] [ text channel.title ]
+            [ div [ class "channel-thumb-wrapper" ]
+                [ viewThumbInner "channel-thumb" channel.thumb
+                , case channel.episodeCount of
+                    Just count ->
+                        span [ class "episode-count-badge" ] [ text (String.fromInt count ++ " eps") ]
+
+                    Nothing ->
+                        text ""
+                ]
+            , div [ class "channel-info" ]
+                [ div [ class "channel-title" ] [ text channel.title ]
+                , case channel.author of
+                    Just author ->
+                        div [ class "channel-meta" ] [ text author ]
+
+                    Nothing ->
+                        text ""
+                ]
             ]
         , case model.library of
             Loadable (Just (Ok lib)) ->
@@ -958,6 +1131,9 @@ channelDecoder =
         |> D.required "thumb" (D.maybe urlDecoder)
         |> D.required "rss" urlDecoder
         |> D.required "updated_at" D.string
+        |> D.optional "author" (D.maybe D.string) Nothing
+        |> D.optional "episode_count" (D.maybe D.int) Nothing
+        |> D.optional "categories" (D.maybe (D.list D.string)) Nothing
 
 
 episodeDecoder : D.Decoder Episode
@@ -969,6 +1145,12 @@ episodeDecoder =
         |> D.required "src" urlDecoder
         |> D.optional "description" D.string ""
         |> D.optional "index" D.int 0
+        |> D.optional "durationSeconds" (D.maybe D.int) Nothing
+        |> D.optional "publishedAt" (D.maybe D.string) Nothing
+        |> D.optional "season" (D.maybe D.int) Nothing
+        |> D.optional "episodeNum" (D.maybe D.int) Nothing
+        |> D.optional "channelTitle" (D.maybe D.string) Nothing
+        |> D.optional "channelThumb" (D.maybe urlDecoder) Nothing
 
 
 playbackDecoder : D.Decoder Playback
@@ -1017,6 +1199,9 @@ channelEncoder channel =
         , ( "thumb", channel.thumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
         , ( "rss", E.string (Url.toString channel.rss) )
         , ( "updated_at", E.string channel.updatedAt )
+        , ( "author", channel.author |> Maybe.map E.string |> Maybe.withDefault E.null )
+        , ( "episode_count", channel.episodeCount |> Maybe.map E.int |> Maybe.withDefault E.null )
+        , ( "categories", channel.categories |> Maybe.map (E.list E.string) |> Maybe.withDefault E.null )
         ]
 
 
@@ -1029,6 +1214,12 @@ episodeEncoder episode =
         , ( "src", E.string (Url.toString episode.src) )
         , ( "description", E.string episode.description )
         , ( "index", E.int episode.index )
+        , ( "durationSeconds", episode.durationSeconds |> Maybe.map E.int |> Maybe.withDefault E.null )
+        , ( "publishedAt", episode.publishedAt |> Maybe.map E.string |> Maybe.withDefault E.null )
+        , ( "season", episode.season |> Maybe.map E.int |> Maybe.withDefault E.null )
+        , ( "episodeNum", episode.episodeNum |> Maybe.map E.int |> Maybe.withDefault E.null )
+        , ( "channelTitle", episode.channelTitle |> Maybe.map E.string |> Maybe.withDefault E.null )
+        , ( "channelThumb", episode.channelThumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
         ]
 
 
@@ -1042,14 +1233,6 @@ playbackEncoder playback =
 
 
 -- XML
-
-
-{-| Helper for XML decoders: creates Episode with default index (0).
-    The actual index gets assigned in makeEpisodeDict.
--}
-mkEpisode : Id -> String -> Maybe Url -> Url -> String -> Episode
-mkEpisode id title thumb srcUrl desc =
-    Episode id title thumb srcUrl desc 0
 
 
 urlDecoder_ : String -> X.Decoder Url
@@ -1078,7 +1261,7 @@ feedDecoder =
 youtubeFormatDecoder : X.Decoder Feed
 youtubeFormatDecoder =
     X.map2 Feed
-        (X.succeed Channel
+        (X.succeed mkChannel
             |> X.requiredPath [ "title" ] (X.single X.string)
             |> X.optionalPath [ "description" ] (X.single X.string) ""
             |> X.possiblePath [ "thumbnail", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
@@ -1093,25 +1276,31 @@ youtubeFormatDecoder =
 
 youtubeEntryDecoder : X.Decoder Episode
 youtubeEntryDecoder =
-    X.succeed mkEpisode
-        |> X.requiredPath [ "id" ] (X.single X.string)
-        |> X.requiredPath [ "title" ] (X.single X.string)
-        |> X.possiblePath [ "media:group", "media:thumbnail" ]
-            (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
-        |> X.requiredPath [ "yt:videoId" ]
-            (X.single
-                (X.string
-                    |> X.map (\videoId -> "https://www.youtube.com/embed/" ++ videoId)
-                    |> X.andThen urlDecoder_
+    X.map2
+        (\baseEpisode maybePubDate ->
+            { baseEpisode | publishedAt = maybePubDate }
+        )
+        (X.succeed mkEpisodeBase
+            |> X.requiredPath [ "id" ] (X.single X.string)
+            |> X.requiredPath [ "title" ] (X.single X.string)
+            |> X.possiblePath [ "media:group", "media:thumbnail" ]
+                (X.single (X.stringAttr "url" |> X.andThen urlDecoder_))
+            |> X.requiredPath [ "yt:videoId" ]
+                (X.single
+                    (X.string
+                        |> X.map (\videoId -> "https://www.youtube.com/embed/" ++ videoId)
+                        |> X.andThen urlDecoder_
+                    )
                 )
-            )
-        |> X.optionalPath [ "media:group", "media:description" ] (X.single X.string) ""
+            |> X.optionalPath [ "media:group", "media:description" ] (X.single X.string) ""
+        )
+        (X.maybe (X.path [ "published" ] (X.single X.string)))
 
 
 podcastRssDecoder : X.Decoder Feed
 podcastRssDecoder =
     X.map2 Feed
-        (X.succeed Channel
+        (X.succeed mkChannel
             |> X.requiredPath [ "channel", "title" ] (X.single X.string)
             |> X.optionalPath [ "channel", "description" ] (X.single X.string) ""
             |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
@@ -1138,7 +1327,7 @@ podcastItemDecoder =
 standardRssDecoder : X.Decoder Feed
 standardRssDecoder =
     X.map2 Feed
-        (X.succeed Channel
+        (X.succeed mkChannel
             |> X.requiredPath [ "channel", "title" ] (X.single X.string)
             |> X.optionalPath [ "channel", "description" ] (X.single X.string) ""
             |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
@@ -1149,6 +1338,21 @@ standardRssDecoder =
             (X.list standardItemDecoder)
             |> X.map makeEpisodeDict
         )
+
+
+{-| Helper for XML decoders: creates base Channel without extra fields.
+-}
+mkChannel : String -> String -> Maybe Url -> Url -> String -> Channel
+mkChannel title description thumb rss updatedAt =
+    { title = title
+    , description = description
+    , thumb = thumb
+    , rss = rss
+    , updatedAt = updatedAt
+    , author = Nothing
+    , episodeCount = Nothing
+    , categories = Nothing
+    }
 
 
 standardItemDecoder : X.Decoder Episode
@@ -1162,6 +1366,33 @@ standardItemDecoder =
         }
 
 
+{-| Parse duration string (HH:MM:SS, MM:SS, or raw seconds) to seconds.
+-}
+parseDuration : String -> Int
+parseDuration str =
+    let
+        parts =
+            String.split ":" str |> List.filterMap String.toInt
+    in
+    case parts of
+        [ h, m, s ] ->
+            h * 3600 + m * 60 + s
+
+        [ m, s ] ->
+            m * 60 + s
+
+        [ s ] ->
+            s
+
+        _ ->
+            String.toInt str |> Maybe.withDefault 0
+
+
+parseInt : String -> Int
+parseInt str =
+    String.toInt str |> Maybe.withDefault 0
+
+
 itemDecoderWith :
     { thumbPath : List String
     , thumbDecoder : X.Decoder Url
@@ -1172,19 +1403,70 @@ itemDecoderWith :
     -> X.Decoder Episode
 itemDecoderWith { thumbPath, thumbDecoder, srcPath, srcAsString, srcAsUrl } =
     X.oneOf
-        [ X.succeed mkEpisode
-            |> X.requiredPath [ "guid" ] (X.single X.string)
-            |> X.requiredPath [ "title" ] (X.single X.string)
-            |> X.possiblePath thumbPath (X.single thumbDecoder)
-            |> X.requiredPath srcPath (X.single srcAsUrl)
-            |> X.optionalPath [ "description" ] (X.single X.string) ""
-        , X.succeed mkEpisode
-            |> X.requiredPath srcPath (X.single srcAsString)
-            |> X.requiredPath [ "title" ] (X.single X.string)
-            |> X.possiblePath thumbPath (X.single thumbDecoder)
-            |> X.requiredPath srcPath (X.single srcAsUrl)
-            |> X.optionalPath [ "description" ] (X.single X.string) ""
+        [ X.map4
+            (\baseEpisode maybeDuration maybePubDate ( maybeSeason, maybeEpNum ) ->
+                { baseEpisode
+                    | durationSeconds = maybeDuration
+                    , publishedAt = maybePubDate
+                    , season = maybeSeason
+                    , episodeNum = maybeEpNum
+                }
+            )
+            (X.succeed mkEpisodeBase
+                |> X.requiredPath [ "guid" ] (X.single X.string)
+                |> X.requiredPath [ "title" ] (X.single X.string)
+                |> X.possiblePath thumbPath (X.single thumbDecoder)
+                |> X.requiredPath srcPath (X.single srcAsUrl)
+                |> X.optionalPath [ "description" ] (X.single X.string) ""
+            )
+            (X.maybe (X.path [ "itunes:duration" ] (X.single (X.string |> X.map parseDuration))))
+            (X.maybe (X.path [ "pubDate" ] (X.single X.string)))
+            (X.succeed Tuple.pair
+                |> X.possiblePath [ "itunes:season" ] (X.single (X.string |> X.map parseInt))
+                |> X.possiblePath [ "itunes:episode" ] (X.single (X.string |> X.map parseInt))
+            )
+        , X.map4
+            (\baseEpisode maybeDuration maybePubDate ( maybeSeason, maybeEpNum ) ->
+                { baseEpisode
+                    | durationSeconds = maybeDuration
+                    , publishedAt = maybePubDate
+                    , season = maybeSeason
+                    , episodeNum = maybeEpNum
+                }
+            )
+            (X.succeed mkEpisodeBase
+                |> X.requiredPath srcPath (X.single srcAsString)
+                |> X.requiredPath [ "title" ] (X.single X.string)
+                |> X.possiblePath thumbPath (X.single thumbDecoder)
+                |> X.requiredPath srcPath (X.single srcAsUrl)
+                |> X.optionalPath [ "description" ] (X.single X.string) ""
+            )
+            (X.maybe (X.path [ "itunes:duration" ] (X.single (X.string |> X.map parseDuration))))
+            (X.maybe (X.path [ "pubDate" ] (X.single X.string)))
+            (X.succeed Tuple.pair
+                |> X.possiblePath [ "itunes:season" ] (X.single (X.string |> X.map parseInt))
+                |> X.possiblePath [ "itunes:episode" ] (X.single (X.string |> X.map parseInt))
+            )
         ]
+
+
+{-| Helper for XML decoders: creates base Episode without enrichment fields.
+-}
+mkEpisodeBase : Id -> String -> Maybe Url -> Url -> String -> Episode
+mkEpisodeBase id title thumb srcUrl desc =
+    { id = id
+    , title = title
+    , thumb = thumb
+    , src = srcUrl
+    , description = desc
+    , index = 0
+    , durationSeconds = Nothing
+    , publishedAt = Nothing
+    , season = Nothing
+    , episodeNum = Nothing
+    , channelTitle = Nothing
+    , channelThumb = Nothing
+    }
 
 
 makeEpisodeDict : List Episode -> Dict Id Episode

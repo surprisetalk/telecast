@@ -42,7 +42,11 @@ function extractText(raw: any): string {
 }
 
 function httpsUrl(url: string | null | undefined): string | null {
-  return url?.startsWith("https://") ? url : null;
+  if (!url) return null;
+  if (url.startsWith("https://")) return url;
+  if (url.startsWith("http://")) return url.replace("http://", "https://");
+  if (url.startsWith("//")) return "https:" + url;
+  return null;
 }
 
 function sanitizeText(text: any): string | null {
