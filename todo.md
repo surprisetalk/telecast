@@ -1,5 +1,5 @@
 - [-] fetch/refresh feeds; add new episodes to watch queue
-- [-] fix channel subscriptions?
+- [-] fix channel subscriptions? esp. from search results page.
 - [ ] simplify style.css
 - [-] make it not ugly
 - [ ] launch
