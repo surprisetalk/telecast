@@ -1,6 +1,5 @@
 - [-] fetch/refresh feeds; add new episodes to watch queue
 - [-] fix channel subscriptions?
-- [-] don't use youtube short thumbnails for channel when possible
 - [ ] simplify style.css
 - [-] make it not ugly
 - [ ] launch

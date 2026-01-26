@@ -175,7 +175,7 @@ type Msg
     | ChannelsFetched (Result Http.Error (List Channel))
     | SearchEditing String
     | SearchSubmitting
-    | ChannelSubscribing String
+    | ChannelSubscribing String Channel
     | ChannelUnsubscribing String
     | EpisodeQueued Episode
     | EpisodeWatched Id
@@ -278,15 +278,15 @@ update msg model =
                 Nothing ->
                     ( model, Cmd.none )
 
-        ChannelSubscribing channelId ->
+        ChannelSubscribing channelId channel ->
             case model.channel of
                 Just ( _, Loadable (Just (Ok feed)) ) ->
                     let
                         -- Enrich episodes with channel info
                         enrichEpisode ep =
                             { ep
-                                | channelTitle = Just feed.channel.title
-                                , channelThumb = feed.channel.thumb
+                                | channelTitle = Just channel.title
+                                , channelThumb = channel.thumb
                             }
 
                         enrichedEpisodes =
@@ -303,7 +303,7 @@ update msg model =
                     withLibrary
                         (\lib ->
                             { lib
-                                | channels = Dict.insert channelId feed.channel lib.channels
+                                | channels = Dict.insert channelId channel lib.channels
                                 , episodes = Dict.insert channelId enrichedEpisodes lib.episodes
                                 , queue = Dict.union recentEpisodes lib.queue
                             }
@@ -311,7 +311,15 @@ update msg model =
                         model
 
                 _ ->
-                    ( model, Cmd.none )
+                    -- No feed loaded: subscribe with channel only (from search results)
+                    withLibrary
+                        (\lib ->
+                            { lib
+                                | channels = Dict.insert channelId channel lib.channels
+                                , episodes = Dict.insert channelId Dict.empty lib.episodes
+                            }
+                        )
+                        model
 
         ChannelUnsubscribing channelId ->
             withLibrary
@@ -765,7 +773,7 @@ view model =
 
                                                 else
                                                     button
-                                                        [ onClick (ChannelSubscribing (Url.toString rss)) ]
+                                                        [ onClick (ChannelSubscribing (Url.toString rss) feed.channel) ]
                                                         [ text "subscribe" ]
 
                                             _ ->
@@ -1047,10 +1055,10 @@ viewChannelCard model channel =
                     button [ onClick (ChannelUnsubscribing rss) ] [ text "x" ]
 
                 else
-                    button [ onClick (ChannelSubscribing rss) ] [ text "+" ]
+                    button [ onClick (ChannelSubscribing rss channel) ] [ text "+" ]
 
             _ ->
-                button [ onClick (ChannelSubscribing rss) ] [ text "+" ]
+                button [ onClick (ChannelSubscribing rss channel) ] [ text "+" ]
         ]
 
 
