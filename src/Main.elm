@@ -871,31 +871,6 @@ viewTagLink ( tag, label ) =
 viewEpisodeCard : Library -> Maybe Url -> Episode -> Html Msg
 viewEpisodeCard lib maybeRss episode =
     let
-        -- Format duration as "1:23:45" or "12:34"
-        formatDuration seconds =
-            let
-                h =
-                    seconds // 3600
-
-                m =
-                    modBy 60 (seconds // 60)
-
-                s =
-                    modBy 60 seconds
-
-                pad n =
-                    if n < 10 then
-                        "0" ++ String.fromInt n
-
-                    else
-                        String.fromInt n
-            in
-            if h > 0 then
-                String.fromInt h ++ ":" ++ pad m ++ ":" ++ pad s
-
-            else
-                String.fromInt m ++ ":" ++ pad s
-
         -- Build episode number prefix like "S2 E5 · " or "E5 · "
         episodePrefix =
             case ( episode.season, episode.episodeNum ) of
@@ -945,10 +920,10 @@ viewEpisodeCard lib maybeRss episode =
             text ""
 
           else if Dict.member episode.id lib.queue then
-            button [ onClick (EpisodeWatched episode.id), class "watched-btn" ] [ text "x" ]
+            button [ onClick (EpisodeWatched episode.id) ] [ text "x" ]
 
           else
-            button [ onClick (EpisodeQueued episode), class "queue-btn" ] [ text "+" ]
+            button [ onClick (EpisodeQueued episode) ] [ text "+" ]
         ]
 
 
@@ -1015,31 +990,6 @@ viewChannelThumbLayered maybeUrl =
 -}
 viewSimpleEpisodeCard : Maybe Url -> Episode -> Html msg
 viewSimpleEpisodeCard maybeRss episode =
-    let
-        formatDuration seconds =
-            let
-                h =
-                    seconds // 3600
-
-                m =
-                    modBy 60 (seconds // 60)
-
-                s =
-                    modBy 60 seconds
-
-                pad n =
-                    if n < 10 then
-                        "0" ++ String.fromInt n
-
-                    else
-                        String.fromInt n
-            in
-            if h > 0 then
-                String.fromInt h ++ ":" ++ pad m ++ ":" ++ pad s
-
-            else
-                String.fromInt m ++ ":" ++ pad s
-    in
     div [ class "episode-card" ]
         [ a [ href (episodeUrl maybeRss episode.id) ]
             [ div [ class "episode-thumb-wrapper" ]
@@ -1089,13 +1039,13 @@ viewChannelCard model channel =
         , case model.library of
             Loadable (Just (Ok lib)) ->
                 if Dict.member rss lib.channels then
-                    button [ onClick (ChannelUnsubscribing rss), class "unsub-btn" ] [ text "x" ]
+                    button [ onClick (ChannelUnsubscribing rss) ] [ text "x" ]
 
                 else
-                    button [ onClick (ChannelSubscribing rss), class "sub-btn" ] [ text "+" ]
+                    button [ onClick (ChannelSubscribing rss) ] [ text "+" ]
 
             _ ->
-                button [ onClick (ChannelSubscribing rss), class "sub-btn" ] [ text "+" ]
+                button [ onClick (ChannelSubscribing rss) ] [ text "+" ]
         ]
 
 
@@ -1106,9 +1056,26 @@ channelThumbWithFallback channelThumb episodes =
             channelThumb
 
         Nothing ->
-            Dict.values episodes
-                |> List.filterMap .thumb
-                |> List.head
+            let
+                allEpisodes =
+                    Dict.values episodes
+
+                -- Prefer non-Shorts episodes for channel thumbnails
+                nonShortsThumbs =
+                    allEpisodes
+                        |> List.filter (isLikelyShort >> not)
+                        |> List.filterMap .thumb
+
+                -- Fallback to any episode thumbnail if all are Shorts
+                anyThumb =
+                    allEpisodes |> List.filterMap .thumb
+            in
+            case nonShortsThumbs of
+                first :: _ ->
+                    Just first
+
+                [] ->
+                    List.head anyThumb
 
 
 viewThumb : String -> Maybe Url -> Html msg
@@ -1222,6 +1189,54 @@ capitalize str =
     String.uncons str
         |> Maybe.map (\( first, rest ) -> String.cons (Char.toUpper first) rest)
         |> Maybe.withDefault str
+
+
+{-| Format duration in seconds as "1:23:45" or "12:34".
+-}
+formatDuration : Int -> String
+formatDuration seconds =
+    let
+        h =
+            seconds // 3600
+
+        m =
+            modBy 60 (seconds // 60)
+
+        s =
+            modBy 60 seconds
+
+        pad n =
+            if n < 10 then
+                "0" ++ String.fromInt n
+
+            else
+                String.fromInt n
+    in
+    if h > 0 then
+        String.fromInt h ++ ":" ++ pad m ++ ":" ++ pad s
+
+    else
+        String.fromInt m ++ ":" ++ pad s
+
+
+{-| Check if an episode appears to be a YouTube Short based on title/description heuristics.
+-}
+isLikelyShort : Episode -> Bool
+isLikelyShort episode =
+    let
+        titleLower =
+            String.toLower episode.title
+
+        descLower =
+            String.toLower episode.description
+
+        shortsIndicators =
+            [ "#shorts", "#short", "#learnwithshorts" ]
+
+        hasIndicator text =
+            List.any (\indicator -> String.contains indicator text) shortsIndicators
+    in
+    hasIndicator titleLower || hasIndicator descLower
 
 
 getLibrary : Model -> Maybe Library

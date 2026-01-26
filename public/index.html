@@ -49,9 +49,8 @@
       app.ports.librarySaving.subscribe(library => {
         try {
           localStorage.setItem(KEY, JSON.stringify(library));
-          app.ports.libraryLoaded.send(library);
         } catch (error) {
-          console.error("Error saving channel:", error);
+          console.error("Error saving library:", error);
         }
       });
     </script>

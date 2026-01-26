@@ -590,20 +590,31 @@ audio#player {
   text-overflow: ellipsis;
 }
 
-.duration-badge {
+/* Card badges (duration, episode count) */
+.duration-badge,
+.episode-count-badge {
   position: absolute;
   bottom: var(--space-2);
   right: var(--space-2);
   padding: var(--space-1) var(--space-2);
   font-size: var(--text-xs);
   font-weight: 500;
-  font-family: var(--font-mono);
   color: #fff;
   background: rgba(0, 0, 0, 0.8);
   border-radius: var(--radius-sm);
 }
 
-.episode-card button {
+.duration-badge {
+  font-family: var(--font-mono);
+}
+
+.episode-count-badge {
+  z-index: 3; /* above layered thumbs */
+}
+
+/* Card action buttons (subscribe, queue, watched) */
+.episode-card button,
+.channel-card button {
   position: absolute;
   top: var(--space-2);
   right: var(--space-2);
@@ -616,16 +627,19 @@ audio#player {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
   opacity: 0;
+  z-index: 4; /* above thumb layers */
   transition:
     opacity var(--anim),
     background var(--anim);
 }
 
-.episode-card:hover button {
+.episode-card:hover button,
+.channel-card:hover button {
   opacity: 1;
 }
 
-.episode-card button:hover {
+.episode-card button:hover,
+.channel-card button:hover {
   background: var(--hover-bg);
 }
 
@@ -745,45 +759,6 @@ audio#player {
   text-overflow: ellipsis;
 }
 
-.episode-count-badge {
-  position: absolute;
-  bottom: var(--space-2);
-  right: var(--space-2);
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--text-xs);
-  font-weight: 500;
-  color: #fff;
-  background: rgba(0, 0, 0, 0.7);
-  z-index: 3; /* above layered thumbs */
-  border-radius: var(--radius-sm);
-}
-
-.channel-card button {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  width: 32px;
-  height: 32px;
-  font-size: var(--text-lg);
-  font-weight: 600;
-  color: var(--text-primary);
-  background: var(--surface-color);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  opacity: 0;
-  z-index: 4; /* above thumb layers */
-  transition:
-    opacity var(--anim),
-    background var(--anim);
-}
-
-.channel-card:hover button {
-  opacity: 1;
-}
-
-.channel-card button:hover {
-  background: var(--hover-bg);
-}
 
 /* --------------------------------------------------------------------------
    My Feed & Channel Pages
