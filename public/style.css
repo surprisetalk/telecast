@@ -682,6 +682,10 @@ audio#player {
   z-index: 2; /* above bg layer */
 }
 
+.channel-thumb-fg.yt-cover {
+  object-fit: cover;
+}
+
 .channel-thumb {
   width: 100%;
   height: 100%;

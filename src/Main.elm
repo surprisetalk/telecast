@@ -977,8 +977,21 @@ viewChannelThumbLayered maybeUrl =
     case maybeUrl of
         Just url ->
             let
+                urlStr =
+                    Url.toString url
+
                 thumbUrl =
-                    "/proxy/thumb/" ++ Url.percentEncode (Url.toString url)
+                    "/proxy/thumb/" ++ Url.percentEncode urlStr
+
+                isYouTube =
+                    String.contains "ytimg.com" urlStr
+
+                fgClass =
+                    if isYouTube then
+                        "channel-thumb-fg yt-cover"
+
+                    else
+                        "channel-thumb-fg"
             in
             [ img
                 [ class "channel-thumb-bg"
@@ -987,7 +1000,7 @@ viewChannelThumbLayered maybeUrl =
                 ]
                 []
             , img
-                [ class "channel-thumb-fg"
+                [ class fgClass
                 , src thumbUrl
                 , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
                 ]
