@@ -19,7 +19,7 @@ function serveFallback(): Response {
 
 function transformYouTubeThumb(url: string): string {
   const ytMatch = url.match(/^(https?:\/\/i\d?\.ytimg\.com\/vi\/[^/]+\/)(?:hq|mq|)default\.jpg$/);
-  if (ytMatch) return ytMatch[1] + "sddefault.jpg";
+  if (ytMatch) return ytMatch[1] + "mqdefault.jpg";
   return url;
 }
 
