@@ -1,7 +1,7 @@
 import db from "postgres";
 import { parse, parseEpisodes, Episode, Channel } from "../functions/_shared/rss";
 
-const BATCH_SIZE = 250;
+const BATCH_SIZE = 500;
 const FETCH_TIMEOUT_MS = 15_000;
 
 // Language code to tag mapping
@@ -91,8 +91,8 @@ async function main() {
     ORDER BY
       CASE WHEN last_success_at IS NULL AND last_error_at IS NULL THEN 0 ELSE 1 END,
       updated_at
-        + random() * interval '1 day' * consecutive_errors
-        - random() * interval '1 week' * log(1+coalesce(episode_count,0))
+        + random() * interval '1 day' * coalesce(consecutive_errors,0)
+        -- TODO: - random() * interval '1 week' * log(1+coalesce(episode_count,0))
         -- TODO: - random() * interval '1 month' * coalesce((latest_episode_at-first_episode_at)/interval '1 year',0)
         nulls first,
       random()
