@@ -99,7 +99,8 @@ type alias Channel =
 type alias Episode =
     { id : Id
     , title : String
-    , thumb : Maybe Url
+    , thumb : Maybe Url -- 16:9 video thumbnail (media:thumbnail)
+    , coverArt : Maybe Url -- Square album art (itunes:image)
     , src : Url
     , description : String
     , index : Int
@@ -109,6 +110,10 @@ type alias Episode =
     , episodeNum : Maybe Int
     , channelTitle : Maybe String
     , channelThumb : Maybe Url
+    , isShort : Bool
+    , viewCount : Maybe Int
+    , fileSizeBytes : Maybe Int
+    , isExplicit : Bool
     }
 
 
@@ -886,7 +891,7 @@ viewEpisodeCard lib maybeRss episode =
     div [ class "episode-card" ]
         [ a [ href (episodeUrl maybeRss episode.id) ]
             [ div [ class "episode-thumb-wrapper" ]
-                [ viewThumbInner "episode-thumb" episode.thumb
+                [ viewThumbInner "episode-thumb" (episodeThumbnail episode)
                 , case episode.durationSeconds of
                     Just seconds ->
                         span [ class "duration-badge" ] [ text (formatDuration seconds) ]
@@ -993,7 +998,7 @@ viewSimpleEpisodeCard maybeRss episode =
     div [ class "episode-card" ]
         [ a [ href (episodeUrl maybeRss episode.id) ]
             [ div [ class "episode-thumb-wrapper" ]
-                [ viewThumbInner "episode-thumb" episode.thumb
+                [ viewThumbInner "episode-thumb" (episodeThumbnail episode)
                 , case episode.durationSeconds of
                     Just seconds ->
                         span [ class "duration-badge" ] [ text (formatDuration seconds) ]
@@ -1064,11 +1069,11 @@ channelThumbWithFallback channelThumb episodes =
                 nonShortsThumbs =
                     allEpisodes
                         |> List.filter (isLikelyShort >> not)
-                        |> List.filterMap .thumb
+                        |> List.filterMap episodeThumbnail
 
                 -- Fallback to any episode thumbnail if all are Shorts
                 anyThumb =
-                    allEpisodes |> List.filterMap .thumb
+                    allEpisodes |> List.filterMap episodeThumbnail
             in
             case nonShortsThumbs of
                 first :: _ ->
@@ -1191,6 +1196,19 @@ capitalize str =
         |> Maybe.withDefault str
 
 
+{-| Get the best available thumbnail for an episode.
+    Prefers 16:9 thumb, falls back to square coverArt.
+-}
+episodeThumbnail : Episode -> Maybe Url
+episodeThumbnail episode =
+    case episode.thumb of
+        Just url ->
+            Just url
+
+        Nothing ->
+            episode.coverArt
+
+
 {-| Format duration in seconds as "1:23:45" or "12:34".
 -}
 formatDuration : Int -> String
@@ -1219,24 +1237,32 @@ formatDuration seconds =
         String.fromInt m ++ ":" ++ pad s
 
 
-{-| Check if an episode appears to be a YouTube Short based on title/description heuristics.
+{-| Check if an episode is a YouTube Short.
+    Uses the definitive isShort field (from YouTube's link URL) when available,
+    otherwise falls back to title/description heuristics.
 -}
 isLikelyShort : Episode -> Bool
 isLikelyShort episode =
-    let
-        titleLower =
-            String.toLower episode.title
+    if episode.isShort then
+        -- Definitive: parsed from YouTube's <link rel="alternate"> containing /shorts/
+        True
 
-        descLower =
-            String.toLower episode.description
+    else
+        -- Fallback heuristics for older cached data or non-YouTube feeds
+        let
+            titleLower =
+                String.toLower episode.title
 
-        shortsIndicators =
-            [ "#shorts", "#short", "#learnwithshorts" ]
+            descLower =
+                String.toLower episode.description
 
-        hasIndicator text =
-            List.any (\indicator -> String.contains indicator text) shortsIndicators
-    in
-    hasIndicator titleLower || hasIndicator descLower
+            shortsIndicators =
+                [ "#shorts", "#short", "#learnwithshorts" ]
+
+            hasIndicator text =
+                List.any (\indicator -> String.contains indicator text) shortsIndicators
+        in
+        hasIndicator titleLower || hasIndicator descLower
 
 
 getLibrary : Model -> Maybe Library
@@ -1321,7 +1347,8 @@ episodeDecoder =
     D.succeed Episode
         |> D.required "id" D.string
         |> D.required "title" D.string
-        |> D.required "thumb" (D.maybe urlDecoder)
+        |> D.optional "thumb" (D.maybe urlDecoder) Nothing
+        |> D.optional "coverArt" (D.maybe urlDecoder) Nothing
         |> D.required "src" urlDecoder
         |> D.optional "description" D.string ""
         |> D.optional "index" D.int 0
@@ -1331,6 +1358,10 @@ episodeDecoder =
         |> D.optional "episodeNum" (D.maybe D.int) Nothing
         |> D.optional "channelTitle" (D.maybe D.string) Nothing
         |> D.optional "channelThumb" (D.maybe urlDecoder) Nothing
+        |> D.optional "isShort" D.bool False
+        |> D.optional "viewCount" (D.maybe D.int) Nothing
+        |> D.optional "fileSizeBytes" (D.maybe D.int) Nothing
+        |> D.optional "isExplicit" D.bool False
 
 
 playbackDecoder : D.Decoder Playback
@@ -1391,6 +1422,7 @@ episodeEncoder episode =
         [ ( "id", E.string episode.id )
         , ( "title", E.string episode.title )
         , ( "thumb", episode.thumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
+        , ( "coverArt", episode.coverArt |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
         , ( "src", E.string (Url.toString episode.src) )
         , ( "description", E.string episode.description )
         , ( "index", E.int episode.index )
@@ -1400,6 +1432,10 @@ episodeEncoder episode =
         , ( "episodeNum", episode.episodeNum |> Maybe.map E.int |> Maybe.withDefault E.null )
         , ( "channelTitle", episode.channelTitle |> Maybe.map E.string |> Maybe.withDefault E.null )
         , ( "channelThumb", episode.channelThumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
+        , ( "isShort", E.bool episode.isShort )
+        , ( "viewCount", episode.viewCount |> Maybe.map E.int |> Maybe.withDefault E.null )
+        , ( "fileSizeBytes", episode.fileSizeBytes |> Maybe.map E.int |> Maybe.withDefault E.null )
+        , ( "isExplicit", E.bool episode.isExplicit )
         ]
 
 
@@ -1456,11 +1492,28 @@ youtubeFormatDecoder =
 
 youtubeEntryDecoder : X.Decoder Episode
 youtubeEntryDecoder =
-    X.map2
-        (\baseEpisode maybePubDate ->
-            { baseEpisode | publishedAt = maybePubDate }
+    X.map3
+        (\( ( id, title, thumb ), ( src, desc ) ) maybePubDate ( isShort, maybeViews ) ->
+            { id = id
+            , title = title
+            , thumb = thumb
+            , coverArt = Nothing -- YouTube doesn't have separate cover art
+            , src = src
+            , description = desc
+            , index = 0
+            , durationSeconds = Nothing
+            , publishedAt = maybePubDate
+            , season = Nothing
+            , episodeNum = Nothing
+            , channelTitle = Nothing
+            , channelThumb = Nothing
+            , isShort = isShort
+            , viewCount = maybeViews
+            , fileSizeBytes = Nothing
+            , isExplicit = False
+            }
         )
-        (X.succeed mkEpisodeBase
+        (X.succeed (\a b c d e -> ( ( a, b, c ), ( d, e ) ))
             |> X.requiredPath [ "id" ] (X.single X.string)
             |> X.requiredPath [ "title" ] (X.single X.string)
             |> X.possiblePath [ "media:group", "media:thumbnail" ]
@@ -1475,6 +1528,14 @@ youtubeEntryDecoder =
             |> X.optionalPath [ "media:group", "media:description" ] (X.single X.string) ""
         )
         (X.maybe (X.path [ "published" ] (X.single X.string)))
+        -- Shorts detection and view count
+        (X.succeed Tuple.pair
+            |> X.optionalPath [ "link" ]
+                (X.single (X.stringAttr "href" |> X.map (String.contains "/shorts/")))
+                False
+            |> X.possiblePath [ "media:group", "media:community", "media:statistics" ]
+                (X.single (X.stringAttr "views" |> X.map (String.toInt >> Maybe.withDefault 0)))
+        )
 
 
 podcastRssDecoder : X.Decoder Feed
@@ -1496,8 +1557,10 @@ podcastRssDecoder =
 podcastItemDecoder : X.Decoder Episode
 podcastItemDecoder =
     itemDecoderWith
-        { thumbPath = [ "itunes:image" ]
-        , thumbDecoder = X.stringAttr "href" |> X.andThen urlDecoder_
+        { thumbPath = [ "media:thumbnail" ] -- 16:9 video thumbnail
+        , thumbDecoder = X.stringAttr "url" |> X.andThen urlDecoder_
+        , coverArtPath = [ "itunes:image" ] -- Square album art
+        , coverArtDecoder = X.stringAttr "href" |> X.andThen urlDecoder_
         , srcPath = [ "enclosure" ]
         , srcAsString = X.stringAttr "url"
         , srcAsUrl = X.stringAttr "url" |> X.andThen urlDecoder_
@@ -1538,8 +1601,10 @@ mkChannel title description thumb rss updatedAt =
 standardItemDecoder : X.Decoder Episode
 standardItemDecoder =
     itemDecoderWith
-        { thumbPath = [ "image", "url" ]
-        , thumbDecoder = X.string |> X.andThen urlDecoder_
+        { thumbPath = [ "media:thumbnail" ] -- 16:9 video thumbnail (if available)
+        , thumbDecoder = X.stringAttr "url" |> X.andThen urlDecoder_
+        , coverArtPath = [ "image", "url" ] -- Fallback to standard RSS image
+        , coverArtDecoder = X.string |> X.andThen urlDecoder_
         , srcPath = [ "link" ]
         , srcAsString = X.string
         , srcAsUrl = X.string |> X.andThen urlDecoder_
@@ -1574,28 +1639,46 @@ parseInt str =
 
 
 itemDecoderWith :
-    { thumbPath : List String
+    { thumbPath : List String -- 16:9 video thumbnail (media:thumbnail)
     , thumbDecoder : X.Decoder Url
+    , coverArtPath : List String -- Square album art (itunes:image)
+    , coverArtDecoder : X.Decoder Url
     , srcPath : List String
     , srcAsString : X.Decoder String
     , srcAsUrl : X.Decoder Url
     }
     -> X.Decoder Episode
-itemDecoderWith { thumbPath, thumbDecoder, srcPath, srcAsString, srcAsUrl } =
+itemDecoderWith { thumbPath, thumbDecoder, coverArtPath, coverArtDecoder, srcPath, srcAsString, srcAsUrl } =
+    let
+        -- Build episode from parsed fields (using nested tuples to avoid Elm's 3-tuple limit)
+        buildEpisode ( ( id, title, thumb ), ( coverArt, src, desc ) ) maybeDuration maybePubDate ( maybeSeason, maybeEpNum ) ( maybeFileSize, isExplicit ) =
+            { id = id
+            , title = title
+            , thumb = thumb
+            , coverArt = coverArt
+            , src = src
+            , description = desc
+            , index = 0
+            , durationSeconds = maybeDuration
+            , publishedAt = maybePubDate
+            , season = maybeSeason
+            , episodeNum = maybeEpNum
+            , channelTitle = Nothing
+            , channelThumb = Nothing
+            , isShort = False
+            , viewCount = Nothing
+            , fileSizeBytes = maybeFileSize
+            , isExplicit = isExplicit
+            }
+    in
     X.oneOf
-        [ X.map4
-            (\baseEpisode maybeDuration maybePubDate ( maybeSeason, maybeEpNum ) ->
-                { baseEpisode
-                    | durationSeconds = maybeDuration
-                    , publishedAt = maybePubDate
-                    , season = maybeSeason
-                    , episodeNum = maybeEpNum
-                }
-            )
-            (X.succeed mkEpisodeBase
+        [ X.map5
+            buildEpisode
+            (X.succeed (\a b c d e f -> ( ( a, b, c ), ( d, e, f ) ))
                 |> X.requiredPath [ "guid" ] (X.single X.string)
                 |> X.requiredPath [ "title" ] (X.single X.string)
                 |> X.possiblePath thumbPath (X.single thumbDecoder)
+                |> X.possiblePath coverArtPath (X.single coverArtDecoder)
                 |> X.requiredPath srcPath (X.single srcAsUrl)
                 |> X.optionalPath [ "description" ] (X.single X.string) ""
             )
@@ -1605,19 +1688,17 @@ itemDecoderWith { thumbPath, thumbDecoder, srcPath, srcAsString, srcAsUrl } =
                 |> X.possiblePath [ "itunes:season" ] (X.single (X.string |> X.map parseInt))
                 |> X.possiblePath [ "itunes:episode" ] (X.single (X.string |> X.map parseInt))
             )
-        , X.map4
-            (\baseEpisode maybeDuration maybePubDate ( maybeSeason, maybeEpNum ) ->
-                { baseEpisode
-                    | durationSeconds = maybeDuration
-                    , publishedAt = maybePubDate
-                    , season = maybeSeason
-                    , episodeNum = maybeEpNum
-                }
+            (X.succeed Tuple.pair
+                |> X.possiblePath [ "enclosure" ] (X.single (X.stringAttr "length" |> X.map (String.toInt >> Maybe.withDefault 0)))
+                |> X.optionalPath [ "itunes:explicit" ] (X.single (X.string |> X.map isExplicitValue)) False
             )
-            (X.succeed mkEpisodeBase
+        , X.map5
+            buildEpisode
+            (X.succeed (\a b c d e f -> ( ( a, b, c ), ( d, e, f ) ))
                 |> X.requiredPath srcPath (X.single srcAsString)
                 |> X.requiredPath [ "title" ] (X.single X.string)
                 |> X.possiblePath thumbPath (X.single thumbDecoder)
+                |> X.possiblePath coverArtPath (X.single coverArtDecoder)
                 |> X.requiredPath srcPath (X.single srcAsUrl)
                 |> X.optionalPath [ "description" ] (X.single X.string) ""
             )
@@ -1626,17 +1707,41 @@ itemDecoderWith { thumbPath, thumbDecoder, srcPath, srcAsString, srcAsUrl } =
             (X.succeed Tuple.pair
                 |> X.possiblePath [ "itunes:season" ] (X.single (X.string |> X.map parseInt))
                 |> X.possiblePath [ "itunes:episode" ] (X.single (X.string |> X.map parseInt))
+            )
+            (X.succeed Tuple.pair
+                |> X.possiblePath [ "enclosure" ] (X.single (X.stringAttr "length" |> X.map (String.toInt >> Maybe.withDefault 0)))
+                |> X.optionalPath [ "itunes:explicit" ] (X.single (X.string |> X.map isExplicitValue)) False
             )
         ]
 
 
-{-| Helper for XML decoders: creates base Episode without enrichment fields.
+{-| Parse itunes:explicit value - can be "true", "yes", "1" or "false", "no", "0".
 -}
-mkEpisodeBase : Id -> String -> Maybe Url -> Url -> String -> Episode
-mkEpisodeBase id title thumb srcUrl desc =
+isExplicitValue : String -> Bool
+isExplicitValue str =
+    case String.toLower str of
+        "true" ->
+            True
+
+        "yes" ->
+            True
+
+        "1" ->
+            True
+
+        _ ->
+            False
+
+
+{-| Helper for XML decoders: creates base Episode without enrichment fields.
+    Takes thumb (16:9 video thumbnail) and coverArt (square album art) separately.
+-}
+mkEpisodeBase : Id -> String -> Maybe Url -> Maybe Url -> Url -> String -> Episode
+mkEpisodeBase id title thumb coverArt srcUrl desc =
     { id = id
     , title = title
     , thumb = thumb
+    , coverArt = coverArt
     , src = srcUrl
     , description = desc
     , index = 0
@@ -1646,6 +1751,10 @@ mkEpisodeBase id title thumb srcUrl desc =
     , episodeNum = Nothing
     , channelTitle = Nothing
     , channelThumb = Nothing
+    , isShort = False
+    , viewCount = Nothing
+    , fileSizeBytes = Nothing
+    , isExplicit = False
     }
 
 
