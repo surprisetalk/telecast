@@ -46,6 +46,18 @@ type
     = Loadable (Maybe (Result String a))
 
 
+{-| Extract the loaded value if present and successful.
+-}
+isLoaded : Loadable a -> Maybe a
+isLoaded (Loadable m) =
+    case m of
+        Just (Ok a) ->
+            Just a
+
+        _ ->
+            Nothing
+
+
 type alias Model =
     { library : Loadable Library
     , key : Nav.Key
@@ -282,15 +294,8 @@ update msg model =
             case model.channel of
                 Just ( _, Loadable (Just (Ok feed)) ) ->
                     let
-                        -- Enrich episodes with channel info
-                        enrichEpisode ep =
-                            { ep
-                                | channelTitle = Just channel.title
-                                , channelThumb = channel.thumb
-                            }
-
                         enrichedEpisodes =
-                            Dict.map (\_ ep -> enrichEpisode ep) feed.episodes
+                            Dict.map (\_ ep -> enrichEpisodeWith channel ep) feed.episodes
 
                         -- Add most recent 3 episodes to queue (enriched)
                         recentEpisodes =
@@ -403,15 +408,8 @@ update msg model =
                     case result of
                         Ok feed ->
                             let
-                                -- Enrich episodes with channel info
-                                enrichEpisode ep =
-                                    { ep
-                                        | channelTitle = Just feed.channel.title
-                                        , channelThumb = feed.channel.thumb
-                                    }
-
                                 enrichedFeedEpisodes =
-                                    Dict.map (\_ ep -> enrichEpisode ep) feed.episodes
+                                    Dict.map (\_ ep -> enrichEpisodeWith feed.channel ep) feed.episodes
 
                                 -- Get existing stored episodes for this channel
                                 existingEpisodes =
@@ -649,12 +647,17 @@ view model =
                                 |> Maybe.map (\{ query } -> [ a [ href ("/?q=" ++ query), class "back" ] [ text ("\"" ++ query ++ "\"") ] ])
                                 |> Maybe.withDefault []
                             , model.channel
-                                |> Maybe.map
-                                    (\( _, _ ) ->
-                                        -- TODO: Build urls properly.
-                                        [ a [ href ("/" ++ "TODO") ] [ text "TODO" ]
-                                        , a [ href ("/" ++ "TODO") ] [ text "TODO" ]
-                                        ]
+                                |> Maybe.andThen
+                                    (\( rss, loadableFeed ) ->
+                                        case loadableFeed of
+                                            Loadable (Just (Ok feed)) ->
+                                                Just
+                                                    [ a [ href ("/" ++ Url.percentEncode (Url.toString rss)) ]
+                                                        [ text feed.channel.title ]
+                                                    ]
+
+                                            _ ->
+                                                Nothing
                                     )
                                 |> Maybe.withDefault []
                             ]
@@ -737,19 +740,16 @@ view model =
                             ]
                         , div [ class "quick-tags" ]
                             (List.map viewTagLink quickSearchTags)
-                        , case searchState.results of
-                            Loadable Nothing ->
-                                div [ class "loading" ] []
+                        , viewLoadable
+                            (\channels ->
+                                if List.isEmpty channels then
+                                    div [ class "empty-state" ] [ text "No channels found" ]
 
-                            Loadable (Just (Ok [])) ->
-                                div [ class "empty-state" ] [ text "No channels found" ]
-
-                            Loadable (Just (Ok channels)) ->
-                                div [ class "autogrid", id "results" ]
-                                    (List.map (viewChannelCard model) channels)
-
-                            Loadable (Just (Err err)) ->
-                                div [ class "error" ] [ text err ]
+                                else
+                                    div [ class "autogrid", id "results" ]
+                                        (List.map (viewChannelCard (isLoaded model.library)) channels)
+                            )
+                            searchState.results
                         ]
 
                 ( _, Just ( rss, loadableFeed ) ) ->
@@ -793,20 +793,11 @@ view model =
                                         Nothing ->
                                             text ""
                                     ]
-                                , case model.library of
-                                    Loadable (Just (Ok lib)) ->
-                                        div [ class "autogrid" ]
-                                            (Dict.values feed.episodes
-                                                |> List.sortBy .index
-                                                |> List.map (viewEpisodeCard lib (Just rss))
-                                            )
-
-                                    _ ->
-                                        div [ class "autogrid" ]
-                                            (Dict.values feed.episodes
-                                                |> List.sortBy .index
-                                                |> List.map (viewSimpleEpisodeCard (Just rss))
-                                            )
+                                , div [ class "autogrid" ]
+                                    (Dict.values feed.episodes
+                                        |> List.sortBy .index
+                                        |> List.map (viewEpisodeCard (isLoaded model.library) (Just rss))
+                                    )
                                 ]
 
                             Loadable Nothing ->
@@ -836,7 +827,7 @@ view model =
                                     div [ class "empty-state" ] [ text "No episodes in your queue. Subscribe to channels or add episodes with the + button." ]
 
                                 else
-                                    div [ class "autogrid" ] (List.map (viewEpisodeCard lib Nothing) queueEpisodes)
+                                    div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) queueEpisodes)
                             )
                             model.library
                         ]
@@ -886,8 +877,8 @@ viewTagLink ( tag, label ) =
     a [ href ("/?tag=" ++ tag), class "tag" ] [ text label ]
 
 
-viewEpisodeCard : Library -> Maybe Url -> Episode -> Html Msg
-viewEpisodeCard lib maybeRss episode =
+viewEpisodeCard : Maybe Library -> Maybe Url -> Episode -> Html Msg
+viewEpisodeCard maybeLib maybeRss episode =
     let
         -- Build episode number prefix like "S2 E5 · " or "E5 · "
         episodePrefix =
@@ -934,14 +925,19 @@ viewEpisodeCard lib maybeRss episode =
                         text ""
                 ]
             ]
-        , if Set.member episode.id lib.watched then
-            text ""
+        , case maybeLib of
+            Just lib ->
+                if Set.member episode.id lib.watched then
+                    text ""
 
-          else if Dict.member episode.id lib.queue then
-            button [ onClick (EpisodeWatched episode.id) ] [ text "x" ]
+                else if Dict.member episode.id lib.queue then
+                    button [ onClick (EpisodeWatched episode.id) ] [ text "x" ]
 
-          else
-            button [ onClick (EpisodeQueued episode) ] [ text "+" ]
+                else
+                    button [ onClick (EpisodeQueued episode) ] [ text "+" ]
+
+            Nothing ->
+                text ""
         ]
 
 
@@ -1004,30 +1000,8 @@ viewChannelThumbLayered maybeUrl =
             [ div [ class "channel-thumb thumb-placeholder" ] [] ]
 
 
-{-| Simple episode card without queue/watch buttons (for unauthenticated view).
--}
-viewSimpleEpisodeCard : Maybe Url -> Episode -> Html msg
-viewSimpleEpisodeCard maybeRss episode =
-    div [ class "episode-card" ]
-        [ a [ href (episodeUrl maybeRss episode.id) ]
-            [ div [ class "episode-thumb-wrapper" ]
-                [ viewThumbInner "episode-thumb" (episodeThumbnail episode)
-                , case episode.durationSeconds of
-                    Just seconds ->
-                        span [ class "duration-badge" ] [ text (formatDuration seconds) ]
-
-                    Nothing ->
-                        text ""
-                ]
-            , div [ class "episode-info" ]
-                [ div [ class "episode-title" ] [ text episode.title ]
-                ]
-            ]
-        ]
-
-
-viewChannelCard : Model -> Channel -> Html Msg
-viewChannelCard model channel =
+viewChannelCard : Maybe Library -> Channel -> Html Msg
+viewChannelCard maybeLib channel =
     let
         rss =
             Url.toString channel.rss
@@ -1054,15 +1028,15 @@ viewChannelCard model channel =
                         text ""
                 ]
             ]
-        , case model.library of
-            Loadable (Just (Ok lib)) ->
+        , case maybeLib of
+            Just lib ->
                 if Dict.member rss lib.channels then
                     button [ onClick (ChannelUnsubscribing rss) ] [ text "x" ]
 
                 else
                     button [ onClick (ChannelSubscribing rss channel) ] [ text "+" ]
 
-            _ ->
+            Nothing ->
                 button [ onClick (ChannelSubscribing rss channel) ] [ text "+" ]
         ]
 
@@ -1099,18 +1073,7 @@ channelThumbWithFallback channelThumb episodes =
 viewThumb : String -> Maybe Url -> Html msg
 viewThumb className maybeUrl =
     div [ class (className ++ "-wrapper") ]
-        [ case maybeUrl of
-            Just url ->
-                img
-                    [ class className
-                    , src ("/proxy/thumb/" ++ Url.percentEncode (Url.toString url))
-                    , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
-                    ]
-                    []
-
-            Nothing ->
-                div [ class (className ++ " thumb-placeholder") ] []
-        ]
+        [ viewThumbInner className maybeUrl ]
 
 
 viewLoadable : (a -> Html msg) -> Loadable a -> Html msg
@@ -1288,6 +1251,16 @@ getLibrary model =
             Nothing
 
 
+{-| Enrich an episode with channel metadata (title and thumbnail).
+-}
+enrichEpisodeWith : Channel -> Episode -> Episode
+enrichEpisodeWith channel ep =
+    { ep
+        | channelTitle = Just channel.title
+        , channelThumb = channel.thumb
+    }
+
+
 episodeUrl : Maybe Url -> Id -> String
 episodeUrl maybeRss id =
     case maybeRss of
@@ -1403,6 +1376,13 @@ urlDecoder =
 -- ENCODERS
 
 
+{-| Encode a Maybe value, using null for Nothing.
+-}
+encodeMaybe : (a -> E.Value) -> Maybe a -> E.Value
+encodeMaybe encode m =
+    Maybe.map encode m |> Maybe.withDefault E.null
+
+
 libraryEncoder : Library -> E.Value
 libraryEncoder lib =
     E.object
@@ -1420,12 +1400,12 @@ channelEncoder channel =
     E.object
         [ ( "title", E.string channel.title )
         , ( "description", E.string channel.description )
-        , ( "thumb", channel.thumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
+        , ( "thumb", encodeMaybe (Url.toString >> E.string) channel.thumb )
         , ( "rss", E.string (Url.toString channel.rss) )
         , ( "updated_at", E.string channel.updatedAt )
-        , ( "author", channel.author |> Maybe.map E.string |> Maybe.withDefault E.null )
-        , ( "episode_count", channel.episodeCount |> Maybe.map E.int |> Maybe.withDefault E.null )
-        , ( "categories", channel.categories |> Maybe.map (E.list E.string) |> Maybe.withDefault E.null )
+        , ( "author", encodeMaybe E.string channel.author )
+        , ( "episode_count", encodeMaybe E.int channel.episodeCount )
+        , ( "categories", encodeMaybe (E.list E.string) channel.categories )
         ]
 
 
@@ -1434,20 +1414,20 @@ episodeEncoder episode =
     E.object
         [ ( "id", E.string episode.id )
         , ( "title", E.string episode.title )
-        , ( "thumb", episode.thumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
-        , ( "coverArt", episode.coverArt |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
+        , ( "thumb", encodeMaybe (Url.toString >> E.string) episode.thumb )
+        , ( "coverArt", encodeMaybe (Url.toString >> E.string) episode.coverArt )
         , ( "src", E.string (Url.toString episode.src) )
         , ( "description", E.string episode.description )
         , ( "index", E.int episode.index )
-        , ( "durationSeconds", episode.durationSeconds |> Maybe.map E.int |> Maybe.withDefault E.null )
-        , ( "publishedAt", episode.publishedAt |> Maybe.map E.string |> Maybe.withDefault E.null )
-        , ( "season", episode.season |> Maybe.map E.int |> Maybe.withDefault E.null )
-        , ( "episodeNum", episode.episodeNum |> Maybe.map E.int |> Maybe.withDefault E.null )
-        , ( "channelTitle", episode.channelTitle |> Maybe.map E.string |> Maybe.withDefault E.null )
-        , ( "channelThumb", episode.channelThumb |> Maybe.map (\u -> E.string (Url.toString u)) |> Maybe.withDefault E.null )
+        , ( "durationSeconds", encodeMaybe E.int episode.durationSeconds )
+        , ( "publishedAt", encodeMaybe E.string episode.publishedAt )
+        , ( "season", encodeMaybe E.int episode.season )
+        , ( "episodeNum", encodeMaybe E.int episode.episodeNum )
+        , ( "channelTitle", encodeMaybe E.string episode.channelTitle )
+        , ( "channelThumb", encodeMaybe (Url.toString >> E.string) episode.channelThumb )
         , ( "isShort", E.bool episode.isShort )
-        , ( "viewCount", episode.viewCount |> Maybe.map E.int |> Maybe.withDefault E.null )
-        , ( "fileSizeBytes", episode.fileSizeBytes |> Maybe.map E.int |> Maybe.withDefault E.null )
+        , ( "viewCount", encodeMaybe E.int episode.viewCount )
+        , ( "fileSizeBytes", encodeMaybe E.int episode.fileSizeBytes )
         , ( "isExplicit", E.bool episode.isExplicit )
         ]
 
@@ -1683,48 +1663,47 @@ itemDecoderWith { thumbPath, thumbDecoder, coverArtPath, coverArtDecoder, srcPat
             , fileSizeBytes = maybeFileSize
             , isExplicit = isExplicit
             }
+
+        -- Shared decoders for metadata fields
+        durationDecoder =
+            X.maybe (X.path [ "itunes:duration" ] (X.single (X.string |> X.map parseDuration)))
+
+        pubDateDecoder =
+            X.maybe (X.path [ "pubDate" ] (X.single X.string))
+
+        seasonEpisodeDecoder =
+            X.succeed Tuple.pair
+                |> X.possiblePath [ "itunes:season" ] (X.single (X.string |> X.map parseInt))
+                |> X.possiblePath [ "itunes:episode" ] (X.single (X.string |> X.map parseInt))
+
+        fileSizeExplicitDecoder =
+            X.succeed Tuple.pair
+                |> X.possiblePath [ "enclosure" ] (X.single (X.stringAttr "length" |> X.map (String.toInt >> Maybe.withDefault 0)))
+                |> X.optionalPath [ "itunes:explicit" ] (X.single (X.string |> X.map isExplicitValue)) False
+
+        -- Core fields decoder with a given ID source
+        coreFieldsWithId idPath idDecoder_ =
+            X.succeed (\a b c d e f -> ( ( a, b, c ), ( d, e, f ) ))
+                |> X.requiredPath idPath (X.single idDecoder_)
+                |> X.requiredPath [ "title" ] (X.single X.string)
+                |> X.possiblePath thumbPath (X.single thumbDecoder)
+                |> X.possiblePath coverArtPath (X.single coverArtDecoder)
+                |> X.requiredPath srcPath (X.single srcAsUrl)
+                |> X.optionalPath [ "description" ] (X.single X.string) ""
     in
     X.oneOf
-        [ X.map5
-            buildEpisode
-            (X.succeed (\a b c d e f -> ( ( a, b, c ), ( d, e, f ) ))
-                |> X.requiredPath [ "guid" ] (X.single X.string)
-                |> X.requiredPath [ "title" ] (X.single X.string)
-                |> X.possiblePath thumbPath (X.single thumbDecoder)
-                |> X.possiblePath coverArtPath (X.single coverArtDecoder)
-                |> X.requiredPath srcPath (X.single srcAsUrl)
-                |> X.optionalPath [ "description" ] (X.single X.string) ""
-            )
-            (X.maybe (X.path [ "itunes:duration" ] (X.single (X.string |> X.map parseDuration))))
-            (X.maybe (X.path [ "pubDate" ] (X.single X.string)))
-            (X.succeed Tuple.pair
-                |> X.possiblePath [ "itunes:season" ] (X.single (X.string |> X.map parseInt))
-                |> X.possiblePath [ "itunes:episode" ] (X.single (X.string |> X.map parseInt))
-            )
-            (X.succeed Tuple.pair
-                |> X.possiblePath [ "enclosure" ] (X.single (X.stringAttr "length" |> X.map (String.toInt >> Maybe.withDefault 0)))
-                |> X.optionalPath [ "itunes:explicit" ] (X.single (X.string |> X.map isExplicitValue)) False
-            )
-        , X.map5
-            buildEpisode
-            (X.succeed (\a b c d e f -> ( ( a, b, c ), ( d, e, f ) ))
-                |> X.requiredPath srcPath (X.single srcAsString)
-                |> X.requiredPath [ "title" ] (X.single X.string)
-                |> X.possiblePath thumbPath (X.single thumbDecoder)
-                |> X.possiblePath coverArtPath (X.single coverArtDecoder)
-                |> X.requiredPath srcPath (X.single srcAsUrl)
-                |> X.optionalPath [ "description" ] (X.single X.string) ""
-            )
-            (X.maybe (X.path [ "itunes:duration" ] (X.single (X.string |> X.map parseDuration))))
-            (X.maybe (X.path [ "pubDate" ] (X.single X.string)))
-            (X.succeed Tuple.pair
-                |> X.possiblePath [ "itunes:season" ] (X.single (X.string |> X.map parseInt))
-                |> X.possiblePath [ "itunes:episode" ] (X.single (X.string |> X.map parseInt))
-            )
-            (X.succeed Tuple.pair
-                |> X.possiblePath [ "enclosure" ] (X.single (X.stringAttr "length" |> X.map (String.toInt >> Maybe.withDefault 0)))
-                |> X.optionalPath [ "itunes:explicit" ] (X.single (X.string |> X.map isExplicitValue)) False
-            )
+        [ X.map5 buildEpisode
+            (coreFieldsWithId [ "guid" ] X.string)
+            durationDecoder
+            pubDateDecoder
+            seasonEpisodeDecoder
+            fileSizeExplicitDecoder
+        , X.map5 buildEpisode
+            (coreFieldsWithId srcPath srcAsString)
+            durationDecoder
+            pubDateDecoder
+            seasonEpisodeDecoder
+            fileSizeExplicitDecoder
         ]
 
 
@@ -1732,43 +1711,7 @@ itemDecoderWith { thumbPath, thumbDecoder, coverArtPath, coverArtDecoder, srcPat
 -}
 isExplicitValue : String -> Bool
 isExplicitValue str =
-    case String.toLower str of
-        "true" ->
-            True
-
-        "yes" ->
-            True
-
-        "1" ->
-            True
-
-        _ ->
-            False
-
-
-{-| Helper for XML decoders: creates base Episode without enrichment fields.
-    Takes thumb (16:9 video thumbnail) and coverArt (square album art) separately.
--}
-mkEpisodeBase : Id -> String -> Maybe Url -> Maybe Url -> Url -> String -> Episode
-mkEpisodeBase id title thumb coverArt srcUrl desc =
-    { id = id
-    , title = title
-    , thumb = thumb
-    , coverArt = coverArt
-    , src = srcUrl
-    , description = desc
-    , index = 0
-    , durationSeconds = Nothing
-    , publishedAt = Nothing
-    , season = Nothing
-    , episodeNum = Nothing
-    , channelTitle = Nothing
-    , channelThumb = Nothing
-    , isShort = False
-    , viewCount = Nothing
-    , fileSizeBytes = Nothing
-    , isExplicit = False
-    }
+    List.member (String.toLower str) [ "true", "yes", "1" ]
 
 
 makeEpisodeDict : List Episode -> Dict Id Episode
