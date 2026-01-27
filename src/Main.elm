@@ -601,13 +601,27 @@ loadChannel rss episodeId model =
                             Dict.get rss lib.episodes
                                 |> Maybe.withDefault Dict.empty
                     in
-                    ( { model
-                        | channel = Just ( rssUrl, Loadable (Just (Ok { channel = channel, episodes = episodes })) )
-                        , search = Nothing
-                        , episode = episodeId
-                      }
-                    , Cmd.none
-                    )
+                    if Dict.isEmpty episodes then
+                        -- Subscribed but no episodes cached (e.g. subscribed from search) - fetch feed
+                        ( { model
+                            | channel = Just ( rssUrl, Loadable Nothing )
+                            , search = Nothing
+                            , episode = Nothing
+                          }
+                        , Http.get
+                            { url = "/proxy/rss/" ++ Url.percentEncode rss
+                            , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss episodeId)
+                            }
+                        )
+
+                    else
+                        ( { model
+                            | channel = Just ( rssUrl, Loadable (Just (Ok { channel = channel, episodes = episodes })) )
+                            , search = Nothing
+                            , episode = episodeId
+                          }
+                        , Cmd.none
+                        )
 
                 Nothing ->
                     ( { model
