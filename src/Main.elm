@@ -316,7 +316,12 @@ update msg model =
                         (\lib ->
                             { lib
                                 | channels = Dict.insert channelId channel lib.channels
-                                , episodes = Dict.insert channelId Dict.empty lib.episodes
+                                , episodes =
+                                    if Dict.member channelId lib.episodes then
+                                        lib.episodes
+
+                                    else
+                                        Dict.insert channelId Dict.empty lib.episodes
                             }
                         )
                         model
