@@ -1,3 +1,15 @@
+# telecast
+
+a minimalist & free youtube alternative
+
+## api
+
+```bash
+GET /search                # search video
+GET /proxy/rss/*           # fetch rss feeds
+GET /proxy/thumb/*         # cache thumbnails
+```
+
 ## local dev
 
 prereqs: `postgresql`, `postgresql-client`, `postgresql-contrib`, & neon [console ](https://console.neon.tech/)
