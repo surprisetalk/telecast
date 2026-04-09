@@ -1,6 +1,8 @@
 port module Main exposing (main)
 
 import Browser
+import Browser.Dom
+import Browser.Events
 import Browser.Navigation as Nav
 import Char
 import Dict exposing (Dict)
@@ -11,6 +13,7 @@ import Http
 import Json.Decode as D
 import Json.Decode.Pipeline as D
 import Json.Encode as E
+import Process
 import Set exposing (Set)
 import Task
 import Time
@@ -174,6 +177,21 @@ subscriptions : Model -> Sub Msg
 subscriptions _ =
     Sub.batch
         [ libraryLoaded (D.decodeValue libraryDecoder >> LibraryLoaded)
+        , Browser.Events.onKeyDown
+            (D.field "key" D.string
+                |> D.andThen
+                    (\key ->
+                        D.at [ "target", "tagName" ] D.string
+                            |> D.andThen
+                                (\tag ->
+                                    if tag == "INPUT" || tag == "TEXTAREA" then
+                                        D.fail "ignore"
+
+                                    else
+                                        D.succeed (KeyPressed key)
+                                )
+                    )
+            )
         ]
 
 
@@ -196,6 +214,8 @@ type Msg
     | UrlChanged Url
     | RefreshFeeds
     | RefreshFeedFetched String (Result String Feed)
+    | KeyPressed String
+    | NoOp
 
 
 
@@ -459,6 +479,93 @@ update msg model =
 
                 _ ->
                     ( model, Cmd.none )
+
+        NoOp ->
+            ( model, Cmd.none )
+
+        KeyPressed key ->
+            let
+                delta =
+                    if key == "j" then
+                        1
+
+                    else if key == "k" then
+                        -1
+
+                    else
+                        0
+
+                ( ids, maybeRss ) =
+                    case model.channel of
+                        Just ( rssUrl, Loadable (Just (Ok feed)) ) ->
+                            ( feed.episodes |> Dict.values |> List.sortBy .index |> List.map .id, Just rssUrl )
+
+                        Nothing ->
+                            if model.search == Nothing then
+                                case model.library of
+                                    Loadable (Just (Ok lib)) ->
+                                        ( lib.queue |> Dict.values |> List.filter (\ep -> not (Set.member ep.id lib.watched)) |> List.map .id, Nothing )
+
+                                    _ ->
+                                        ( [], Nothing )
+
+                            else
+                                ( [], Nothing )
+
+                        _ ->
+                            ( [], Nothing )
+            in
+            if delta /= 0 && not (List.isEmpty ids) then
+                let
+                    currentIdx =
+                        ids
+                            |> List.indexedMap Tuple.pair
+                            |> List.filter (\( _, id ) -> Just id == model.episode)
+                            |> List.head
+                            |> Maybe.map Tuple.first
+                            |> Maybe.withDefault -1
+
+                    nextIdx =
+                        clamp 0 (List.length ids - 1) (currentIdx + delta)
+
+                    epId =
+                        ids |> List.drop nextIdx |> List.head
+                in
+                if key == "k" && model.episode == Nothing then
+                    ( model, Cmd.none )
+
+                else
+                    case epId of
+                        Just id ->
+                            if Just id == model.episode then
+                                ( model, Cmd.none )
+
+                            else
+                                ( model, Nav.pushUrl model.key (episodeUrl maybeRss id) )
+
+                        Nothing ->
+                            ( model, Cmd.none )
+
+            else if key == "/" then
+                case model.search of
+                    Nothing ->
+                        ( model
+                        , Cmd.batch
+                            [ Nav.pushUrl model.key "/?q="
+                            , Task.attempt (always NoOp)
+                                (Process.sleep 0
+                                    |> Task.andThen (\_ -> Browser.Dom.focus "search-input")
+                                )
+                            ]
+                        )
+
+                    Just _ ->
+                        ( model
+                        , Task.attempt (always NoOp) (Browser.Dom.focus "search-input")
+                        )
+
+            else
+                ( model, Cmd.none )
 
 
 
@@ -745,7 +852,8 @@ view model =
                         [ h1 [] [ text heading ]
                         , form [ class "cols", onSubmit SearchSubmitting ]
                             [ input
-                                [ onInput SearchEditing
+                                [ id "search-input"
+                                , onInput SearchEditing
                                 , value searchState.query
                                 , A.placeholder "Search channels..."
                                 ]
@@ -1187,7 +1295,7 @@ capitalize str =
 
 
 {-| Get the best available thumbnail for an episode.
-    Prefers 16:9 thumb, falls back to square coverArt.
+Prefers 16:9 thumb, falls back to square coverArt.
 -}
 episodeThumbnail : Episode -> Maybe Url
 episodeThumbnail episode =
@@ -1228,8 +1336,8 @@ formatDuration seconds =
 
 
 {-| Check if an episode is a YouTube Short.
-    Uses the definitive isShort field (from YouTube's link URL) when available,
-    otherwise falls back to title/description heuristics.
+Uses the definitive isShort field (from YouTube's link URL) when available,
+otherwise falls back to title/description heuristics.
 -}
 isLikelyShort : Episode -> Bool
 isLikelyShort episode =
