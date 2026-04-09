@@ -755,10 +755,10 @@ view model =
                                     ""
                           in
                           if String.contains "youtube" srcStr then
-                            iframe [ id "player", src srcStr, A.width 560, A.height 315, A.autoplay True ] []
+                            iframe [ id "player", src srcStr, A.autoplay True ] []
 
                           else if isPeerTubeDownload && String.contains "/videos/embed/" peerTubeEmbedUrl then
-                            iframe [ id "player", src peerTubeEmbedUrl, A.width 560, A.height 315, A.autoplay True, A.attribute "allowfullscreen" "true", A.attribute "sandbox" "allow-same-origin allow-scripts allow-popups allow-forms" ] []
+                            iframe [ id "player", src peerTubeEmbedUrl, A.autoplay True, A.attribute "allowfullscreen" "true", A.attribute "sandbox" "allow-same-origin allow-scripts allow-popups allow-forms" ] []
 
                           else if String.endsWith ".mp3" srcStr || String.endsWith ".m4a" srcStr then
                             audio [ id "player", src srcStr, A.controls True, A.autoplay True ] []
@@ -882,7 +882,7 @@ view model =
                     div [ class "rows", id "my-feed" ]
                         [ div [ class "rows" ]
                             [ div [ class "cols" ]
-                                [ img [ A.class "profile-img", src "/logo.png" ] []
+                                [ img [ A.class "profile-img", src "/yt.png" ] []
                                 , h1 [] [ text "My Feed" ]
                                 , a [ href "/?tag=saved", class "saved-link" ] [ text "my channels" ]
                                 ]
