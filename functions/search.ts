@@ -8,7 +8,7 @@ export type Sql = ReturnType<typeof db>;
 export async function handleSearch(deps: { sql: Sql }, input: { query: string | null }): Promise<Response> {
   const { sql } = deps;
   const { query } = input;
-  if (!query) return new Response("Query parameter required", { status: 400 });
+  if (!query) return new Response("Missing required query parameter: 'q'. Example: /search?q=rust", { status: 400 });
   // Shorts filtering: prefer non-Shorts thumbnails, fall back to any if all are Shorts
   const episodeThumbSubquery = sql`
     coalesce(

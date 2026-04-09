@@ -21,15 +21,16 @@ export async function handleRssProxy(deps: RssProxyDeps, input: { rssUrl: string
   let fetchResponse: Response;
   try {
     fetchResponse = await fetcher(rssUrl);
-    if (!fetchResponse.ok) {
-      return new Response(`Feed returned ${fetchResponse.status}`, { status: 502 });
-    }
-  } catch {
-    return new Response("Failed to fetch feed", { status: 502 });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return new Response(`Network error fetching ${rssUrl}: ${msg}`, { status: 502 });
+  }
+  if (!fetchResponse.ok) {
+    return new Response(`Upstream feed fetch failed for ${rssUrl}: HTTP ${fetchResponse.status} ${fetchResponse.statusText}`, { status: 502 });
   }
   const text = await fetchResponse.text();
   if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
-    return new Response("Invalid RSS feed", { status: 400 });
+    return new Response(`Not a valid feed at ${rssUrl}: missing <rss>, <feed>, or <RDF> root element`, { status: 400 });
   }
   const channel = rss.parse(text);
   await sql`

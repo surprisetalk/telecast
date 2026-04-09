@@ -78,8 +78,6 @@ sampleLibrary =
     , episodes = Dict.fromList [ ( "https://example.com/feed.xml", Dict.fromList [ ( "ep1", sampleEpisode "ep1" ), ( "ep2", sampleEpisode "ep2" ) ] ) ]
     , queue = Dict.fromList [ ( "ep3", sampleEpisode "ep3" ) ]
     , watched = Set.fromList [ "ep-watched" ]
-    , history = Dict.empty
-    , settings = {}
     }
 
 
@@ -89,8 +87,6 @@ emptyLibrary =
     , episodes = Dict.empty
     , queue = Dict.empty
     , watched = Set.empty
-    , history = Dict.empty
-    , settings = {}
     }
 
 
@@ -149,13 +145,11 @@ libraryCodecs =
                     [ ( "channels", E.dict identity Main.channelEncoder sampleLibrary.channels )
                     , ( "episodes", E.dict identity (E.dict identity Main.episodeEncoder) sampleLibrary.episodes )
                     , ( "watched", E.list E.string (Set.toList sampleLibrary.watched) )
-                    , ( "history", E.object [] )
-                    , ( "settings", E.object [] )
                     ]
                     |> D.decodeValue Main.libraryDecoder
                     |> Result.map (.queue >> Dict.isEmpty)
                     |> Expect.equal (Ok True)
-        , test "libraryDecoder decodes empty history dict" <|
+        , test "libraryDecoder ignores legacy 'history' and 'settings' keys" <|
             \_ ->
                 E.object
                     [ ( "channels", E.object [] )
@@ -166,7 +160,7 @@ libraryCodecs =
                     , ( "settings", E.object [] )
                     ]
                     |> D.decodeValue Main.libraryDecoder
-                    |> Result.map (.history >> Dict.isEmpty)
+                    |> Result.map (.channels >> Dict.isEmpty)
                     |> Expect.equal (Ok True)
         , test "channelDecoder uses episode_thumb when thumb is null" <|
             \_ ->
@@ -233,7 +227,6 @@ libraryShape lib =
     , "episodes:" ++ String.fromInt (Dict.size lib.episodes)
     , "queue:" ++ String.fromInt (Dict.size lib.queue)
     , "watched:" ++ String.fromInt (Set.size lib.watched)
-    , "history:" ++ String.fromInt (Dict.size lib.history)
     , "channel-titles:" ++ String.join "," (lib.channels |> Dict.values |> List.map .title)
     , "episode-ids:" ++ String.join "," (lib.episodes |> Dict.values |> List.concatMap Dict.keys |> List.sort)
     , "queue-ids:" ++ String.join "," (Dict.keys lib.queue)

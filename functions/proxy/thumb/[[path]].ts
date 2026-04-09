@@ -43,9 +43,10 @@ export async function handleThumbProxy(deps: ThumbProxyDeps, input: { thumbUrl: 
       },
     });
   }
+  const fetchUrl = transformYouTubeThumb(thumbUrl);
+  let fetchResponse: Response;
   try {
-    const fetchUrl = transformYouTubeThumb(thumbUrl);
-    const fetchResponse = await fetcher(fetchUrl, {
+    fetchResponse = await fetcher(fetchUrl, {
       cf: {
         image: {
           width: SMALL_WIDTH,
@@ -55,23 +56,29 @@ export async function handleThumbProxy(deps: ThumbProxyDeps, input: { thumbUrl: 
         },
       },
     } as RequestInit);
-    if (!fetchResponse.ok) return serveFallback();
-
-    const contentType = fetchResponse.headers.get("content-type");
-    if (!contentType?.startsWith("image/")) return serveFallback();
-
-    await bucket.put(smallKey, fetchResponse.clone().body, {
-      httpMetadata: { contentType },
-    });
-    return new Response(fetchResponse.body, {
-      headers: {
-        "content-type": contentType,
-        "cache-control": "public, max-age=31536000, immutable",
-      },
-    });
-  } catch {
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`thumb proxy: fetch rejected for ${fetchUrl}: ${msg}`);
     return serveFallback();
   }
+  if (!fetchResponse.ok) {
+    console.error(`thumb proxy: upstream ${fetchResponse.status} ${fetchResponse.statusText} for ${fetchUrl}`);
+    return serveFallback();
+  }
+  const contentType = fetchResponse.headers.get("content-type");
+  if (!contentType?.startsWith("image/")) {
+    console.error(`thumb proxy: non-image content-type ${contentType ?? "(none)"} for ${fetchUrl}`);
+    return serveFallback();
+  }
+  await bucket.put(smallKey, fetchResponse.clone().body, {
+    httpMetadata: { contentType },
+  });
+  return new Response(fetchResponse.body, {
+    headers: {
+      "content-type": contentType,
+      "cache-control": "public, max-age=31536000, immutable",
+    },
+  });
 }
 
 export async function onRequest({ request, env }: { request: Request; env: Env }) {

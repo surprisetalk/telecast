@@ -133,6 +133,18 @@ function mockR2Bucket(): MockR2Bucket {
   };
 }
 
+async function captureConsoleError<T>(fn: () => Promise<T>): Promise<{ result: T; logs: string[] }> {
+  const logs: string[] = [];
+  const orig = console.error;
+  console.error = (...args: unknown[]) => { logs.push(args.map(String).join(" ")); };
+  try {
+    const result = await fn();
+    return { result, logs };
+  } finally {
+    console.error = orig;
+  }
+}
+
 type MockFetchRoute = Response | (() => Response) | (() => Promise<Response>);
 type TaggedFetch = typeof fetch & { calls: string[] };
 
@@ -655,11 +667,13 @@ Deno.test("handleSearch: tag: prefix takes the any(tags) branch", async () => {
   assertEquals(templates[1]!.values![1], "programming");
 });
 
-Deno.test("handleSearch: missing query returns 400", async () => {
+Deno.test("handleSearch: missing query returns 400 with field name and example", async () => {
   const sql = mockSql();
   const res = await handleSearch({ sql: sql as any }, { query: null });
   assertEquals(res.status, 400);
-  assertEquals(await res.text(), "Query parameter required");
+  const body = await res.text();
+  assertStringIncludes(body, "'q'");
+  assertStringIncludes(body, "/search?q=");
   assertEquals(sql.calls.length, 0);
 });
 
@@ -738,34 +752,41 @@ Deno.test("handleRssProxy: YouTube feed results in youtube.com/channel/... chann
   assertEquals(inserted.tags, ["youtube"]);
 });
 
-Deno.test("handleRssProxy: upstream non-2xx returns 502 with status in message", async () => {
+Deno.test("handleRssProxy: upstream non-2xx returns 502 with URL and status in message", async () => {
   const bucket = mockR2Bucket();
   const url = "https://dead.example.com/feed.xml";
   const sql = mockSql();
-  const fetcher = mockFetch({ [url]: new Response("not found", { status: 404 }) });
+  const fetcher = mockFetch({ [url]: new Response("not found", { status: 404, statusText: "Not Found" }) });
   const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
-  assertStringIncludes(await res.text(), "404");
+  const body = await res.text();
+  assertStringIncludes(body, url);
+  assertStringIncludes(body, "404");
 });
 
-Deno.test("handleRssProxy: fetch rejection returns 502 'Failed to fetch feed'", async () => {
+Deno.test("handleRssProxy: fetch rejection returns 502 with URL and cause", async () => {
   const bucket = mockR2Bucket();
   const url = "https://broken.example.com/feed.xml";
   const sql = mockSql();
-  const fetcher = mockFetch({ [url]: () => { throw new TypeError("network error"); } });
+  const fetcher = mockFetch({ [url]: () => { throw new TypeError("DNS lookup failed"); } });
   const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
-  assertEquals(await res.text(), "Failed to fetch feed");
+  const body = await res.text();
+  assertStringIncludes(body, url);
+  assertStringIncludes(body, "DNS lookup failed");
 });
 
-Deno.test("handleRssProxy: HTML body returns 400 'Invalid RSS feed'", async () => {
+Deno.test("handleRssProxy: HTML body returns 400 with URL and missing-root-element hint", async () => {
   const bucket = mockR2Bucket();
   const url = "https://html.example.com/page.html";
   const sql = mockSql();
   const fetcher = mockFetch({ [url]: new Response(HTML_NOT_A_FEED, { status: 200 }) });
   const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
   assertEquals(res.status, 400);
-  assertEquals(await res.text(), "Invalid RSS feed");
+  const body = await res.text();
+  assertStringIncludes(body, url);
+  assertStringIncludes(body, "<rss>");
+  assertStringIncludes(body, "<feed>");
   assertEquals(sql.calls.length, 0);
 });
 
@@ -851,28 +872,43 @@ Deno.test("handleThumbProxy: cache miss → fetch → store, applies YouTube tra
   assertExists(bucket._storage.get(`small/${thumbUrl}`));
 });
 
-Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG", async () => {
+Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG + logs status and URL", async () => {
   const bucket = mockR2Bucket();
   const thumbUrl = "https://example.com/broken.jpg";
-  const fetcher = mockFetch({ [thumbUrl]: new Response("", { status: 500 }) });
-  const res = await handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl });
+  const fetcher = mockFetch({ [thumbUrl]: new Response("", { status: 503, statusText: "Service Unavailable" }) });
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl }),
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
+  assertEquals(logs.length, 1);
+  assertStringIncludes(logs[0]!, thumbUrl);
+  assertStringIncludes(logs[0]!, "503");
 });
 
-Deno.test("handleThumbProxy: non-image content-type → fallback SVG", async () => {
+Deno.test("handleThumbProxy: non-image content-type → fallback SVG + logs type and URL", async () => {
   const bucket = mockR2Bucket();
   const thumbUrl = "https://example.com/lies.html";
   const fetcher = mockFetch({
     [thumbUrl]: new Response("<html/>", { status: 200, headers: { "content-type": "text/html" } }),
   });
-  const res = await handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl });
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl }),
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
+  assertEquals(logs.length, 1);
+  assertStringIncludes(logs[0]!, thumbUrl);
+  assertStringIncludes(logs[0]!, "text/html");
 });
 
-Deno.test("handleThumbProxy: fetch rejection → fallback SVG", async () => {
+Deno.test("handleThumbProxy: fetch rejection → fallback SVG + logs cause and URL", async () => {
   const bucket = mockR2Bucket();
   const thumbUrl = "https://example.com/nope.jpg";
-  const fetcher = mockFetch({ [thumbUrl]: () => { throw new TypeError("network"); } });
-  const res = await handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl });
+  const fetcher = mockFetch({ [thumbUrl]: () => { throw new TypeError("DNS lookup failed"); } });
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl }),
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
+  assertEquals(logs.length, 1);
+  assertStringIncludes(logs[0]!, thumbUrl);
+  assertStringIncludes(logs[0]!, "DNS lookup failed");
 });

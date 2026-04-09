@@ -16,7 +16,6 @@ import Json.Encode as E
 import Process
 import Set exposing (Set)
 import Task
-import Time
 import Url exposing (Url)
 import Url.Parser as P exposing ((</>), Parser)
 import Xml.Decode as X
@@ -88,14 +87,6 @@ type alias Library =
     , episodes : Dict String (Dict String Episode) -- channel RSS -> episode ID -> Episode
     , queue : Dict String Episode -- "watch later" queue: episode ID -> Episode
     , watched : Set String -- watched episode IDs
-    , history : Dict String (Dict String (List Playback)) -- playback progress
-    , settings : {}
-    }
-
-
-type alias Playback =
-    { t : Time.Posix
-    , s : ( Int, Int )
     }
 
 
@@ -894,34 +885,32 @@ view model =
 
 findSelectedEpisode : Maybe Id -> Maybe ( Url, Loadable Feed ) -> Loadable Library -> Maybe ( Episode, Maybe Channel )
 findSelectedEpisode maybeEpisode maybeChannel libraryL =
-    maybeEpisode
-        |> Maybe.andThen
-            (\episodeId ->
-                case ( maybeChannel, libraryL ) of
-                    ( Just ( _, Loadable (Just (Ok feed)) ), _ ) ->
-                        Dict.get episodeId feed.episodes
-                            |> Maybe.map (\ep -> ( ep, Just feed.channel ))
+    case ( maybeEpisode, maybeChannel, libraryL ) of
+        ( Just episodeId, Just ( _, Loadable (Just (Ok feed)) ), _ ) ->
+            Dict.get episodeId feed.episodes
+                |> Maybe.map (\ep -> ( ep, Just feed.channel ))
 
-                    ( _, Loadable (Just (Ok lib)) ) ->
-                        -- Look in queue first (no channel), then in subscribed episodes
-                        Dict.get episodeId lib.queue
-                            |> Maybe.map (\ep -> Just ( ep, Nothing ))
-                            |> Maybe.withDefault
-                                -- Find episode and its channel
-                                (lib.episodes
-                                    |> Dict.toList
-                                    |> List.filterMap
-                                        (\( rss, eps ) ->
-                                            eps
-                                                |> Dict.get episodeId
-                                                |> Maybe.map (\ep -> ( ep, Dict.get rss lib.channels ))
-                                        )
-                                    |> List.head
-                                )
+        ( Just episodeId, _, Loadable (Just (Ok lib)) ) ->
+            case Dict.get episodeId lib.queue of
+                Just ep ->
+                    Just ( ep, Nothing )
 
-                    ( _, Loadable _ ) ->
+                Nothing ->
+                    Dict.foldl
+                        (\rss eps acc ->
+                            case acc of
+                                Just _ ->
+                                    acc
+
+                                Nothing ->
+                                    Dict.get episodeId eps
+                                        |> Maybe.map (\ep -> ( ep, Dict.get rss lib.channels ))
+                        )
                         Nothing
-            )
+                        lib.episodes
+
+        _ ->
+            Nothing
 
 
 viewTagLink : ( String, String ) -> Html Msg
@@ -1420,8 +1409,6 @@ libraryDecoder =
         |> D.required "episodes" (D.dict (D.dict episodeDecoder))
         |> D.optional "queue" (D.dict episodeDecoder) Dict.empty
         |> D.optional "watched" (D.list D.string |> D.map Set.fromList) Set.empty
-        |> D.required "history" (D.dict (D.dict (D.list playbackDecoder)))
-        |> D.required "settings" (D.succeed {})
 
 
 channelDecoder : D.Decoder Channel
@@ -1476,17 +1463,6 @@ episodeDecoder =
         |> D.optional "isExplicit" D.bool False
 
 
-playbackDecoder : D.Decoder Playback
-playbackDecoder =
-    D.succeed Playback
-        |> D.required "t" (D.map Time.millisToPosix D.int)
-        |> D.required "s"
-            (D.map2 Tuple.pair
-                (D.index 0 D.int)
-                (D.index 1 D.int)
-            )
-
-
 urlDecoder : D.Decoder Url
 urlDecoder =
     D.string
@@ -1516,8 +1492,6 @@ libraryEncoder lib =
         , ( "episodes", E.dict identity (E.dict identity episodeEncoder) lib.episodes )
         , ( "queue", E.dict identity episodeEncoder lib.queue )
         , ( "watched", lib.watched |> Set.toList |> E.list E.string )
-        , ( "history", E.dict identity (E.dict identity (E.list playbackEncoder)) lib.history )
-        , ( "settings", E.object [] )
         ]
 
 
@@ -1556,15 +1530,6 @@ episodeEncoder episode =
         , ( "fileSizeBytes", encodeMaybe E.int episode.fileSizeBytes )
         , ( "isExplicit", E.bool episode.isExplicit )
         ]
-
-
-playbackEncoder : Playback -> E.Value
-playbackEncoder playback =
-    E.object
-        [ ( "t", E.int (Time.posixToMillis playback.t) )
-        , ( "s", E.list E.int [ Tuple.first playback.s, Tuple.second playback.s ] )
-        ]
-
 
 
 -- XML
