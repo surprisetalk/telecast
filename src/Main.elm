@@ -7,7 +7,7 @@ import Browser.Navigation as Nav
 import Char
 import Dict exposing (Dict)
 import Html exposing (..)
-import Html.Attributes as A exposing (class, href, id, src, value)
+import Html.Attributes as A exposing (class, href, id, src, title, value)
 import Html.Events exposing (onClick, onInput, onSubmit)
 import Http
 import Json.Decode as D
@@ -1000,10 +1000,10 @@ viewEpisodeCard maybeLib maybeRss episode =
                     text ""
 
                 else if Dict.member episode.id lib.queue then
-                    button [ onClick (EpisodeWatched episode.id) ] [ text "x" ]
+                    button [ onClick (EpisodeWatched episode.id), title "Mark as watched" ] [ text "x" ]
 
                 else
-                    button [ onClick (EpisodeQueued episode) ] [ text "+" ]
+                    button [ onClick (EpisodeQueued episode), title "Add to queue" ] [ text "+" ]
 
             Nothing ->
                 text ""
@@ -1100,13 +1100,13 @@ viewChannelCard maybeLib channel =
         , case maybeLib of
             Just lib ->
                 if Dict.member rss lib.channels then
-                    button [ onClick (ChannelUnsubscribing rss) ] [ text "x" ]
+                    button [ onClick (ChannelUnsubscribing rss), title "Unsubscribe" ] [ text "x" ]
 
                 else
-                    button [ onClick (ChannelSubscribing rss channel) ] [ text "+" ]
+                    button [ onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "+" ]
 
             Nothing ->
-                button [ onClick (ChannelSubscribing rss channel) ] [ text "+" ]
+                button [ onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "+" ]
         ]
 
 
