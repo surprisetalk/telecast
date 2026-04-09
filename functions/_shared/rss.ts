@@ -41,7 +41,7 @@ function extractText(raw: any): string {
   return typeof raw === "object" ? raw["#text"] : String(raw);
 }
 
-function httpsUrl(url: string | null | undefined): string | null {
+export function httpsUrl(url: string | null | undefined): string | null {
   if (!url) return null;
   if (url.startsWith("https://")) return url;
   if (url.startsWith("http://")) return url.replace("http://", "https://");
@@ -49,7 +49,7 @@ function httpsUrl(url: string | null | undefined): string | null {
   return null;
 }
 
-function sanitizeText(text: any): string | null {
+export function sanitizeText(text: any): string | null {
   if (!text) return null;
 
   // Handle arrays - take first element (fast-xml-parser returns arrays for duplicate tags)
@@ -98,7 +98,7 @@ function sanitizeText(text: any): string | null {
   return text || null;
 }
 
-function parseDuration(raw: any): number | null {
+export function parseDuration(raw: any): number | null {
   if (!raw) return null;
   const str = extractText(raw);
 
@@ -106,19 +106,20 @@ function parseDuration(raw: any): number | null {
   const parts = str.split(":").map(Number);
   if (parts.some(isNaN)) return null;
 
-  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-  if (parts.length === 2) return parts[0] * 60 + parts[1];
-  if (parts.length === 1) return parts[0]; // Already seconds
+  const [a = 0, b = 0, c = 0] = parts;
+  if (parts.length === 3) return a * 3600 + b * 60 + c;
+  if (parts.length === 2) return a * 60 + b;
+  if (parts.length === 1) return a; // Already seconds
   return null;
 }
 
-function parseExplicit(raw: any): boolean | null {
+export function parseExplicit(raw: any): boolean | null {
   if (raw === undefined || raw === null) return null;
   const str = extractText(raw);
   return str === "yes" || str === "true" || str === "Yes" || str === "True";
 }
 
-function parseCategories(raw: any): string[] | null {
+export function parseCategories(raw: any): string[] | null {
   if (!raw) return null;
   const cats = Array.isArray(raw) ? raw : [raw];
   const result: string[] = [];
@@ -136,14 +137,14 @@ function parseCategories(raw: any): string[] | null {
   return result.length > 0 ? result : null;
 }
 
-function parseDate(raw: any): Date | null {
+export function parseDate(raw: any): Date | null {
   if (!raw) return null;
   const str = extractText(raw);
   const date = new Date(str);
   return isNaN(date.getTime()) ? null : date;
 }
 
-function generateEpisodeId(item: any): string {
+export function generateEpisodeId(item: any): string {
   // Prefer guid, then id, then link
   const raw = item.guid?.["#text"] || item.guid || item.id || item.link?.["@_href"] || item.link || "";
   const str = typeof raw === "object" ? JSON.stringify(raw) : String(raw);
@@ -156,7 +157,7 @@ function generateEpisodeId(item: any): string {
   return Math.abs(hash).toString(36);
 }
 
-function findEpisodeThumbnail(item: any): string | null {
+export function findEpisodeThumbnail(item: any): string | null {
   // Try itunes:image
   if (item["itunes:image"]?.["@_href"]) return item["itunes:image"]["@_href"];
 
@@ -241,8 +242,8 @@ function generateChannelId(url: string): string {
   try {
     const urlObj = new URL(url);
     return urlObj.hostname + urlObj.pathname;
-  } catch (e) {
-    return Buffer.from(url).toString("base64").slice(0, 32);
+  } catch {
+    return btoa(encodeURIComponent(url)).slice(0, 32);
   }
 }
 

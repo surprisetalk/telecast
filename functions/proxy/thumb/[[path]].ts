@@ -17,19 +17,24 @@ function serveFallback(): Response {
   });
 }
 
-function transformYouTubeThumb(url: string): string {
+export function transformYouTubeThumb(url: string): string {
   const ytMatch = url.match(/^(https?:\/\/i\d?\.ytimg\.com\/vi\/[^/]+\/)(?:hq|mq|)default\.jpg$/);
   if (ytMatch) return ytMatch[1] + "mqdefault.jpg";
   return url;
 }
 
-export async function onRequest({ request, env }: { request: Request; env: Env }) {
-  const url = new URL(request.url);
-  const thumbUrl = decodeURIComponent(url.pathname.slice("/proxy/thumb/".length));
+export interface ThumbProxyDeps {
+  bucket: R2Bucket;
+  fetcher: typeof fetch;
+}
+
+export async function handleThumbProxy(deps: ThumbProxyDeps, input: { thumbUrl: string }): Promise<Response> {
+  const { bucket, fetcher } = deps;
+  const { thumbUrl } = input;
   if (!thumbUrl) return serveFallback();
 
   const smallKey = `small/${thumbUrl}`;
-  const cached = await env.BUCKET_THUMB.get(smallKey);
+  const cached = await bucket.get(smallKey);
   if (cached) {
     return new Response(cached.body, {
       headers: {
@@ -40,7 +45,7 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
   }
   try {
     const fetchUrl = transformYouTubeThumb(thumbUrl);
-    const fetchResponse = await fetch(fetchUrl, {
+    const fetchResponse = await fetcher(fetchUrl, {
       cf: {
         image: {
           width: SMALL_WIDTH,
@@ -49,13 +54,13 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
           quality: QUALITY,
         },
       },
-    });
+    } as RequestInit);
     if (!fetchResponse.ok) return serveFallback();
 
     const contentType = fetchResponse.headers.get("content-type");
     if (!contentType?.startsWith("image/")) return serveFallback();
 
-    await env.BUCKET_THUMB.put(smallKey, fetchResponse.clone().body, {
+    await bucket.put(smallKey, fetchResponse.clone().body, {
       httpMetadata: { contentType },
     });
     return new Response(fetchResponse.body, {
@@ -67,4 +72,10 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
   } catch {
     return serveFallback();
   }
+}
+
+export async function onRequest({ request, env }: { request: Request; env: Env }) {
+  const url = new URL(request.url);
+  const thumbUrl = decodeURIComponent(url.pathname.slice("/proxy/thumb/".length));
+  return handleThumbProxy({ bucket: env.BUCKET_THUMB, fetcher: fetch }, { thumbUrl });
 }

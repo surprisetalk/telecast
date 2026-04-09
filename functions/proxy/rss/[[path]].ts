@@ -1,46 +1,58 @@
 import * as rss from "../../_shared/rss";
 import db from "postgres";
 import type { Env } from "../../env";
+import type { Sql } from "../../search";
+
+export interface RssProxyDeps {
+  sql: Sql;
+  bucket: R2Bucket;
+  fetcher: typeof fetch;
+}
+
+export async function handleRssProxy(deps: RssProxyDeps, input: { rssUrl: string }): Promise<Response> {
+  const { sql, bucket, fetcher } = deps;
+  const { rssUrl } = input;
+  const cached = await bucket.get(rssUrl);
+  if (cached) {
+    return new Response(cached.body, {
+      headers: { "content-type": "application/xml" },
+    });
+  }
+  let fetchResponse: Response;
+  try {
+    fetchResponse = await fetcher(rssUrl);
+    if (!fetchResponse.ok) {
+      return new Response(`Feed returned ${fetchResponse.status}`, { status: 502 });
+    }
+  } catch {
+    return new Response("Failed to fetch feed", { status: 502 });
+  }
+  const text = await fetchResponse.text();
+  if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
+    return new Response("Invalid RSS feed", { status: 400 });
+  }
+  const channel = rss.parse(text);
+  await sql`
+    insert into channel ${sql(channel)}
+    on conflict (channel_id) do update
+    set
+      title = excluded.title,
+      description = excluded.description,
+      thumb = excluded.thumb,
+      tags = CASE
+        WHEN excluded.tags IS NOT NULL
+        THEN (SELECT array_agg(DISTINCT t) FROM unnest(coalesce(channel.tags, '{}') || excluded.tags) AS t)
+        ELSE channel.tags
+      END
+  `;
+  await bucket.put(rssUrl, text);
+  return new Response(text, {
+    headers: { "content-type": "application/xml" },
+  });
+}
 
 export async function onRequest({ request, env }: { request: Request; env: Env }) {
   const url = new URL(request.url);
   const rssUrl = decodeURIComponent(url.pathname.slice("/proxy/rss/".length));
-  let response = await env.BUCKET_RSS.get(rssUrl);
-  if (!response) {
-    const sql = db(env.DATABASE_URL!);
-    let fetchResponse: Response;
-    try {
-      fetchResponse = await fetch(rssUrl);
-      if (!fetchResponse.ok) {
-        return new Response(`Feed returned ${fetchResponse.status}`, { status: 502 });
-      }
-    } catch {
-      return new Response("Failed to fetch feed", { status: 502 });
-    }
-    const text = await fetchResponse.text();
-    if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
-      return new Response("Invalid RSS feed", { status: 400 });
-    }
-    const channel = rss.parse(text);
-    await sql`
-      insert into channel ${sql(channel)}
-      on conflict (channel_id) do update
-      set
-        title = excluded.title,
-        description = excluded.description,
-        thumb = excluded.thumb,
-        tags = CASE
-          WHEN excluded.tags IS NOT NULL
-          THEN (SELECT array_agg(DISTINCT t) FROM unnest(coalesce(channel.tags, '{}') || excluded.tags) AS t)
-          ELSE channel.tags
-        END
-    `;
-    await env.BUCKET_RSS.put(rssUrl, text);
-    return new Response(text, {
-      headers: { "content-type": "application/xml" },
-    });
-  }
-  return new Response(response.body, {
-    headers: { "content-type": "application/xml" },
-  });
+  return handleRssProxy({ sql: db(env.DATABASE_URL!), bucket: env.BUCKET_RSS, fetcher: fetch }, { rssUrl });
 }

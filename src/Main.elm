@@ -1,4 +1,4 @@
-port module Main exposing (main)
+port module Main exposing (..)
 
 import Browser
 import Browser.Dom
@@ -716,7 +716,7 @@ view model =
                     |> Maybe.map (\_ -> a [ href "?" ] [ text "X" ])
                     |> Maybe.withDefault (a [ href "/?q=" ] [ text "search" ])
                 ]
-            , case findSelectedEpisode model of
+            , case findSelectedEpisode model.episode model.channel model.library of
                 Just ( episode, maybeChannel ) ->
                     div [ class "rows", id "player-section" ]
                         [ let
@@ -892,12 +892,12 @@ view model =
     }
 
 
-findSelectedEpisode : Model -> Maybe ( Episode, Maybe Channel )
-findSelectedEpisode model =
-    model.episode
+findSelectedEpisode : Maybe Id -> Maybe ( Url, Loadable Feed ) -> Loadable Library -> Maybe ( Episode, Maybe Channel )
+findSelectedEpisode maybeEpisode maybeChannel libraryL =
+    maybeEpisode
         |> Maybe.andThen
             (\episodeId ->
-                case ( model.channel, model.library ) of
+                case ( maybeChannel, libraryL ) of
                     ( Just ( _, Loadable (Just (Ok feed)) ), _ ) ->
                         Dict.get episodeId feed.episodes
                             |> Maybe.map (\ep -> ( ep, Just feed.channel ))
@@ -1335,14 +1335,14 @@ withLibrary fn model =
             ( model, Cmd.none )
 
 
-navigableEpisodeIds : Model -> ( List Id, Maybe Url )
-navigableEpisodeIds model =
-    case model.channel of
+navigableEpisodeIds : Maybe ( Url, Loadable Feed ) -> Maybe SearchState -> Loadable Library -> ( List Id, Maybe Url )
+navigableEpisodeIds maybeChannel maybeSearch libraryL =
+    case maybeChannel of
         Just ( rssUrl, Loadable (Just (Ok feed)) ) ->
             ( feed.episodes |> Dict.values |> List.sortBy .index |> List.map .id, Just rssUrl )
 
         Nothing ->
-            case ( model.search, model.library ) of
+            case ( maybeSearch, libraryL ) of
                 ( Nothing, Loadable (Just (Ok lib)) ) ->
                     ( lib.queue
                         |> Dict.values
@@ -1362,7 +1362,7 @@ stepEpisode : Int -> Model -> ( Model, Cmd Msg )
 stepEpisode delta model =
     let
         ( ids, maybeRss ) =
-            navigableEpisodeIds model
+            navigableEpisodeIds model.channel model.search model.library
     in
     if List.isEmpty ids || (delta < 0 && model.episode == Nothing) then
         ( model, Cmd.none )

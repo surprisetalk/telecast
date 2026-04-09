@@ -3,10 +3,11 @@ import type { Env } from "./env";
 
 const QUALITY_THRESHOLD = 10;
 
-export async function onRequest({ request, env }: { request: Request; env: Env }) {
-  const sql = db(env.DATABASE_URL!);
-  const url = new URL(request.url);
-  const query = url.searchParams.get("q");
+export type Sql = ReturnType<typeof db>;
+
+export async function handleSearch(deps: { sql: Sql }, input: { query: string | null }): Promise<Response> {
+  const { sql } = deps;
+  const { query } = input;
   if (!query) return new Response("Query parameter required", { status: 400 });
   // Shorts filtering: prefer non-Shorts thumbnails, fall back to any if all are Shorts
   const episodeThumbSubquery = sql`
@@ -48,4 +49,9 @@ export async function onRequest({ request, env }: { request: Request; env: Env }
   return new Response(JSON.stringify(results), {
     headers: { "Content-Type": "application/json" },
   });
+}
+
+export async function onRequest({ request, env }: { request: Request; env: Env }) {
+  const url = new URL(request.url);
+  return handleSearch({ sql: db(env.DATABASE_URL!) }, { query: url.searchParams.get("q") });
 }
