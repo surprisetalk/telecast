@@ -17,7 +17,8 @@ import Process
 import Set exposing (Set)
 import Task
 import Url exposing (Url)
-import Url.Parser as P exposing ((</>), Parser)
+import Url.Parser as P exposing ((</>), (<?>), Parser)
+import Url.Parser.Query as Q
 import Xml.Decode as X
 
 
@@ -197,6 +198,7 @@ type Msg
     | SearchEditing String
     | SearchSubmitting
     | ChannelSubscribing String Channel
+    | InitialFeedFetched String Channel (Result String Feed)
     | ChannelUnsubscribing String
     | EpisodeQueued Episode
     | EpisodeWatched Id
@@ -327,20 +329,61 @@ update msg model =
                         model
 
                 _ ->
-                    -- No feed loaded: subscribe with channel only (from search results)
-                    withLibrary
-                        (\lib ->
-                            { lib
-                                | channels = Dict.insert channelId channel lib.channels
-                                , episodes =
-                                    if Dict.member channelId lib.episodes then
-                                        lib.episodes
+                    -- No feed loaded (e.g. from search results): subscribe immediately,
+                    -- then fetch the feed so we can queue the 3 most recent episodes.
+                    let
+                        ( modelWithChannel, saveCmd ) =
+                            withLibrary
+                                (\lib ->
+                                    { lib
+                                        | channels = Dict.insert channelId channel lib.channels
+                                        , episodes =
+                                            if Dict.member channelId lib.episodes then
+                                                lib.episodes
 
-                                    else
-                                        Dict.insert channelId Dict.empty lib.episodes
+                                            else
+                                                Dict.insert channelId Dict.empty lib.episodes
+                                    }
+                                )
+                                model
+                    in
+                    ( modelWithChannel
+                    , Cmd.batch
+                        [ saveCmd
+                        , Http.get
+                            { url = "/proxy/rss/" ++ Url.percentEncode channelId
+                            , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> InitialFeedFetched channelId channel)
                             }
-                        )
-                        model
+                        ]
+                    )
+
+        InitialFeedFetched rss channel (Ok feed) ->
+            let
+                enrichedEpisodes =
+                    Dict.map (\_ ep -> enrichEpisodeWith channel ep) feed.episodes
+
+                recentEpisodes =
+                    enrichedEpisodes
+                        |> Dict.values
+                        |> List.take 3
+                        |> List.map (\ep -> ( ep.id, ep ))
+                        |> Dict.fromList
+            in
+            withLibrary
+                (\lib ->
+                    if Dict.member rss lib.channels then
+                        { lib
+                            | episodes = Dict.insert rss enrichedEpisodes lib.episodes
+                            , queue = Dict.union recentEpisodes lib.queue
+                        }
+
+                    else
+                        lib
+                )
+                model
+
+        InitialFeedFetched _ _ (Err _) ->
+            ( model, Cmd.none )
 
         ChannelUnsubscribing channelId ->
             withLibrary
@@ -493,43 +536,29 @@ update msg model =
 -- ROUTING
 
 
+routeQueryParser : Q.Parser { q : Maybe String, tag : Maybe String, e : Maybe String }
+routeQueryParser =
+    Q.map3 (\q tag e -> { q = q, tag = tag, e = e })
+        (Q.string "q")
+        (Q.string "tag")
+        (Q.string "e")
+
+
 route : Url -> Model -> ( Model, Cmd Msg )
 route url model =
     let
-        -- TODO: Use Url.Parser
-        parseQueryParams : String -> Dict String String
-        parseQueryParams query =
-            query
-                |> String.split "&"
-                |> List.filterMap
-                    (\pair ->
-                        case String.split "=" pair of
-                            [ key, value ] ->
-                                Just ( key, Url.percentDecode value |> Maybe.withDefault value )
-
-                            [ key ] ->
-                                Just ( key, "" )
-
-                            _ ->
-                                Nothing
-                    )
-                |> Dict.fromList
-
-        -- Parse query params
-        queryParams =
-            url.query
-                |> Maybe.map parseQueryParams
-                |> Maybe.withDefault Dict.empty
+        parsedQuery =
+            P.parse (P.top <?> routeQueryParser) { url | path = "/" }
+                |> Maybe.withDefault { q = Nothing, tag = Nothing, e = Nothing }
 
         searchQuery =
-            Dict.get "q" queryParams
+            parsedQuery.q
 
         tagFilter =
-            Dict.get "tag" queryParams
+            parsedQuery.tag
 
         episodeId =
-            Dict.get "e" queryParams
-                |> Maybe.andThen Url.percentDecode
+            parsedQuery.e
     in
     case ( url.path, searchQuery, tagFilter ) of
         -- Saved channels: /?tag=saved
@@ -685,8 +714,7 @@ view model =
                         List.concat
                             [ [ a [ href "/" ] [ text "telecasts" ] ]
                             , model.search
-                                -- TODO: Build url properly or just clear the channel/episode.
-                                |> Maybe.map (\{ query } -> [ a [ href ("/?q=" ++ query), class "back" ] [ text ("\"" ++ query ++ "\"") ] ])
+                                |> Maybe.map (\{ query } -> [ a [ href ("/?q=" ++ Url.percentEncode query), class "back" ] [ text ("\"" ++ query ++ "\"") ] ])
                                 |> Maybe.withDefault []
                             , model.channel
                                 |> Maybe.andThen

@@ -20,10 +20,13 @@ create table channel (
   website text,
   categories text [],
   quality integer not null default 0,
+  keywords tsvector,
   primary key (channel_id)
 );
 
 create index channel_search_idx on channel using gin (to_tsvector('english', title || ' ' || coalesce(description, '')));
+
+create index channel_keywords_idx on channel using gin (keywords);
 
 create index channel_tags_idx on channel using gin (tags);
 

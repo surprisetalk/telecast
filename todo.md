@@ -1,8 +1,8 @@
-- [-] fetch/refresh feeds; add new episodes to watch queue
-- [-] fix channel subscriptions? esp. from search results page.
-- [ ] simplify style.css
+- [x] fetch/refresh feeds; add new episodes to watch queue
+- [x] fix channel subscriptions? esp. from search results page.
+- [x] simplify style.css
 - [-] make it not ugly
 - [ ] launch
 - [ ] ship bubbletea tui
 - [ ] support for livestreaming / clubhouse
-- [ ] copy keywords from episode description to channel table for search
+- [x] copy keywords from episode description to channel table for search

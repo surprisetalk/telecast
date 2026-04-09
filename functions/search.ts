@@ -41,7 +41,10 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
     : await sql`
         select c.*, ${episodeThumbSubquery} as episode_thumb
         from channel c
-        where websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
+        where (
+            websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
+            or websearch_to_tsquery('english', ${query}) @@ coalesce(keywords, ''::tsvector)
+          )
           and quality >= ${QUALITY_THRESHOLD}
         order by quality desc
         limit 50

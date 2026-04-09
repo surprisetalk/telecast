@@ -174,6 +174,15 @@ async function main() {
             episode_count = (SELECT count(*) FROM episode WHERE channel_id = ${channel.channel_id}),
             latest_episode_at = (SELECT max(published_at) FROM episode WHERE channel_id = ${channel.channel_id}),
             avg_duration_seconds = (SELECT avg(duration_seconds)::integer FROM episode WHERE channel_id = ${channel.channel_id} AND duration_seconds IS NOT NULL),
+            keywords = (
+              SELECT to_tsvector('english', coalesce(string_agg(title || ' ' || coalesce(description, ''), ' '), ''))
+              FROM (
+                SELECT title, description FROM episode
+                WHERE channel_id = ${channel.channel_id}
+                ORDER BY published_at DESC NULLS LAST
+                LIMIT 20
+              ) e
+            ),
             quality = (
               SELECT GREATEST(0, LEAST(100, (
                 -- Freshness: 0-40 points (linear decay over 2 years)

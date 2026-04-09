@@ -927,42 +927,8 @@ audio#player {
   font-size: var(--text-xs);
 }
 
-#search input {
-  flex: 1;
-  min-width: 0;
-  height: var(--touch-target);
-  padding: 0 var(--space-4);
+#search form.cols input {
   font-size: var(--text-base);
-  color: var(--text-primary);
-  background: var(--bg-color);
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-md);
-  transition:
-    border-color var(--anim),
-    box-shadow var(--anim);
-}
-
-#search input:focus {
-  outline: none;
-  border-color: var(--text-secondary);
-  box-shadow: 0 0 0 3px var(--focus-ring);
-}
-
-#search button {
-  flex-shrink: 0;
-  height: var(--touch-target);
-  padding: 0 var(--space-5);
-  font-size: var(--text-sm);
-  font-weight: 500;
-  color: var(--bg-color);
-  background: var(--text-primary);
-  border: none;
-  border-radius: var(--radius-md);
-  transition: opacity var(--anim);
-}
-
-#search button:hover {
-  opacity: 0.85;
 }
 
 /* --------------------------------------------------------------------------
