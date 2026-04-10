@@ -29,29 +29,35 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
        limit 1)
     )`;
 
-  const results = query.startsWith("tag:")
-    ? await sql`
-        select c.*, ${episodeThumbSubquery} as episode_thumb
-        from channel c
-        where ${query.slice(4)} = any(tags)
-          and quality >= ${QUALITY_THRESHOLD}
-        order by quality desc
-        limit 50
-      `
-    : await sql`
-        select c.*, ${episodeThumbSubquery} as episode_thumb
-        from channel c
-        where (
-            websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
-            or websearch_to_tsquery('english', ${query}) @@ coalesce(keywords, ''::tsvector)
-          )
-          and quality >= ${QUALITY_THRESHOLD}
-        order by quality desc
-        limit 50
-      `;
-  return new Response(JSON.stringify(results), {
-    headers: { "Content-Type": "application/json" },
-  });
+  try {
+    const results = query.startsWith("tag:")
+      ? await sql`
+          select c.*, ${episodeThumbSubquery} as episode_thumb
+          from channel c
+          where ${query.slice(4)} = any(tags)
+            and quality >= ${QUALITY_THRESHOLD}
+          order by quality desc
+          limit 50
+        `
+      : await sql`
+          select c.*, ${episodeThumbSubquery} as episode_thumb
+          from channel c
+          where (
+              websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
+              or websearch_to_tsquery('english', ${query}) @@ coalesce(keywords, ''::tsvector)
+            )
+            and quality >= ${QUALITY_THRESHOLD}
+          order by quality desc
+          limit 50
+        `;
+    return new Response(JSON.stringify(results), {
+      headers: { "Content-Type": "application/json" },
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`Search query failed for q="${query}": ${message}`);
+    return new Response(`Search failed: ${message}`, { status: 502 });
+  }
 }
 
 export async function onRequest({ request, env }: { request: Request; env: Env }) {
