@@ -766,8 +766,7 @@ audio#player {
 }
 
 /* Timecode badges — broadcast-style, no box */
-.duration-badge,
-.episode-count-badge {
+.duration-badge {
   position: absolute;
   bottom: var(--space-2);
   right: var(--space-2);
@@ -788,32 +787,20 @@ audio#player {
   opacity: 0.7;
 }
 
-.episode-count-badge {
-  z-index: 3;
-  color: var(--text-primary);
-  border-color: var(--border-color);
-}
-
-.episode-count-badge::before {
-  content: "# ";
-  color: var(--accent);
-}
 
 /* Card action buttons — inline before title */
 .card-action {
   flex-shrink: 0;
   width: 18px;
-  height: 18px;
   font-family: var(--font-mono);
   font-size: 10px;
   font-weight: 500;
   line-height: 18px;
   text-align: center;
   color: var(--text-tertiary);
-  background: none;
+  background: transparent;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  padding: 0;
   transition:
     color var(--anim),
     border-color var(--anim),
@@ -840,12 +827,8 @@ audio#player {
 .episode-title-row,
 .channel-title-row {
   display: flex;
-  align-items: flex-start;
+  align-items: baseline;
   gap: var(--space-2);
-}
-
-.channel-title-row .card-action {
-  margin-top: 3px;
 }
 
 /* --------------------------------------------------------------------------
@@ -972,6 +955,15 @@ audio#player {
   text-overflow: ellipsis;
 }
 
+.channel-footer {
+  margin-top: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  color: var(--text-tertiary);
+}
+
 /* --------------------------------------------------------------------------
    My Feed & Channel Pages
    -------------------------------------------------------------------------- */
@@ -1048,20 +1040,23 @@ audio#player {
    -------------------------------------------------------------------------- */
 #featured {
   margin-top: auto;
-  padding: var(--space-6);
+  padding: var(--space-4) var(--space-6);
   background: var(--bg-color);
   position: relative;
   border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-4);
 }
 
 #featured h2 {
+  flex-shrink: 0;
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.2em;
   color: var(--text-tertiary);
-  margin-bottom: var(--space-4);
 }
 
 .tags {

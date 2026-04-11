@@ -753,8 +753,8 @@ view model =
                                 |> Maybe.withDefault []
                             ]
                 , model.search
-                    |> Maybe.map (\_ -> a [ href "?", class "header-action" ] [ text "X" ])
-                    |> Maybe.withDefault (a [ href "/?q=", class "header-action" ] [ text "search" ])
+                    |> Maybe.map (\_ -> a [ href "?", class "header-action" ] [ text "✕" ])
+                    |> Maybe.withDefault (a [ href "/?q=", class "header-action" ] [ text "SEARCH" ])
                 ]
             , case findSelectedEpisode model.episode model.channel model.library of
                 Just ( episode, maybeChannel ) ->
@@ -922,7 +922,7 @@ view model =
                         ]
             , div [ id "featured" ]
                 [ h2 [] [ text "Discover" ]
-                , div [ class "tags" ] (List.map viewTagLink discoverTags)
+                , div [ class "tags" ] (List.map viewTagLink (List.take 5 discoverTags))
                 ]
             ]
         ]
@@ -1002,7 +1002,7 @@ viewEpisodeCard maybeLib maybeRss episode =
                             button [ class "card-action active", onClick (EpisodeWatched episode.id), title "Mark as watched" ] [ text "✓" ]
 
                         else
-                            button [ class "card-action", onClick (EpisodeQueued episode), title "Add to queue" ] [ text "+" ]
+                            button [ class "card-action", onClick (EpisodeQueued episode), title "Add to queue" ] [ text "＋" ]
 
                     Nothing ->
                         text ""
@@ -1096,15 +1096,7 @@ viewChannelCard maybeLib channel =
     div [ class "channel-card" ]
         [ a [ href ("/" ++ Url.percentEncode rss) ]
             [ div [ class "channel-thumb-wrapper" ]
-                (viewChannelThumbLayered channel.thumb
-                    ++ [ case channel.episodeCount of
-                            Just count ->
-                                span [ class "episode-count-badge" ] [ text (String.fromInt count ++ " eps") ]
-
-                            Nothing ->
-                                text ""
-                       ]
-                )
+                (viewChannelThumbLayered channel.thumb)
             ]
         , div [ class "channel-info" ]
             [ div [ class "channel-title-row" ]
@@ -1114,10 +1106,10 @@ viewChannelCard maybeLib channel =
                             button [ class "card-action active", onClick (ChannelUnsubscribing rss), title "Unsubscribe" ] [ text "✓" ]
 
                         else
-                            button [ class "card-action", onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "+" ]
+                            button [ class "card-action", onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "＋" ]
 
                     Nothing ->
-                        button [ class "card-action", onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "+" ]
+                        button [ class "card-action", onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "＋" ]
                 , a [ href ("/" ++ Url.percentEncode rss), class "channel-title" ] [ text channel.title ]
                 ]
             , case channel.author of
@@ -1127,6 +1119,12 @@ viewChannelCard maybeLib channel =
 
                     else
                         div [ class "channel-meta" ] [ text author ]
+
+                Nothing ->
+                    text ""
+            , case channel.episodeCount of
+                Just count ->
+                    div [ class "channel-footer" ] [ text (String.fromInt count ++ " episodes") ]
 
                 Nothing ->
                     text ""
