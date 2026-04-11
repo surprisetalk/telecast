@@ -900,13 +900,11 @@ view model =
 
                 ( Nothing, Nothing ) ->
                     div [ class "rows", id "my-feed" ]
-                        [ div [ class "rows" ]
-                            [ div [ class "cols" ]
-                                [ img [ A.class "profile-img", src "/yt.png" ] []
-                                , h1 [] [ text "My Feed" ]
-                                , a [ href "/?tag=saved", class "saved-link" ] [ text "my channels" ]
-                                ]
+                        [ div [ class "cols" ]
+                            [ img [ A.class "profile-img", src "/yt.png" ] []
+                            , h1 [] [ text "My Feed" ]
                             , p [] [ text "Your watch queue" ]
+                            , a [ href "/?tag=saved", class "saved-link" ] [ text "my channels" ]
                             ]
                         , viewLoadable
                             (\lib ->
