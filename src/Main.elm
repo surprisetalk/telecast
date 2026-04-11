@@ -753,8 +753,8 @@ view model =
                                 |> Maybe.withDefault []
                             ]
                 , model.search
-                    |> Maybe.map (\_ -> a [ href "?" ] [ text "X" ])
-                    |> Maybe.withDefault (a [ href "/?q=" ] [ text "search" ])
+                    |> Maybe.map (\_ -> a [ href "?", class "header-action" ] [ text "X" ])
+                    |> Maybe.withDefault (a [ href "/?q=", class "header-action" ] [ text "search" ])
                 ]
             , case findSelectedEpisode model.episode model.channel model.library of
                 Just ( episode, maybeChannel ) ->
