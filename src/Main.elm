@@ -1124,7 +1124,11 @@ viewChannelCard maybeLib channel =
                 ]
             , case channel.author of
                 Just author ->
-                    div [ class "channel-meta" ] [ text author ]
+                    if author == channel.title then
+                        text ""
+
+                    else
+                        div [ class "channel-meta" ] [ text author ]
 
                 Nothing ->
                     text ""

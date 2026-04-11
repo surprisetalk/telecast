@@ -230,6 +230,7 @@ header.cols {
   top: 0;
   z-index: 20;
   backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border-color);
 }
 
 header .cols > * {
@@ -665,7 +666,7 @@ audio#player {
    -------------------------------------------------------------------------- */
 .autogrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: var(--space-5);
   padding: var(--space-6);
 }
@@ -811,7 +812,7 @@ audio#player {
 .episode-title-row,
 .channel-title-row {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: var(--space-2);
 }
 
@@ -1020,6 +1021,7 @@ audio#player {
   padding: var(--space-6);
   background: var(--bg-color);
   position: relative;
+  border-top: 1px solid var(--border-color);
 }
 
 #featured h2 {
