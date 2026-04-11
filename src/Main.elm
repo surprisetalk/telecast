@@ -196,6 +196,7 @@ type Msg
     | FeedFetched String (Maybe Id) (Result String Feed)
     | ChannelsFetched (Result Http.Error (List Channel))
     | SearchEditing String
+    | SearchDebounced String
     | SearchSubmitting
     | ChannelSubscribing String Channel
     | InitialFeedFetched String Channel (Result String Feed)
@@ -281,8 +282,28 @@ update msg model =
             case model.search of
                 Just searchState ->
                     ( { model | search = Just { searchState | query = query } }
-                    , Nav.replaceUrl model.key ("/?q=" ++ Url.percentEncode query)
+                    , Cmd.batch
+                        [ Nav.replaceUrl model.key ("/?q=" ++ Url.percentEncode query)
+                        , Process.sleep 350 |> Task.perform (always (SearchDebounced query))
+                        ]
                     )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        SearchDebounced query ->
+            case model.search of
+                Just searchState ->
+                    if searchState.query == query && String.length query >= 2 then
+                        ( { model | search = Just { searchState | results = Loadable Nothing } }
+                        , Http.get
+                            { url = "/search?q=" ++ Url.percentEncode query
+                            , expect = Http.expectJson ChannelsFetched (D.list channelDecoder)
+                            }
+                        )
+
+                    else
+                        ( model, Cmd.none )
 
                 Nothing ->
                     ( model, Cmd.none )
@@ -807,7 +828,6 @@ view model =
                                 , A.placeholder "Search channels..."
                                 ]
                                 []
-                            , button [] [ text "search" ]
                             ]
                         , div [ class "quick-tags" ]
                             (List.map viewTagLink quickSearchTags)
@@ -972,41 +992,41 @@ viewEpisodeCard maybeLib maybeRss episode =
                     Nothing ->
                         text ""
                 ]
-            , div [ class "episode-info" ]
-                [ div [ class "episode-title" ]
-                    [ text (episodePrefix ++ episode.title) ]
-                , case ( maybeRss, episode.channelTitle, episode.publishedAt ) of
-                    -- On channel page, only show date
-                    ( Just _, _, Just date ) ->
-                        div [ class "episode-meta" ] [ text date ]
-
-                    -- In queue/feed, show channel name and date
-                    ( Nothing, Just channelName, Just date ) ->
-                        div [ class "episode-meta" ] [ text (channelName ++ " · " ++ date) ]
-
-                    ( Nothing, Just channelName, Nothing ) ->
-                        div [ class "episode-meta" ] [ text channelName ]
-
-                    ( Nothing, Nothing, Just date ) ->
-                        div [ class "episode-meta" ] [ text date ]
-
-                    _ ->
-                        text ""
-                ]
             ]
-        , case maybeLib of
-            Just lib ->
-                if Set.member episode.id lib.watched then
+        , div [ class "episode-info" ]
+            [ div [ class "episode-title-row" ]
+                [ case maybeLib of
+                    Just lib ->
+                        if Set.member episode.id lib.watched then
+                            text ""
+
+                        else if Dict.member episode.id lib.queue then
+                            button [ class "card-action active", onClick (EpisodeWatched episode.id), title "Mark as watched" ] [ text "✓" ]
+
+                        else
+                            button [ class "card-action", onClick (EpisodeQueued episode), title "Add to queue" ] [ text "+" ]
+
+                    Nothing ->
+                        text ""
+                , a [ href (episodeUrl maybeRss episode.id), class "episode-title" ]
+                    [ text (episodePrefix ++ episode.title) ]
+                ]
+            , case ( maybeRss, episode.channelTitle, episode.publishedAt ) of
+                ( Just _, _, Just date ) ->
+                    div [ class "episode-meta" ] [ text date ]
+
+                ( Nothing, Just channelName, Just date ) ->
+                    div [ class "episode-meta" ] [ text (channelName ++ " · " ++ date) ]
+
+                ( Nothing, Just channelName, Nothing ) ->
+                    div [ class "episode-meta" ] [ text channelName ]
+
+                ( Nothing, Nothing, Just date ) ->
+                    div [ class "episode-meta" ] [ text date ]
+
+                _ ->
                     text ""
-
-                else if Dict.member episode.id lib.queue then
-                    button [ onClick (EpisodeWatched episode.id), title "Mark as watched" ] [ text "x" ]
-
-                else
-                    button [ onClick (EpisodeQueued episode), title "Add to queue" ] [ text "+" ]
-
-            Nothing ->
-                text ""
+            ]
         ]
 
 
@@ -1087,26 +1107,28 @@ viewChannelCard maybeLib channel =
                                 text ""
                        ]
                 )
-            , div [ class "channel-info" ]
-                [ div [ class "channel-title" ] [ text channel.title ]
-                , case channel.author of
-                    Just author ->
-                        div [ class "channel-meta" ] [ text author ]
+            ]
+        , div [ class "channel-info" ]
+            [ div [ class "channel-title-row" ]
+                [ case maybeLib of
+                    Just lib ->
+                        if Dict.member rss lib.channels then
+                            button [ class "card-action active", onClick (ChannelUnsubscribing rss), title "Unsubscribe" ] [ text "✓" ]
+
+                        else
+                            button [ class "card-action", onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "+" ]
 
                     Nothing ->
-                        text ""
+                        button [ class "card-action", onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "+" ]
+                , a [ href ("/" ++ Url.percentEncode rss), class "channel-title" ] [ text channel.title ]
                 ]
+            , case channel.author of
+                Just author ->
+                    div [ class "channel-meta" ] [ text author ]
+
+                Nothing ->
+                    text ""
             ]
-        , case maybeLib of
-            Just lib ->
-                if Dict.member rss lib.channels then
-                    button [ onClick (ChannelUnsubscribing rss), title "Unsubscribe" ] [ text "x" ]
-
-                else
-                    button [ onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "+" ]
-
-            Nothing ->
-                button [ onClick (ChannelSubscribing rss channel), title "Subscribe" ] [ text "+" ]
         ]
 
 
@@ -1163,11 +1185,39 @@ quickSearchTags =
     [ ( "youtube", "YouTube" )
     , ( "video", "Video" )
     , ( "audio", "Audio" )
-    , ( "english", "English" )
-    , ( "german", "German" )
     , ( "technology", "Tech" )
-    , ( "comedy", "Comedy" )
     , ( "science", "Science" )
+    , ( "comedy", "Comedy" )
+    , ( "history", "History" )
+    , ( "philosophy", "Philosophy" )
+    , ( "math", "Math" )
+    , ( "physics", "Physics" )
+    , ( "biology", "Biology" )
+    , ( "psychology", "Psychology" )
+    , ( "economics", "Economics" )
+    , ( "art", "Art" )
+    , ( "photography", "Photography" )
+    , ( "music", "Music" )
+    , ( "film", "Film" )
+    , ( "gaming", "Gaming" )
+    , ( "fitness", "Fitness" )
+    , ( "cooking", "Cooking" )
+    , ( "travel", "Travel" )
+    , ( "languages", "Languages" )
+    , ( "journalism", "Journalism" )
+    , ( "documentary", "Documentary" )
+    , ( "cybersecurity", "Cybersecurity" )
+    , ( "ai", "AI / ML" )
+    , ( "linux", "Linux" )
+    , ( "programming", "Programming" )
+    , ( "design", "Design" )
+    , ( "electronics", "Electronics" )
+    , ( "engineering", "Engineering" )
+    , ( "astronomy", "Astronomy" )
+    , ( "politics", "Politics" )
+    , ( "nature", "Nature" )
+    , ( "true-crime", "True Crime" )
+    , ( "education", "Education" )
     ]
 
 
