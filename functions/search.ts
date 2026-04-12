@@ -40,14 +40,34 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
           limit 50
         `
       : await sql`
+          with title_hits as (
+            select c.channel_id, c.quality, 2 as rank
+            from channel c
+            where lower(c.title) like ${"%" + query.toLowerCase() + "%"}
+              and c.quality >= ${QUALITY_THRESHOLD}
+            order by c.quality desc
+            limit 50
+          ),
+          fts_hits as (
+            select c.channel_id, c.quality, 1 as rank
+            from channel c
+            where (
+                websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', c.title || ' ' || coalesce(c.description, ''))
+                or websearch_to_tsquery('english', ${query}) @@ coalesce(c.keywords, ''::tsvector)
+              )
+              and c.quality >= ${QUALITY_THRESHOLD}
+            order by c.quality desc
+            limit 50
+          ),
+          merged as (
+            select channel_id, max(rank) as rank, max(quality) as quality
+            from (select * from title_hits union all select * from fts_hits) u
+            group by channel_id
+          )
           select c.*, ${episodeThumbSubquery} as episode_thumb
           from channel c
-          where (
-              websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', title || ' ' || coalesce(description, ''))
-              or websearch_to_tsquery('english', ${query}) @@ coalesce(keywords, ''::tsvector)
-            )
-            and quality >= ${QUALITY_THRESHOLD}
-          order by quality desc
+          join merged m using (channel_id)
+          order by m.rank desc, m.quality desc
           limit 50
         `;
     return new Response(JSON.stringify(results), {

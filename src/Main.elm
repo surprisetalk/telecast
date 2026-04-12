@@ -68,6 +68,10 @@ type alias Model =
     , search : Maybe SearchState
     , episode : Maybe Id -- episode ID
     , refreshing : Maybe (Set String) -- Nothing = idle, Just pending = refreshing RSS URLs
+    , manualUrl : String
+    , feedSnapshot : Maybe (List Episode) -- snapshot of queue on My Feed entry; sticky across watched marks
+    , featured : Loadable (List Channel)
+    , showHistory : Bool
     }
 
 
@@ -88,6 +92,7 @@ type alias Library =
     , episodes : Dict String (Dict String Episode) -- channel RSS -> episode ID -> Episode
     , queue : Dict String Episode -- "watch later" queue: episode ID -> Episode
     , watched : Set String -- watched episode IDs
+    , watchHistory : List Episode -- most recently played first, capped
     }
 
 
@@ -146,19 +151,40 @@ main =
 
 init : D.Value -> Url -> Nav.Key -> ( Model, Cmd Msg )
 init flags url key =
-    route url
-        { library =
-            flags
-                |> D.decodeValue libraryDecoder
-                |> Result.mapError (always "Could not parse library.")
-                |> Just
-                |> Loadable
-        , key = key
-        , channel = Nothing
-        , search = Nothing
-        , episode = Nothing
-        , refreshing = Nothing
-        }
+    let
+        ( m, cmd ) =
+            route url
+                (initModel flags key)
+    in
+    ( m
+    , Cmd.batch
+        [ cmd
+        , Http.get
+            { url = "/search?q=tag:featured"
+            , expect = Http.expectJson FeaturedFetched (D.list channelDecoder)
+            }
+        ]
+    )
+
+
+initModel : D.Value -> Nav.Key -> Model
+initModel flags key =
+    { library =
+        flags
+            |> D.decodeValue libraryDecoder
+            |> Result.mapError (always "Could not parse library.")
+            |> Just
+            |> Loadable
+    , key = key
+    , channel = Nothing
+    , search = Nothing
+    , episode = Nothing
+    , refreshing = Nothing
+    , manualUrl = ""
+    , feedSnapshot = Nothing
+    , featured = Loadable Nothing
+    , showHistory = False
+    }
 
 
 
@@ -203,6 +229,9 @@ type Msg
     | ChannelUnsubscribing String
     | EpisodeQueued Episode
     | EpisodeWatched Id
+    | ManualUrlEditing String
+    | ManualUrlSubmitting
+    | FeaturedFetched (Result Http.Error (List Channel))
     | GoBack
     | LinkClicked Browser.UrlRequest
     | UrlChanged Url
@@ -241,9 +270,10 @@ update msg model =
                 correctedFeed =
                     { feed | channel = setChannelRss rssUrl feed.channel }
             in
-            ( { model | channel = Just ( rssUrl, Loadable (Just (Ok correctedFeed)) ), search = Nothing, episode = maybeEpisodeId }
-            , Cmd.none
-            )
+            recordPlayback
+                ( { model | channel = Just ( rssUrl, Loadable (Just (Ok correctedFeed)) ), search = Nothing, episode = maybeEpisodeId }
+                , Cmd.none
+                )
 
         FeedFetched originalRss maybeEpisodeId (Err err) ->
             case model.channel of
@@ -417,14 +447,49 @@ update msg model =
                 model
 
         EpisodeQueued episode ->
+            let
+                snapshot =
+                    case model.feedSnapshot of
+                        Just eps ->
+                            if List.any (\e -> e.id == episode.id) eps then
+                                Just eps
+
+                            else
+                                Just (episode :: eps)
+
+                        Nothing ->
+                            Nothing
+            in
             withLibrary
                 (\lib -> { lib | queue = Dict.insert episode.id episode lib.queue })
-                model
+                { model | feedSnapshot = snapshot }
 
         EpisodeWatched episodeId ->
             withLibrary
                 (\lib -> { lib | watched = Set.insert episodeId lib.watched })
                 model
+
+        ManualUrlEditing value ->
+            ( { model | manualUrl = value }, Cmd.none )
+
+        ManualUrlSubmitting ->
+            let
+                trimmed =
+                    String.trim model.manualUrl
+            in
+            if String.isEmpty trimmed then
+                ( model, Cmd.none )
+
+            else
+                ( { model | manualUrl = "" }
+                , Nav.pushUrl model.key ("/" ++ Url.percentEncode (normalizeFeedUrl trimmed))
+                )
+
+        FeaturedFetched (Ok channels) ->
+            ( { model | featured = Loadable (Just (Ok channels)) }, Cmd.none )
+
+        FeaturedFetched (Err err) ->
+            ( { model | featured = Loadable (Just (Err (httpErrorToString err))) }, Cmd.none )
 
         GoBack ->
             ( model, Nav.back model.key 1 )
@@ -440,7 +505,11 @@ update msg model =
             )
 
         UrlChanged url ->
-            route url model
+            let
+                ( m, cmd ) =
+                    route url { model | showHistory = False }
+            in
+            recordPlayback ( m, cmd )
 
         RefreshFeeds ->
             case model.library of
@@ -582,12 +651,24 @@ route url model =
             parsedQuery.e
     in
     case ( url.path, searchQuery, tagFilter ) of
+        ( "/history", _, _ ) ->
+            ( { model
+                | search = Nothing
+                , channel = Nothing
+                , episode = episodeId
+                , feedSnapshot = Nothing
+                , showHistory = True
+              }
+            , Cmd.none
+            )
+
         -- Saved channels: /?tag=saved
         ( "/", Nothing, Just "saved" ) ->
             ( { model
                 | search = Just { query = "", results = Loadable (Just (Ok (getLibrary model |> Maybe.map (.channels >> Dict.values) |> Maybe.withDefault []))) }
                 , channel = Nothing
                 , episode = episodeId
+                , feedSnapshot = Nothing
               }
             , Cmd.none
             )
@@ -598,6 +679,7 @@ route url model =
                 | search = Just { query = "tag:" ++ tag, results = Loadable Nothing }
                 , channel = Nothing
                 , episode = episodeId
+                , feedSnapshot = Nothing
               }
             , Http.get
                 { url = "/search?q=" ++ Url.percentEncode ("tag:" ++ tag)
@@ -614,6 +696,7 @@ route url model =
                         | search = Just { currentState | query = query }
                         , channel = Nothing
                         , episode = episodeId
+                        , feedSnapshot = Nothing
                       }
                     , Cmd.none
                     )
@@ -624,6 +707,7 @@ route url model =
                         | search = Just { query = query, results = Loadable (Just (Ok [])) }
                         , channel = Nothing
                         , episode = episodeId
+                        , feedSnapshot = Nothing
                       }
                     , if String.isEmpty query then
                         Cmd.none
@@ -637,10 +721,23 @@ route url model =
 
         -- My Feed: /
         ( "/", Nothing, _ ) ->
+            let
+                snapshot =
+                    case getLibrary model of
+                        Just lib ->
+                            lib.queue
+                                |> Dict.values
+                                |> List.filter (\ep -> not (Set.member ep.id lib.watched))
+                                |> Just
+
+                        Nothing ->
+                            Nothing
+            in
             ( { model
                 | search = Nothing
                 , channel = Nothing
                 , episode = episodeId
+                , feedSnapshot = snapshot
               }
             , Cmd.none
             )
@@ -800,132 +897,267 @@ view model =
 
                 Nothing ->
                     text ""
-            , case ( model.search, model.channel ) of
-                ( Just searchState, _ ) ->
-                    let
-                        heading =
-                            if String.isEmpty searchState.query then
-                                "My Channels"
+            , if model.showHistory then
+                viewHistory model
 
-                            else if String.startsWith "tag:" searchState.query then
-                                searchState.query
-                                    |> String.dropLeft 4
-                                    |> String.replace "-" " "
-                                    |> String.words
-                                    |> List.map capitalize
-                                    |> String.join " "
-
-                            else
-                                "Search: " ++ searchState.query
-                    in
-                    div [ class "rows", id "search" ]
-                        [ h1 [] [ text heading ]
-                        , form [ class "cols", onSubmit SearchSubmitting ]
-                            [ input
-                                [ id "search-input"
-                                , onInput SearchEditing
-                                , value searchState.query
-                                , A.placeholder "Search channels..."
-                                ]
-                                []
-                            ]
-                        , div [ class "quick-tags" ]
-                            (List.map viewTagLink quickSearchTags)
-                        , viewLoadable
-                            (\channels ->
-                                if List.isEmpty channels then
-                                    div [ class "empty-state" ] [ text "No channels found" ]
-
-                                else
-                                    div [ class "autogrid", id "results" ]
-                                        (List.map (viewChannelCard (isLoaded model.library)) channels)
-                            )
-                            searchState.results
-                        ]
-
-                ( _, Just ( rss, loadableFeed ) ) ->
-                    div [ class "rows", id "channel" ]
-                        (case loadableFeed of
-                            Loadable (Just (Ok feed)) ->
-                                [ div [ class "rows channel-header" ]
-                                    [ div [ class "cols" ]
-                                        [ viewThumb "channel-thumb" (channelThumbWithFallback feed.channel.thumb feed.episodes)
-                                        , div [ class "rows channel-header-info" ]
-                                            [ h1 [] [ text feed.channel.title ]
-                                            , div [ class "channel-header-meta" ]
-                                                (List.filterMap identity
-                                                    [ feed.channel.author |> Maybe.map (\a -> span [] [ text a ])
-                                                    , feed.channel.episodeCount |> Maybe.map (\c -> span [] [ text (String.fromInt c ++ " episodes") ])
-                                                    ]
-                                                    |> List.intersperse (span [ class "meta-sep" ] [ text " · " ])
-                                                )
-                                            ]
-                                        , case model.library of
-                                            Loadable (Just (Ok lib)) ->
-                                                if Dict.member (Url.toString rss) lib.channels then
-                                                    button
-                                                        [ onClick (ChannelUnsubscribing (Url.toString rss)) ]
-                                                        [ text "unsubscribe" ]
-
-                                                else
-                                                    button
-                                                        [ onClick (ChannelSubscribing (Url.toString rss) feed.channel) ]
-                                                        [ text "subscribe" ]
-
-                                            _ ->
-                                                text ""
-                                        ]
-                                    , p [] [ text feed.channel.description ]
-                                    , case feed.channel.categories of
-                                        Just cats ->
-                                            div [ class "channel-categories" ]
-                                                (List.map (\cat -> span [ class "category-tag" ] [ text cat ]) cats)
-
-                                        Nothing ->
-                                            text ""
-                                    ]
-                                , div [ class "autogrid" ]
-                                    (Dict.values feed.episodes
-                                        |> List.sortBy .index
-                                        |> List.map (viewEpisodeCard (isLoaded model.library) (Just rss))
-                                    )
-                                ]
-
-                            Loadable Nothing ->
-                                [ div [ class "loading" ] [] ]
-
-                            Loadable (Just (Err err)) ->
-                                [ div [ class "error" ] [ text err ] ]
-                        )
-
-                ( Nothing, Nothing ) ->
-                    div [ class "rows", id "my-feed" ]
-                        [ div [ class "cols" ]
-                            [ img [ A.class "profile-img", src "/yt.png" ] []
-                            , h1 [] [ text "My Feed" ]
-                            , a [ href "/?tag=saved", class "saved-link" ] [ text "my channels" ]
-                            ]
-                        , viewLoadable
-                            (\lib ->
-                                let
-                                    queueEpisodes =
-                                        lib.queue |> Dict.values |> List.filter (\ep -> not (Set.member ep.id lib.watched))
-                                in
-                                if List.isEmpty queueEpisodes then
-                                    div [ class "empty-state" ] [ text "No episodes in your queue. Subscribe to channels or add episodes with the + button." ]
-
-                                else
-                                    div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) queueEpisodes)
-                            )
-                            model.library
-                        ]
-            , div [ id "featured" ]
-                [ h2 [] [ text "Discover" ]
-                , div [ class "tags" ] (List.map viewTagLink (List.take 5 discoverTags))
-                ]
+              else
+                viewBody model
+            , viewPlayerBar model
             ]
         ]
     }
+
+
+viewBody : Model -> Html Msg
+viewBody model =
+    case ( model.search, model.channel ) of
+        ( Just searchState, _ ) ->
+            let
+                heading =
+                    if String.isEmpty searchState.query then
+                        "My Channels"
+    
+                    else if String.startsWith "tag:" searchState.query then
+                        searchState.query
+                            |> String.dropLeft 4
+                            |> String.replace "-" " "
+                            |> String.words
+                            |> List.map capitalize
+                            |> String.join " "
+    
+                    else
+                        "Search: " ++ searchState.query
+            in
+            div [ class "rows", id "search" ]
+                [ h1 [] [ text heading ]
+                , form [ class "cols", onSubmit SearchSubmitting ]
+                    [ input
+                        [ id "search-input"
+                        , onInput SearchEditing
+                        , value searchState.query
+                        , A.placeholder "Search channels..."
+                        ]
+                        []
+                    ]
+                , div [ class "quick-tags" ]
+                    (List.map viewTagLink quickSearchTags)
+                , viewLoadable
+                    (\channels ->
+                        if List.isEmpty channels then
+                            div [ class "empty-state" ] [ text "No channels found" ]
+    
+                        else
+                            div [ class "autogrid", id "results" ]
+                                (List.map (viewChannelCard (isLoaded model.library)) channels)
+                    )
+                    searchState.results
+                ]
+
+        ( _, Just ( rss, loadableFeed ) ) ->
+            div [ class "rows", id "channel" ]
+                (case loadableFeed of
+                    Loadable (Just (Ok feed)) ->
+                        [ div [ class "rows channel-header" ]
+                            [ div [ class "cols" ]
+                                [ viewThumb "channel-thumb" (channelThumbWithFallback feed.channel.thumb feed.episodes)
+                                , div [ class "rows channel-header-info" ]
+                                    [ h1 [] [ text feed.channel.title ]
+                                    , div [ class "channel-header-meta" ]
+                                        (List.filterMap identity
+                                            [ feed.channel.author |> Maybe.map (\a -> span [] [ text a ])
+                                            , feed.channel.episodeCount |> Maybe.map (\c -> span [] [ text (String.fromInt c ++ " episodes") ])
+                                            ]
+                                            |> List.intersperse (span [ class "meta-sep" ] [ text " · " ])
+                                        )
+                                    ]
+                                , case model.library of
+                                    Loadable (Just (Ok lib)) ->
+                                        if Dict.member (Url.toString rss) lib.channels then
+                                            button
+                                                [ onClick (ChannelUnsubscribing (Url.toString rss)) ]
+                                                [ text "unsubscribe" ]
+
+                                        else
+                                            button
+                                                [ onClick (ChannelSubscribing (Url.toString rss) feed.channel) ]
+                                                [ text "subscribe" ]
+
+                                    _ ->
+                                        text ""
+                                ]
+                            , p [] [ text feed.channel.description ]
+                            , case feed.channel.categories of
+                                Just cats ->
+                                    div [ class "channel-categories" ]
+                                        (List.map (\cat -> span [ class "category-tag" ] [ text cat ]) cats)
+
+                                Nothing ->
+                                    text ""
+                            ]
+                        , div [ class "autogrid" ]
+                            (Dict.values feed.episodes
+                                |> List.sortBy .index
+                                |> List.map (viewEpisodeCard (isLoaded model.library) (Just rss))
+                            )
+                        ]
+
+                    Loadable Nothing ->
+                        [ div [ class "loading" ] [] ]
+
+                    Loadable (Just (Err err)) ->
+                        [ div [ class "error" ] [ text err ] ]
+                )
+
+        ( Nothing, Nothing ) ->
+            div [ class "rows", id "my-feed" ]
+                [ div [ class "cols" ]
+                    [ img [ A.class "profile-img", src "/yt.png" ] []
+                    , h1 [] [ text "My Feed" ]
+                    , a [ href "/?tag=saved", class "saved-link" ] [ text "my channels" ]
+                    ]
+                , form [ class "manual-url", onSubmit ManualUrlSubmitting ]
+                    [ input
+                        [ A.type_ "url"
+                        , A.placeholder "Paste RSS or YouTube channel URL"
+                        , value model.manualUrl
+                        , onInput ManualUrlEditing
+                        ]
+                        []
+                    , button [ A.type_ "submit" ] [ text "Add" ]
+                    ]
+                , viewLoadable
+                    (\lib ->
+                        let
+                            episodesToShow =
+                                case model.feedSnapshot of
+                                    Just snap ->
+                                        let
+                                            snapIds =
+                                                snap |> List.map .id |> Set.fromList
+
+                                            newQueueItems =
+                                                lib.queue
+                                                    |> Dict.values
+                                                    |> List.filter (\ep -> not (Set.member ep.id snapIds) && not (Set.member ep.id lib.watched))
+                                        in
+                                        newQueueItems ++ snap
+
+                                    Nothing ->
+                                        lib.queue |> Dict.values |> List.filter (\ep -> not (Set.member ep.id lib.watched))
+                        in
+                        if List.isEmpty episodesToShow then
+                            div [ class "empty-state" ] [ text "No episodes in your queue. Subscribe to channels or add episodes with the + button." ]
+
+                        else
+                            div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) episodesToShow)
+                    )
+                    model.library
+                ]
+
+
+viewHistory : Model -> Html Msg
+viewHistory model =
+    div [ class "rows", id "history" ]
+        [ h1 [] [ text "Watch History" ]
+        , viewLoadable
+            (\lib ->
+                if List.isEmpty lib.watchHistory then
+                    div [ class "empty-state" ] [ text "No watch history yet." ]
+
+                else
+                    div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) lib.watchHistory)
+            )
+            model.library
+        ]
+
+
+viewPlayerBar : Model -> Html Msg
+viewPlayerBar model =
+    case getLibrary model of
+        Nothing ->
+            text ""
+
+        Just lib ->
+            let
+                currentId =
+                    model.episode
+
+                recentWatched =
+                    lib.watchHistory
+                        |> List.filter (\ep -> Just ep.id /= currentId)
+                        |> List.take 2
+                        |> List.reverse
+
+                currentEpisode =
+                    findSelectedEpisode model.episode model.channel model.library
+                        |> Maybe.map Tuple.first
+
+                upcomingQueue =
+                    lib.queue
+                        |> Dict.values
+                        |> List.filter (\ep -> not (Set.member ep.id lib.watched) && Just ep.id /= currentId)
+                        |> List.take 5
+
+                featuredChannels =
+                    case model.featured of
+                        Loadable (Just (Ok cs)) ->
+                            cs
+
+                        _ ->
+                            []
+
+                subscribedRss =
+                    lib.channels |> Dict.keys |> Set.fromList
+
+                featuredUnseen =
+                    featuredChannels
+                        |> List.filter (\c -> not (Set.member (Url.toString c.rss) subscribedRss))
+                        |> List.take 10
+
+                currentThumb =
+                    case currentEpisode of
+                        Just ep ->
+                            [ viewBarEpisode True ep ]
+
+                        Nothing ->
+                            []
+            in
+            div [ class "player-bar" ]
+                (List.concat
+                    [ [ a [ href "/history", class "bar-stack", title "Watch history" ] [] ]
+                    , List.map (viewBarEpisode False) recentWatched
+                    , currentThumb
+                    , List.map (viewBarEpisode False) upcomingQueue
+                    , [ a [ href "/", class "bar-stack", title "My Feed" ] [] ]
+                    , List.map viewBarChannel featuredUnseen
+                    ]
+                )
+
+
+viewBarEpisode : Bool -> Episode -> Html Msg
+viewBarEpisode current ep =
+    a
+        [ href (episodeUrl Nothing ep.id)
+        , class
+            (if current then
+                "bar-thumb current"
+
+             else
+                "bar-thumb"
+            )
+        , title ep.title
+        ]
+        [ viewThumbInner "bar-thumb-img" (episodeThumbnail ep) ]
+
+
+viewBarChannel : Channel -> Html Msg
+viewBarChannel c =
+    a
+        [ href ("/" ++ Url.percentEncode (Url.toString c.rss))
+        , class "bar-thumb featured"
+        , title c.title
+        ]
+        [ viewThumbInner "bar-thumb-img" c.thumb ]
 
 
 findSelectedEpisode : Maybe Id -> Maybe ( Url, Loadable Feed ) -> Loadable Library -> Maybe ( Episode, Maybe Channel )
@@ -1283,6 +1515,39 @@ httpErrorToString error =
 -- HELPERS
 
 
+normalizeFeedUrl : String -> String
+normalizeFeedUrl raw =
+    let
+        stripped =
+            raw
+                |> String.replace "http://" "https://"
+                |> (\s ->
+                        if String.startsWith "https://" s then
+                            s
+
+                        else
+                            "https://" ++ s
+                   )
+
+        ytChannelMarker =
+            "youtube.com/channel/"
+    in
+    case String.split ytChannelMarker stripped of
+        [ _, rest ] ->
+            let
+                channelId =
+                    rest |> String.split "/" |> List.head |> Maybe.withDefault "" |> String.split "?" |> List.head |> Maybe.withDefault ""
+            in
+            if String.isEmpty channelId then
+                stripped
+
+            else
+                "https://www.youtube.com/feeds/videos.xml?channel_id=" ++ channelId
+
+        _ ->
+            stripped
+
+
 capitalize : String -> String
 capitalize str =
     String.uncons str
@@ -1389,6 +1654,37 @@ episodeUrl maybeRss id =
             "/?e=" ++ Url.percentEncode id
 
 
+recordPlayback : ( Model, Cmd Msg ) -> ( Model, Cmd Msg )
+recordPlayback ( model, cmd ) =
+    case ( model.episode, findSelectedEpisode model.episode model.channel model.library ) of
+        ( Just epId, Just ( episode, _ ) ) ->
+            case model.library of
+                Loadable (Just (Ok lib)) ->
+                    let
+                        withoutDup =
+                            List.filter (\e -> e.id /= epId) lib.watchHistory
+
+                        newHistory =
+                            (episode :: withoutDup) |> List.take 50
+
+                        newLib =
+                            { lib | watchHistory = newHistory, watched = Set.insert epId lib.watched }
+                    in
+                    if List.head lib.watchHistory |> Maybe.map .id |> (==) (Just epId) then
+                        ( model, cmd )
+
+                    else
+                        ( { model | library = Loadable (Just (Ok newLib)) }
+                        , Cmd.batch [ cmd, librarySaving (libraryEncoder newLib) ]
+                        )
+
+                _ ->
+                    ( model, cmd )
+
+        _ ->
+            ( model, cmd )
+
+
 withLibrary : (Library -> Library) -> Model -> ( Model, Cmd Msg )
 withLibrary fn model =
     case model.library of
@@ -1486,6 +1782,7 @@ libraryDecoder =
         |> D.required "episodes" (D.dict (D.dict episodeDecoder))
         |> D.optional "queue" (D.dict episodeDecoder) Dict.empty
         |> D.optional "watched" (D.list D.string |> D.map Set.fromList) Set.empty
+        |> D.optional "watchHistory" (D.list episodeDecoder) []
 
 
 channelDecoder : D.Decoder Channel
@@ -1569,6 +1866,7 @@ libraryEncoder lib =
         , ( "episodes", E.dict identity (E.dict identity episodeEncoder) lib.episodes )
         , ( "queue", E.dict identity episodeEncoder lib.queue )
         , ( "watched", lib.watched |> Set.toList |> E.list E.string )
+        , ( "watchHistory", lib.watchHistory |> E.list episodeEncoder )
         ]
 
 

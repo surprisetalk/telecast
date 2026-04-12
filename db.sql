@@ -24,7 +24,11 @@ create table channel (
   primary key (channel_id)
 );
 
+create extension if not exists pg_trgm;
+
 create index channel_search_idx on channel using gin (to_tsvector('english', title || ' ' || coalesce(description, '')));
+
+create index channel_title_trgm_idx on channel using gin (lower(title) gin_trgm_ops);
 
 create index channel_keywords_idx on channel using gin (keywords);
 
