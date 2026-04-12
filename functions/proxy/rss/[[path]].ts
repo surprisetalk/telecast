@@ -9,7 +9,7 @@ export interface RssProxyDeps {
   fetcher: typeof fetch;
 }
 
-async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetch): Promise<{ url: string } | { error: string }> {
+export async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetch): Promise<{ url: string } | { error: string }> {
   let u: URL;
   try {
     u = new URL(rawUrl);
@@ -31,11 +31,23 @@ async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetch): Pro
   });
   if (!res.ok) return { error: `Failed to resolve YouTube handle page ${pageUrl}: HTTP ${res.status} ${res.statusText}` };
   const html = await res.text();
-  const id =
-    html.match(/"channelId":"(UC[\w-]+)"/)?.[1] ??
-    html.match(/<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[\w-]+)"/)?.[1] ??
-    html.match(/<meta itemprop="(?:identifier|channelId)" content="(UC[\w-]+)"/)?.[1];
-  if (!id) return { error: `Could not extract channelId from ${pageUrl}; looked for "channelId":"UC...", <link rel="canonical" .../channel/UC...>, and <meta itemprop="identifier" content="UC...">` };
+  const patterns = [
+    /"channelId":"(UC[\w-]+)"/,
+    /"externalId":"(UC[\w-]+)"/,
+    /"browseId":"(UC[\w-]+)"/,
+    /<link rel="canonical" href="https?:\/\/(?:www\.)?youtube\.com\/channel\/(UC[\w-]+)"/,
+    /<meta itemprop="(?:identifier|channelId)" content="(UC[\w-]+)"/,
+    /\/channel\/(UC[\w-]+)/,
+  ];
+  let id: string | undefined;
+  for (const p of patterns) {
+    const m = html.match(p);
+    if (m) { id = m[1]; break; }
+  }
+  if (!id) {
+    const snippet = html.slice(0, 200).replace(/\s+/g, " ").trim();
+    return { error: `Could not extract channelId from ${pageUrl} (HTML ${html.length} bytes). Tried 6 patterns including "channelId":"UC...", canonical link, /channel/UC... sweep. First 200 chars: ${snippet}` };
+  }
   return { url: `https://www.youtube.com/feeds/videos.xml?channel_id=${id}` };
 }
 
