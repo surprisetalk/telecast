@@ -23,7 +23,12 @@ async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetch): Pro
   const isHandle = u.pathname.startsWith("/@") || u.pathname.startsWith("/c/") || u.pathname.startsWith("/user/");
   if (!isHandle) return { url: rawUrl };
   const pageUrl = `https://www.youtube.com${u.pathname}`;
-  const res = await fetcher(pageUrl);
+  const res = await fetcher(pageUrl, {
+    headers: {
+      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      "accept-language": "en-US,en;q=0.9",
+    },
+  });
   if (!res.ok) return { error: `Failed to resolve YouTube handle page ${pageUrl}: HTTP ${res.status} ${res.statusText}` };
   const html = await res.text();
   const id =
