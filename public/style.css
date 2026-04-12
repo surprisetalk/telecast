@@ -1109,9 +1109,19 @@ audio#player {
 }
 
 .bar-stack {
-  border-style: dashed;
-  background: transparent;
-  opacity: 0.7;
+  background: var(--header-color);
+  color: var(--bg-color);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bar-stack-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+  color: var(--bg-color);
+  position: relative;
+  z-index: 1;
 }
 
 .bar-stack::before,
@@ -1119,9 +1129,10 @@ audio#player {
   content: "";
   position: absolute;
   inset: 0;
-  border: 1px dashed var(--border-color);
+  background: var(--header-color);
   border-radius: inherit;
   pointer-events: none;
+  z-index: -1;
 }
 
 .bar-stack::before {
@@ -1132,16 +1143,6 @@ audio#player {
 .bar-stack::after {
   transform: translate(6px, 6px);
   opacity: 0.25;
-}
-
-.manual-url {
-  display: flex;
-  gap: var(--space-2);
-  margin: var(--space-2) 0;
-}
-
-.manual-url input {
-  flex: 1;
 }
 
 .tags {

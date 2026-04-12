@@ -68,7 +68,6 @@ type alias Model =
     , search : Maybe SearchState
     , episode : Maybe Id -- episode ID
     , refreshing : Maybe (Set String) -- Nothing = idle, Just pending = refreshing RSS URLs
-    , manualUrl : String
     , feedSnapshot : Maybe (List Episode) -- snapshot of queue on My Feed entry; sticky across watched marks
     , featured : Loadable (List Channel)
     , showHistory : Bool
@@ -180,7 +179,6 @@ initModel flags key =
     , search = Nothing
     , episode = Nothing
     , refreshing = Nothing
-    , manualUrl = ""
     , feedSnapshot = Nothing
     , featured = Loadable Nothing
     , showHistory = False
@@ -229,8 +227,7 @@ type Msg
     | ChannelUnsubscribing String
     | EpisodeQueued Episode
     | EpisodeWatched Id
-    | ManualUrlEditing String
-    | ManualUrlSubmitting
+    | SearchUrlFetched String (Result String Feed)
     | FeaturedFetched (Result Http.Error (List Channel))
     | GoBack
     | LinkClicked Browser.UrlRequest
@@ -326,10 +323,7 @@ update msg model =
                 Just searchState ->
                     if searchState.query == query && String.length query >= 2 then
                         ( { model | search = Just { searchState | results = Loadable Nothing } }
-                        , Http.get
-                            { url = "/search?q=" ++ Url.percentEncode query
-                            , expect = Http.expectJson ChannelsFetched (D.list channelDecoder)
-                            }
+                        , searchCmd query
                         )
 
                     else
@@ -344,10 +338,7 @@ update msg model =
                     ( { model | search = Just { searchState | results = Loadable Nothing } }
                     , Cmd.batch
                         [ Nav.pushUrl model.key ("/?q=" ++ Url.percentEncode searchState.query)
-                        , Http.get
-                            { url = "/search?q=" ++ Url.percentEncode searchState.query
-                            , expect = Http.expectJson ChannelsFetched (D.list channelDecoder)
-                            }
+                        , searchCmd searchState.query
                         ]
                     )
 
@@ -469,21 +460,26 @@ update msg model =
                 (\lib -> { lib | watched = Set.insert episodeId lib.watched })
                 model
 
-        ManualUrlEditing value ->
-            ( { model | manualUrl = value }, Cmd.none )
+        SearchUrlFetched query result ->
+            case model.search of
+                Just searchState ->
+                    if searchState.query == query then
+                        ( { model
+                            | search =
+                                Just
+                                    { searchState
+                                        | results =
+                                            Loadable (Just (result |> Result.map (\feed -> [ feed.channel ])))
+                                    }
+                          }
+                        , Cmd.none
+                        )
 
-        ManualUrlSubmitting ->
-            let
-                trimmed =
-                    String.trim model.manualUrl
-            in
-            if String.isEmpty trimmed then
-                ( model, Cmd.none )
+                    else
+                        ( model, Cmd.none )
 
-            else
-                ( { model | manualUrl = "" }
-                , Nav.pushUrl model.key ("/" ++ Url.percentEncode (normalizeFeedUrl trimmed))
-                )
+                Nothing ->
+                    ( model, Cmd.none )
 
         FeaturedFetched (Ok channels) ->
             ( { model | featured = Loadable (Just (Ok channels)) }, Cmd.none )
@@ -665,7 +661,7 @@ route url model =
         -- Saved channels: /?tag=saved
         ( "/", Nothing, Just "saved" ) ->
             ( { model
-                | search = Just { query = "", results = Loadable (Just (Ok (getLibrary model |> Maybe.map (.channels >> Dict.values) |> Maybe.withDefault []))) }
+                | search = Just { query = "tag:saved", results = Loadable (Just (Ok (getLibrary model |> Maybe.map (.channels >> Dict.values) |> Maybe.withDefault []))) }
                 , channel = Nothing
                 , episode = episodeId
                 , feedSnapshot = Nothing
@@ -1015,16 +1011,6 @@ viewBody model =
                     , h1 [] [ text "My Feed" ]
                     , a [ href "/?tag=saved", class "saved-link" ] [ text "my channels" ]
                     ]
-                , form [ class "manual-url", onSubmit ManualUrlSubmitting ]
-                    [ input
-                        [ A.type_ "url"
-                        , A.placeholder "Paste RSS or YouTube channel URL"
-                        , value model.manualUrl
-                        , onInput ManualUrlEditing
-                        ]
-                        []
-                    , button [ A.type_ "submit" ] [ text "Add" ]
-                    ]
                 , viewLoadable
                     (\lib ->
                         let
@@ -1046,7 +1032,7 @@ viewBody model =
                                         lib.queue |> Dict.values |> List.filter (\ep -> not (Set.member ep.id lib.watched))
                         in
                         if List.isEmpty episodesToShow then
-                            div [ class "empty-state" ] [ text "No episodes in your queue. Subscribe to channels or add episodes with the + button." ]
+                            div [ class "empty-state" ] [ text "No episodes in your queue. Paste a feed URL in the search bar to subscribe." ]
 
                         else
                             div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) episodesToShow)
@@ -1124,11 +1110,11 @@ viewPlayerBar model =
             in
             div [ class "player-bar" ]
                 (List.concat
-                    [ [ a [ href "/history", class "bar-stack", title "Watch history" ] [] ]
+                    [ [ a [ href "/history", class "bar-stack", title "Watch history" ] [ span [ class "bar-stack-icon" ] [ text "⟲" ] ] ]
                     , List.map (viewBarEpisode False) recentWatched
                     , currentThumb
                     , List.map (viewBarEpisode False) upcomingQueue
-                    , [ a [ href "/", class "bar-stack", title "My Feed" ] [] ]
+                    , [ a [ href "/", class "bar-stack", title "My Feed" ] [ span [ class "bar-stack-icon" ] [ text "☰" ] ] ]
                     , List.map viewBarChannel featuredUnseen
                     ]
                 )
@@ -1513,6 +1499,37 @@ httpErrorToString error =
 
 
 -- HELPERS
+
+
+looksLikeUrl : String -> Bool
+looksLikeUrl s =
+    not (String.startsWith "tag:" s)
+        && not (String.contains " " s)
+        && (String.contains "://" s || String.startsWith "www." s)
+
+
+searchCmd : String -> Cmd Msg
+searchCmd query =
+    if looksLikeUrl query then
+        let
+            normalized =
+                normalizeFeedUrl query
+        in
+        Http.get
+            { url = "/proxy/rss/" ++ Url.percentEncode normalized
+            , expect =
+                Http.expectString
+                    (Result.mapError httpErrorToString
+                        >> Result.andThen (X.run feedDecoder)
+                        >> SearchUrlFetched query
+                    )
+            }
+
+    else
+        Http.get
+            { url = "/search?q=" ++ Url.percentEncode query
+            , expect = Http.expectJson ChannelsFetched (D.list channelDecoder)
+            }
 
 
 normalizeFeedUrl : String -> String
