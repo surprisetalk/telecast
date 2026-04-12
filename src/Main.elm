@@ -903,7 +903,6 @@ view model =
                         [ div [ class "cols" ]
                             [ img [ A.class "profile-img", src "/yt.png" ] []
                             , h1 [] [ text "My Feed" ]
-                            , p [] [ text "Your watch queue" ]
                             , a [ href "/?tag=saved", class "saved-link" ] [ text "my channels" ]
                             ]
                         , viewLoadable
@@ -992,8 +991,25 @@ viewEpisodeCard maybeLib maybeRss episode =
                 ]
             ]
         , div [ class "episode-info" ]
-            [ div [ class "episode-title-row" ]
-                [ case maybeLib of
+            [ a [ href (episodeUrl maybeRss episode.id), class "episode-title" ]
+                [ text (episodePrefix ++ episode.title) ]
+            , div [ class "episode-meta-row" ]
+                [ case ( maybeRss, episode.channelTitle, episode.publishedAt ) of
+                    ( Just _, _, Just date ) ->
+                        div [ class "episode-meta" ] [ text date ]
+
+                    ( Nothing, Just channelName, Just date ) ->
+                        div [ class "episode-meta" ] [ text (channelName ++ " · " ++ date) ]
+
+                    ( Nothing, Just channelName, Nothing ) ->
+                        div [ class "episode-meta" ] [ text channelName ]
+
+                    ( Nothing, Nothing, Just date ) ->
+                        div [ class "episode-meta" ] [ text date ]
+
+                    _ ->
+                        text ""
+                , case maybeLib of
                     Just lib ->
                         if Set.member episode.id lib.watched then
                             text ""
@@ -1006,24 +1022,7 @@ viewEpisodeCard maybeLib maybeRss episode =
 
                     Nothing ->
                         text ""
-                , a [ href (episodeUrl maybeRss episode.id), class "episode-title" ]
-                    [ text (episodePrefix ++ episode.title) ]
                 ]
-            , case ( maybeRss, episode.channelTitle, episode.publishedAt ) of
-                ( Just _, _, Just date ) ->
-                    div [ class "episode-meta" ] [ text date ]
-
-                ( Nothing, Just channelName, Just date ) ->
-                    div [ class "episode-meta" ] [ text (channelName ++ " · " ++ date) ]
-
-                ( Nothing, Just channelName, Nothing ) ->
-                    div [ class "episode-meta" ] [ text channelName ]
-
-                ( Nothing, Nothing, Just date ) ->
-                    div [ class "episode-meta" ] [ text date ]
-
-                _ ->
-                    text ""
             ]
         ]
 
