@@ -16,7 +16,7 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - run: deno test functions/test.ts
+      - run: deno test functions/
       - run: deno check functions/
 
   elm-test:

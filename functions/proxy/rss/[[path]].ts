@@ -53,9 +53,23 @@ export async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetc
 
 export async function handleRssProxy(deps: RssProxyDeps, input: { rssUrl: string }): Promise<Response> {
   const { sql, bucket, fetcher } = deps;
-  const resolved = await resolveYoutubeFeedUrl(input.rssUrl, fetcher);
-  if ("error" in resolved) return new Response(resolved.error, { status: 400 });
-  const rssUrl = resolved.url;
+  const rawUrl = input.rssUrl;
+  const resolvedKey = `resolved:${rawUrl}`;
+  const cachedResolved = await bucket.get(resolvedKey);
+  let rssUrl: string;
+  if (cachedResolved) {
+    rssUrl = await cachedResolved.text();
+  } else {
+    let resolved: { url: string } | { error: string };
+    try {
+      resolved = await resolveYoutubeFeedUrl(rawUrl, fetcher);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return new Response(`Resolver threw for ${rawUrl}: ${msg}`, { status: 502 });
+    }
+    if ("error" in resolved) return new Response(resolved.error, { status: 400 });
+    rssUrl = resolved.url;
+  }
   const cached = await bucket.get(rssUrl);
   if (cached) {
     return new Response(cached.body, {
@@ -67,14 +81,18 @@ export async function handleRssProxy(deps: RssProxyDeps, input: { rssUrl: string
     fetchResponse = await fetcher(rssUrl);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return new Response(`Network error fetching ${rssUrl}: ${msg}`, { status: 502 });
+    return new Response(`Network error fetching ${rssUrl} (raw input: ${rawUrl}): ${msg}`, { status: 502 });
   }
   if (!fetchResponse.ok) {
-    return new Response(`Upstream feed fetch failed for ${rssUrl}: HTTP ${fetchResponse.status} ${fetchResponse.statusText}`, { status: 502 });
+    return new Response(`Upstream feed fetch failed for ${rssUrl} (raw input: ${rawUrl}): HTTP ${fetchResponse.status} ${fetchResponse.statusText}`, { status: 502 });
   }
   const text = await fetchResponse.text();
   if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
-    return new Response(`Not a valid feed at ${rssUrl}: missing <rss>, <feed>, or <RDF> root element`, { status: 400 });
+    const snippet = text.slice(0, 200).replace(/\s+/g, " ").trim();
+    return new Response(
+      `Not a valid feed at ${rssUrl} (raw input: ${rawUrl}): missing <rss>, <feed>, or <RDF> root element. First 200 chars: ${snippet}`,
+      { status: 400 },
+    );
   }
   const channel = rss.parse(text);
   await sql`
@@ -91,6 +109,7 @@ export async function handleRssProxy(deps: RssProxyDeps, input: { rssUrl: string
       END
   `;
   await bucket.put(rssUrl, text);
+  if (rssUrl !== rawUrl) await bucket.put(resolvedKey, rssUrl);
   return new Response(text, {
     headers: { "content-type": "application/xml" },
   });
