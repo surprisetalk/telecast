@@ -1165,7 +1165,6 @@ viewPlayerBar model =
                 featuredUnseen =
                     featuredChannels
                         |> List.filter (\c -> not (Set.member (Url.toString c.rss) subscribedRss))
-                        |> List.take 10
 
                 currentThumb =
                     case currentEpisode of
