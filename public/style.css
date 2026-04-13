@@ -211,6 +211,7 @@ img {
   min-height: 100dvh;
   background: var(--bg-color);
   overflow-x: hidden;
+  padding-bottom: 72px;
 }
 
 .cols {
@@ -282,6 +283,16 @@ header a.header-action:hover {
   color: var(--text-primary);
   border-color: var(--text-secondary);
   background: var(--accent-dim);
+}
+
+header .header-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+header .header-actions a.header-action {
+  color: var(--text-secondary);
 }
 
 header span {
@@ -1052,13 +1063,18 @@ audio#player {
    Player control bar (bottom)
    -------------------------------------------------------------------------- */
 .player-bar {
-  margin-top: auto;
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 15;
   display: flex;
   gap: 6px;
   padding: 8px var(--space-4);
   background: var(--bg-color);
   border-top: 1px solid var(--border-color);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   align-items: center;
 }
 
@@ -1066,8 +1082,8 @@ audio#player {
 .bar-stack {
   display: block;
   flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
+  width: 80px;
+  height: 45px;
   border-radius: var(--radius-sm, 4px);
   overflow: hidden;
   opacity: 0.55;
@@ -1082,7 +1098,7 @@ audio#player {
 }
 
 .bar-thumb.current {
-  width: 56px;
+  width: 100px;
   height: 56px;
   opacity: 1;
   border: 2px solid var(--accent, #f90);
@@ -1112,16 +1128,29 @@ audio#player {
   background: var(--header-color);
   color: var(--bg-color);
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  gap: 2px;
+  padding: 2px;
 }
 
 .bar-stack-icon {
-  font-size: 1.2rem;
+  font-size: 0.85rem;
   line-height: 1;
   color: var(--bg-color);
   position: relative;
   z-index: 1;
+}
+
+.bar-stack-label {
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  line-height: 1;
+  color: var(--bg-color);
+  position: relative;
+  z-index: 1;
+  font-weight: 600;
 }
 
 .bar-stack::before,

@@ -92,6 +92,7 @@ type alias Library =
     , queue : Dict String Episode -- "watch later" queue: episode ID -> Episode
     , watched : Set String -- watched episode IDs
     , watchHistory : List Episode -- most recently played first, capped
+    , featured : List Channel -- cached tag:featured channels for bar
     }
 
 
@@ -169,19 +170,32 @@ init flags url key =
 
 initModel : D.Value -> Nav.Key -> Model
 initModel flags key =
-    { library =
-        flags
-            |> D.decodeValue libraryDecoder
-            |> Result.mapError (always "Could not parse library.")
-            |> Just
-            |> Loadable
+    let
+        decoded =
+            flags
+                |> D.decodeValue libraryDecoder
+                |> Result.mapError (always "Could not parse library.")
+
+        cachedFeatured =
+            case decoded of
+                Ok lib ->
+                    if List.isEmpty lib.featured then
+                        Loadable Nothing
+
+                    else
+                        Loadable (Just (Ok lib.featured))
+
+                Err _ ->
+                    Loadable Nothing
+    in
+    { library = Loadable (Just decoded)
     , key = key
     , channel = Nothing
     , search = Nothing
     , episode = Nothing
     , refreshing = Nothing
     , feedSnapshot = Nothing
-    , featured = Loadable Nothing
+    , featured = cachedFeatured
     , showHistory = False
     }
 
@@ -247,7 +261,15 @@ update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
         LibraryLoaded (Ok lib) ->
-            ( { model | library = Loadable (Just (Ok lib)) }
+            ( { model
+                | library = Loadable (Just (Ok lib))
+                , featured =
+                    if List.isEmpty lib.featured then
+                        model.featured
+
+                    else
+                        Loadable (Just (Ok lib.featured))
+              }
             , Task.perform (always RefreshFeeds) (Task.succeed ())
             )
 
@@ -485,7 +507,21 @@ update msg model =
                     ( model, Cmd.none )
 
         FeaturedFetched (Ok channels) ->
-            ( { model | featured = Loadable (Just (Ok channels)) }, Cmd.none )
+            case model.library of
+                Loadable (Just (Ok lib)) ->
+                    let
+                        newLib =
+                            { lib | featured = channels }
+                    in
+                    ( { model
+                        | featured = Loadable (Just (Ok channels))
+                        , library = Loadable (Just (Ok newLib))
+                      }
+                    , librarySaving (libraryEncoder newLib)
+                    )
+
+                _ ->
+                    ( { model | featured = Loadable (Just (Ok channels)) }, Cmd.none )
 
         FeaturedFetched (Err err) ->
             ( { model | featured = Loadable (Just (Err (httpErrorToString err))) }, Cmd.none )
@@ -831,7 +867,29 @@ view model =
                         List.concat
                             [ [ a [ href "/" ] [ text "telecasts" ] ]
                             , model.search
-                                |> Maybe.map (\{ query } -> [ a [ href ("/?q=" ++ Url.percentEncode query), class "back" ] [ text ("\"" ++ query ++ "\"") ] ])
+                                |> Maybe.map
+                                    (\{ query } ->
+                                        let
+                                            label =
+                                                if String.isEmpty query then
+                                                    "My Channels"
+
+                                                else if query == "tag:saved" then
+                                                    "My Channels"
+
+                                                else if String.startsWith "tag:" query then
+                                                    query
+                                                        |> String.dropLeft 4
+                                                        |> String.replace "-" " "
+                                                        |> String.words
+                                                        |> List.map capitalize
+                                                        |> String.join " "
+
+                                                else
+                                                    "\"" ++ query ++ "\""
+                                        in
+                                        [ a [ href ("/?q=" ++ Url.percentEncode query), class "back" ] [ text label ] ]
+                                    )
                                 |> Maybe.withDefault []
                             , model.channel
                                 |> Maybe.andThen
@@ -847,10 +905,24 @@ view model =
                                                 Nothing
                                     )
                                 |> Maybe.withDefault []
+                            , if model.showHistory then
+                                [ a [ href "/history" ] [ text "History" ] ]
+
+                              else
+                                []
+                            , case ( model.search, model.channel, model.showHistory ) of
+                                ( Nothing, Nothing, False ) ->
+                                    [ a [ href "/" ] [ text "My Feed" ] ]
+
+                                _ ->
+                                    []
                             ]
-                , model.search
-                    |> Maybe.map (\_ -> a [ href "?", class "header-action" ] [ text "✕" ])
-                    |> Maybe.withDefault (a [ href "/?q=", class "header-action" ] [ text "SEARCH" ])
+                , div [ class "cols header-actions" ]
+                    [ a [ href "/?tag=saved", class "header-action" ] [ text "MY CHANNELS" ]
+                    , model.search
+                        |> Maybe.map (\_ -> a [ href "?", class "header-action" ] [ text "✕" ])
+                        |> Maybe.withDefault (a [ href "/?q=", class "header-action" ] [ text "SEARCH" ])
+                    ]
                 ]
             , case findSelectedEpisode model.episode model.channel model.library of
                 Just ( episode, maybeChannel ) ->
@@ -911,25 +983,8 @@ viewBody : Model -> Html Msg
 viewBody model =
     case ( model.search, model.channel ) of
         ( Just searchState, _ ) ->
-            let
-                heading =
-                    if String.isEmpty searchState.query then
-                        "My Channels"
-    
-                    else if String.startsWith "tag:" searchState.query then
-                        searchState.query
-                            |> String.dropLeft 4
-                            |> String.replace "-" " "
-                            |> String.words
-                            |> List.map capitalize
-                            |> String.join " "
-    
-                    else
-                        "Search: " ++ searchState.query
-            in
             div [ class "rows", id "search" ]
-                [ h1 [] [ text heading ]
-                , form [ class "cols", onSubmit SearchSubmitting ]
+                [ form [ class "cols", onSubmit SearchSubmitting ]
                     [ input
                         [ id "search-input"
                         , onInput SearchEditing
@@ -1024,12 +1079,7 @@ viewBody model =
 
         ( Nothing, Nothing ) ->
             div [ class "rows", id "my-feed" ]
-                [ div [ class "cols" ]
-                    [ img [ A.class "profile-img", src "/yt.png" ] []
-                    , h1 [] [ text "My Feed" ]
-                    , a [ href "/?tag=saved", class "saved-link" ] [ text "my channels" ]
-                    ]
-                , viewLoadable
+                [ viewLoadable
                     (\lib ->
                         let
                             episodesToShow =
@@ -1062,8 +1112,7 @@ viewBody model =
 viewHistory : Model -> Html Msg
 viewHistory model =
     div [ class "rows", id "history" ]
-        [ h1 [] [ text "Watch History" ]
-        , viewLoadable
+        [ viewLoadable
             (\lib ->
                 if List.isEmpty lib.watchHistory then
                     div [ class "empty-state" ] [ text "No watch history yet." ]
@@ -1128,11 +1177,19 @@ viewPlayerBar model =
             in
             div [ class "player-bar" ]
                 (List.concat
-                    [ [ a [ href "/history", class "bar-stack", title "Watch history" ] [ span [ class "bar-stack-icon" ] [ text "⟲" ] ] ]
+                    [ [ a [ href "/history", class "bar-stack", title "Watch history" ]
+                            [ span [ class "bar-stack-icon" ] [ text "⟲" ]
+                            , span [ class "bar-stack-label" ] [ text "HISTORY" ]
+                            ]
+                      ]
                     , List.map (viewBarEpisode False) recentWatched
                     , currentThumb
                     , List.map (viewBarEpisode False) upcomingQueue
-                    , [ a [ href "/", class "bar-stack", title "My Feed" ] [ span [ class "bar-stack-icon" ] [ text "☰" ] ] ]
+                    , [ a [ href "/", class "bar-stack", title "My Feed" ]
+                            [ span [ class "bar-stack-icon" ] [ text "☰" ]
+                            , span [ class "bar-stack-label" ] [ text "FEED" ]
+                            ]
+                      ]
                     , List.map viewBarChannel featuredUnseen
                     ]
                 )
@@ -1842,6 +1899,7 @@ libraryDecoder =
         |> D.optional "queue" (D.dict episodeDecoder) Dict.empty
         |> D.optional "watched" (D.list D.string |> D.map Set.fromList) Set.empty
         |> D.optional "watchHistory" (D.list episodeDecoder) []
+        |> D.optional "featured" (D.list channelDecoder) []
 
 
 channelDecoder : D.Decoder Channel
@@ -1926,6 +1984,7 @@ libraryEncoder lib =
         , ( "queue", E.dict identity episodeEncoder lib.queue )
         , ( "watched", lib.watched |> Set.toList |> E.list E.string )
         , ( "watchHistory", lib.watchHistory |> E.list episodeEncoder )
+        , ( "featured", E.list channelEncoder lib.featured )
         ]
 
 
