@@ -162,6 +162,7 @@ init flags url key =
             { url = "/search?q=tag:featured"
             , expect = Http.expectJson FeaturedFetched (D.list channelDecoder)
             }
+        , Task.perform (always RefreshFeeds) (Task.succeed ())
         ]
     )
 
