@@ -67,12 +67,14 @@ function mockSql(responses: unknown[] = []): MockSql {
 interface MockR2Object {
   body: ReadableStream<Uint8Array>;
   httpMetadata: { contentType?: string } | undefined;
+  uploaded: Date;
   text(): Promise<string>;
 }
 
 interface R2Entry {
   body: Uint8Array;
   httpMetadata: { contentType?: string } | undefined;
+  uploaded?: Date;
 }
 
 interface MockR2Bucket {
@@ -112,6 +114,7 @@ function mockR2Bucket(): MockR2Bucket {
       return Promise.resolve({
         body: new Blob([bytes as BlobPart]).stream(),
         httpMetadata: meta,
+        uploaded: entry.uploaded ?? new Date(),
         text: () => Promise.resolve(new TextDecoder().decode(bytes)),
       });
     },
