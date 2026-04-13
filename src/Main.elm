@@ -1135,12 +1135,12 @@ viewPlayerBar model =
                 currentId =
                     model.episode
 
-                recentWatched =
-                    lib.watchHistory
-                        |> List.filter (\ep -> Just ep.id /= currentId)
-                        |> List.take 2
-                        |> List.reverse
-
+                {- recentWatched =
+                       lib.watchHistory
+                           |> List.filter (\ep -> Just ep.id /= currentId)
+                           |> List.take 2
+                           |> List.reverse
+                -}
                 currentEpisode =
                     findSelectedEpisode model.episode model.channel model.library
                         |> Maybe.map Tuple.first
@@ -1177,19 +1177,8 @@ viewPlayerBar model =
             in
             div [ class "player-bar" ]
                 (List.concat
-                    [ [ a [ href "/history", class "bar-stack", title "Watch history" ]
-                            [ span [ class "bar-stack-icon" ] [ text "⟲" ]
-                            , span [ class "bar-stack-label" ] [ text "HISTORY" ]
-                            ]
-                      ]
-                    , List.map (viewBarEpisode False) recentWatched
-                    , currentThumb
+                    [ currentThumb
                     , List.map (viewBarEpisode False) upcomingQueue
-                    , [ a [ href "/", class "bar-stack", title "My Feed" ]
-                            [ span [ class "bar-stack-icon" ] [ text "☰" ]
-                            , span [ class "bar-stack-label" ] [ text "FEED" ]
-                            ]
-                      ]
                     , List.map viewBarChannel featuredUnseen
                     ]
                 )
