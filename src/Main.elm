@@ -356,6 +356,7 @@ update msg model =
                         recentEpisodes =
                             enrichedEpisodes
                                 |> Dict.values
+                                |> List.sortBy .index
                                 |> List.take 3
                                 |> List.map (\ep -> ( ep.id, ep ))
                                 |> Dict.fromList
@@ -407,6 +408,7 @@ update msg model =
                 recentEpisodes =
                     enrichedEpisodes
                         |> Dict.values
+                        |> List.sortBy .index
                         |> List.take 3
                         |> List.map (\ep -> ( ep.id, ep ))
                         |> Dict.fromList
@@ -961,7 +963,22 @@ viewBody model =
                                     , div [ class "channel-header-meta" ]
                                         (List.filterMap identity
                                             [ feed.channel.author |> Maybe.map (\a -> span [] [ text a ])
-                                            , feed.channel.episodeCount |> Maybe.map (\c -> span [] [ text (String.fromInt c ++ " episodes") ])
+                                            , (case feed.channel.episodeCount of
+                                                Just c ->
+                                                    Just c
+
+                                                Nothing ->
+                                                    let
+                                                        n =
+                                                            Dict.size feed.episodes
+                                                    in
+                                                    if n > 0 then
+                                                        Just n
+
+                                                    else
+                                                        Nothing
+                                              )
+                                                |> Maybe.map (\c -> span [] [ text (String.fromInt c ++ " episodes") ])
                                             ]
                                             |> List.intersperse (span [ class "meta-sep" ] [ text " · " ])
                                         )
@@ -1309,11 +1326,35 @@ viewChannelCard maybeLib channel =
     let
         rss =
             Url.toString channel.rss
+
+        libEpisodes =
+            maybeLib
+                |> Maybe.andThen (\lib -> Dict.get rss lib.episodes)
+                |> Maybe.withDefault Dict.empty
+
+        displayThumb =
+            channelThumbWithFallback channel.thumb libEpisodes
+
+        displayCount =
+            case channel.episodeCount of
+                Just _ ->
+                    channel.episodeCount
+
+                Nothing ->
+                    let
+                        n =
+                            Dict.size libEpisodes
+                    in
+                    if n > 0 then
+                        Just n
+
+                    else
+                        Nothing
     in
     div [ class "channel-card" ]
         [ a [ href ("/" ++ Url.percentEncode rss) ]
             [ div [ class "channel-thumb-wrapper" ]
-                (viewChannelThumbLayered channel.thumb)
+                (viewChannelThumbLayered displayThumb)
             ]
         , div [ class "channel-info" ]
             [ div [ class "channel-title-row" ]
@@ -1339,7 +1380,7 @@ viewChannelCard maybeLib channel =
 
                 Nothing ->
                     text ""
-            , case channel.episodeCount of
+            , case displayCount of
                 Just count ->
                     div [ class "channel-footer" ] [ text (String.fromInt count ++ " episodes") ]
 
