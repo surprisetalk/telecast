@@ -6,3 +6,13 @@
 - [ ] ship bubbletea tui
 - [ ] support for livestreaming / clubhouse
 - [x] copy keywords from episode description to channel table for search
+- [ ] ios/tv app
+- [ ] crawl github datasets for as many yt channel ids as possible
+- [ ] need better curation story
+- [ ] need better instructions on how to start your own telecast
+- [ ] consider making open yt db search project separate
+- [ ] populate from reddit and hn linked yt channels
+- [ ] mine moocs and lecutre series
+- [ ] telecast remixes
+- [ ] mirror all of archive.org too
+- [ ] telecast livestreaming service, comments, and ads hosting
