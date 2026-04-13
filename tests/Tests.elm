@@ -78,6 +78,7 @@ sampleLibrary =
     , episodes = Dict.fromList [ ( "https://example.com/feed.xml", Dict.fromList [ ( "ep1", sampleEpisode "ep1" ), ( "ep2", sampleEpisode "ep2" ) ] ) ]
     , queue = Dict.fromList [ ( "ep3", sampleEpisode "ep3" ) ]
     , watched = Set.fromList [ "ep-watched" ]
+    , watchHistory = []
     }
 
 
@@ -87,6 +88,7 @@ emptyLibrary =
     , episodes = Dict.empty
     , queue = Dict.empty
     , watched = Set.empty
+    , watchHistory = []
     }
 
 
