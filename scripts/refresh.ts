@@ -3,6 +3,18 @@ import { parse, parseEpisodes, Episode, Channel } from "../functions/_shared/rss
 
 const BATCH_SIZE = 500;
 const FETCH_TIMEOUT_MS = 15_000;
+const CONCURRENCY = 20;
+
+async function pool(items: readonly any[], n: number, work: (item: any) => Promise<void>): Promise<void> {
+  let i = 0;
+  const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
+    while (i < items.length) {
+      const item = items[i++];
+      try { await work(item); } catch (e) { console.error(`pool worker swallowed: ${(e as Error).message}`); }
+    }
+  });
+  await Promise.all(workers);
+}
 
 // Language code to tag mapping
 const LANGUAGE_MAP: Record<string, string> = {
@@ -83,7 +95,7 @@ async function main() {
     process.exit(1);
   }
 
-  const sql = db(databaseUrl);
+  const sql = db(databaseUrl, { max: CONCURRENCY, idle_timeout: 20, connect_timeout: 30 });
 
   // Get oldest channels (don't update timestamps here - we'll update on success/failure)
   const channels = await sql`
@@ -106,8 +118,7 @@ async function main() {
   let succeeded = 0;
   const failures: { rss: string; error: string }[] = [];
 
-  await Promise.all(
-    channels.map(async channel => {
+  await pool(channels, CONCURRENCY, async channel => {
       const index = ++completed;
       const shortUrl = channel.rss.replace(/^https?:\/\//, "").slice(0, 50);
 
@@ -253,8 +264,7 @@ async function main() {
         failures.push({ rss: channel.rss, error: msg });
         console.log(`[${index}/${total}] ✗ ${shortUrl} → ${msg}`);
       }
-    }),
-  );
+    });
 
   // Summary
   console.log(`\nDone: ${succeeded} succeeded, ${failures.length} failed`);

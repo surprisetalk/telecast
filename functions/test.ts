@@ -657,7 +657,8 @@ Deno.test("handleSearch: records a query with websearch_to_tsquery for text sear
   const outerSql = templates[1]!.strings!.join(" ");
   assertStringIncludes(outerSql, "websearch_to_tsquery");
   // Query string is interpolated as a value, not in the raw SQL
-  assertEquals(templates[1]!.values![1], "rust");
+  assert(templates[1]!.values!.includes("rust"));
+  assert(!outerSql.includes("'rust'"));
 });
 
 Deno.test("handleSearch: tag: prefix takes the any(tags) branch", async () => {
