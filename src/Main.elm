@@ -70,6 +70,7 @@ type alias Model =
     , refreshing : Maybe (Set String) -- Nothing = idle, Just pending = refreshing RSS URLs
     , feedSnapshot : Maybe (List Episode) -- snapshot of queue on My Feed entry; sticky across watched marks
     , featured : Loadable (List Channel)
+    , featuredByCategory : Loadable (Dict String (List Channel))
     , showHistory : Bool
     }
 
@@ -163,6 +164,10 @@ init flags url key =
             { url = "/search?q=tag:featured"
             , expect = Http.expectJson FeaturedFetched (D.list channelDecoder)
             }
+        , Http.get
+            { url = "/featured"
+            , expect = Http.expectJson FeaturedByCategoryFetched (D.dict (D.list channelDecoder))
+            }
         , Task.perform (always RefreshFeeds) (Task.succeed ())
         ]
     )
@@ -196,6 +201,7 @@ initModel flags key =
     , refreshing = Nothing
     , feedSnapshot = Nothing
     , featured = cachedFeatured
+    , featuredByCategory = Loadable Nothing
     , showHistory = False
     }
 
@@ -244,6 +250,7 @@ type Msg
     | EpisodeWatched Id
     | SearchUrlFetched String (Result String Feed)
     | FeaturedFetched (Result Http.Error (List Channel))
+    | FeaturedByCategoryFetched (Result Http.Error (Dict String (List Channel)))
     | GoBack
     | LinkClicked Browser.UrlRequest
     | UrlChanged Url
@@ -525,6 +532,12 @@ update msg model =
 
         FeaturedFetched (Err err) ->
             ( { model | featured = Loadable (Just (Err (httpErrorToString err))) }, Cmd.none )
+
+        FeaturedByCategoryFetched (Ok d) ->
+            ( { model | featuredByCategory = Loadable (Just (Ok d)) }, Cmd.none )
+
+        FeaturedByCategoryFetched (Err err) ->
+            ( { model | featuredByCategory = Loadable (Just (Err (httpErrorToString err))) }, Cmd.none )
 
         GoBack ->
             ( model, Nav.back model.key 1 )
@@ -1106,7 +1119,53 @@ viewBody model =
                             div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) episodesToShow)
                     )
                     model.library
+                , viewFeaturedCategories model
                 ]
+
+
+viewFeaturedCategories : Model -> Html Msg
+viewFeaturedCategories model =
+    case model.featuredByCategory of
+        Loadable (Just (Ok cats)) ->
+            let
+                subscribedRss =
+                    getLibrary model
+                        |> Maybe.map (\lib -> lib.channels |> Dict.keys |> Set.fromList)
+                        |> Maybe.withDefault Set.empty
+
+                prettyName s =
+                    s
+                        |> String.replace "-and-" " & "
+                        |> String.replace "-" " "
+
+                categoryOrder =
+                    [ "featured", "technology", "education", "news", "comedy", "science", "business", "arts", "music", "health", "games", "history", "film", "sports", "politics" ]
+
+                row cat =
+                    case Dict.get cat cats of
+                        Just channels ->
+                            let
+                                unseen =
+                                    channels |> List.filter (\c -> not (Set.member (Url.toString c.rss) subscribedRss))
+                            in
+                            if List.isEmpty unseen then
+                                text ""
+
+                            else
+                                div [ class "category-row" ]
+                                    [ h3 [ class "category-title" ]
+                                        [ a [ href ("/?q=tag:" ++ cat) ] [ text (prettyName cat) ] ]
+                                    , div [ class "cols category-scroll" ]
+                                        (List.map viewBarChannel unseen)
+                                    ]
+
+                        Nothing ->
+                            text ""
+            in
+            div [ class "rows featured-categories" ] (List.map row categoryOrder)
+
+        _ ->
+            text ""
 
 
 viewHistory : Model -> Html Msg

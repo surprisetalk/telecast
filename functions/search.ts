@@ -2,14 +2,30 @@ import db from "postgres";
 import type { Env } from "./env";
 
 const QUALITY_THRESHOLD = 10;
+const TRIGRAM_THRESHOLD = 0.3;
 
 export type Sql = ReturnType<typeof db>;
+
+function parseQuery(raw: string): { tags: string[]; text: string } {
+  const tags: string[] = [];
+  const rest: string[] = [];
+  for (const tok of raw.split(/\s+/).filter(Boolean)) {
+    if (tok.startsWith("tag:")) {
+      const t = tok.slice(4).toLowerCase();
+      if (t) tags.push(t);
+    } else rest.push(tok);
+  }
+  return { tags, text: rest.join(" ").trim() };
+}
 
 export async function handleSearch(deps: { sql: Sql }, input: { query: string | null }): Promise<Response> {
   const { sql } = deps;
   const { query } = input;
   if (!query) return new Response("Missing required query parameter: 'q'. Example: /search?q=rust", { status: 400 });
-  // Shorts filtering: prefer non-Shorts thumbnails, fall back to any if all are Shorts
+
+  const { tags, text } = parseQuery(query);
+  if (tags.length === 0 && !text) return new Response("Empty query", { status: 400 });
+
   const episodeThumbSubquery = sql`
     coalesce(
       (select thumb from episode e
@@ -30,44 +46,37 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
     )`;
 
   try {
-    const results = query.startsWith("tag:")
+    const results = tags.length > 0 && !text
       ? await sql`
           select c.*, ${episodeThumbSubquery} as episode_thumb
           from channel c
-          where ${query.slice(4)} = any(tags)
-            and quality >= ${QUALITY_THRESHOLD}
-          order by quality desc
+          where c.tags @> ${tags}::text[]
+            and c.quality >= ${QUALITY_THRESHOLD}
+          order by c.quality desc
           limit 50
         `
       : await sql`
-          with title_hits as (
-            select c.channel_id, c.quality, 2 as rank
-            from channel c
-            where lower(c.title) like ${"%" + query.toLowerCase() + "%"}
-              and c.quality >= ${QUALITY_THRESHOLD}
-            order by c.quality desc
-            limit 50
-          ),
-          fts_hits as (
-            select c.channel_id, c.quality, 1 as rank
-            from channel c
-            where (
-                websearch_to_tsquery('english', ${query}) @@ to_tsvector('english', c.title || ' ' || coalesce(c.description, ''))
-                or websearch_to_tsquery('english', ${query}) @@ coalesce(c.keywords, ''::tsvector)
+          select c.*, ${episodeThumbSubquery} as episode_thumb,
+            (
+              0.6 * ts_rank_cd(
+                to_tsvector('english', c.title || ' ' || coalesce(c.description, '')) ||
+                  coalesce(c.keywords, ''::tsvector),
+                websearch_to_tsquery('english', ${text})
               )
-              and c.quality >= ${QUALITY_THRESHOLD}
-            order by c.quality desc
-            limit 50
-          ),
-          merged as (
-            select channel_id, max(rank) as rank, max(quality) as quality
-            from (select * from title_hits union all select * from fts_hits) u
-            group by channel_id
-          )
-          select c.*, ${episodeThumbSubquery} as episode_thumb
+              + 0.3 * similarity(lower(c.title), ${text.toLowerCase()})
+              + 0.1 * (c.quality::float / 100.0)
+            ) as score
           from channel c
-          join merged m using (channel_id)
-          order by m.rank desc, m.quality desc
+          where c.quality >= ${QUALITY_THRESHOLD}
+            ${tags.length > 0 ? sql`and c.tags @> ${tags}::text[]` : sql``}
+            and (
+              websearch_to_tsquery('english', ${text}) @@ (
+                to_tsvector('english', c.title || ' ' || coalesce(c.description, '')) ||
+                  coalesce(c.keywords, ''::tsvector)
+              )
+              or similarity(lower(c.title), ${text.toLowerCase()}) > ${TRIGRAM_THRESHOLD}
+            )
+          order by score desc
           limit 50
         `;
     return new Response(JSON.stringify(results), {

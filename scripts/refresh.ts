@@ -54,6 +54,64 @@ const LANGUAGE_MAP: Record<string, string> = {
   "sv-SE": "swedish",
 };
 
+function slugTag(s: string): string {
+  return s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+const KEYWORD_TAG_MAP: Record<string, string> = {
+  programming: "technology", code: "technology", coding: "technology", javascript: "technology",
+  python: "technology", rust: "technology", typescript: "technology", software: "technology",
+  developer: "technology", computer: "technology", linux: "technology", docker: "technology",
+  ai: "technology", ml: "technology",
+  gameplay: "games", speedrun: "games", gaming: "games", minecraft: "games", playthrough: "games",
+  nintendo: "games", playstation: "games", xbox: "games", esports: "games",
+  recipe: "food", cooking: "food", baking: "food", kitchen: "food", chef: "food", cuisine: "food",
+  workout: "fitness", exercise: "fitness", gym: "fitness", yoga: "fitness", running: "fitness",
+  science: "science", physics: "science", chemistry: "science", biology: "science", astronomy: "science",
+  history: "history", historical: "history", ancient: "history", war: "history",
+  music: "music", guitar: "music", piano: "music", concert: "music", song: "music", album: "music",
+  news: "news", politics: "politics", election: "politics", government: "politics",
+  film: "film", movie: "film", cinema: "film", director: "film", trailer: "film",
+  art: "arts", painting: "arts", drawing: "arts", sculpture: "arts", gallery: "arts",
+  business: "business", startup: "business", entrepreneur: "business", investing: "business", finance: "business",
+  health: "health", medical: "health", doctor: "health", medicine: "health", wellness: "health",
+  education: "education", tutorial: "education", lesson: "education", course: "education", learn: "education",
+  comedy: "comedy", funny: "comedy", humor: "comedy", sketch: "comedy", standup: "comedy",
+  religion: "religion", christianity: "religion", bible: "religion", prayer: "religion", faith: "religion",
+};
+
+function inferKeywordTags(episodes: Episode[]): string[] {
+  const text = episodes.slice(0, 20).map(e => `${e.title ?? ""} ${e.description ?? ""}`).join(" ").toLowerCase();
+  const hits: Record<string, number> = {};
+  for (const [kw, tag] of Object.entries(KEYWORD_TAG_MAP)) {
+    const re = new RegExp(`\\b${kw}\\b`, "g");
+    const m = text.match(re);
+    if (m) hits[tag] = (hits[tag] ?? 0) + m.length;
+  }
+  return Object.entries(hits).filter(([, n]) => n >= 2).map(([t]) => t);
+}
+
+function detectLanguageFromText(episodes: Episode[]): string | null {
+  const text = episodes.slice(0, 20).map(e => e.title ?? "").join(" ");
+  if (!text) return null;
+  const ranges: Array<[RegExp, string]> = [
+    [/[\u3040-\u309f\u30a0-\u30ff]/, "japanese"],
+    [/[\uac00-\ud7af]/, "korean"],
+    [/[\u4e00-\u9fff]/, "chinese"],
+    [/[\u0400-\u04ff]/, "russian"],
+    [/[\u0600-\u06ff]/, "arabic"],
+    [/[\u0590-\u05ff]/, "hebrew"],
+    [/[\u0e00-\u0e7f]/, "thai"],
+    [/[\u0900-\u097f]/, "hindi"],
+  ];
+  let total = text.length;
+  for (const [re, tag] of ranges) {
+    const m = text.match(new RegExp(re.source, "g"));
+    if (m && m.length / total > 0.2) return tag;
+  }
+  return null;
+}
+
 function inferContentTags(episodes: Episode[]): string[] {
   const hasVideo = episodes.some(e => e.src_type?.startsWith("video/"));
   const hasAudio = episodes.some(e => e.src_type?.startsWith("audio/"));
@@ -72,18 +130,20 @@ function languageTag(lang: string | null): string | null {
 function inferAllTags(channelInfo: Channel, episodes: Episode[]): string[] {
   const tags: string[] = [];
 
-  // Platform tags from parser
   if (channelInfo.tags) tags.push(...channelInfo.tags);
 
-  // Content type tags
+  if (channelInfo.categories) tags.push(...channelInfo.categories.map(slugTag).filter(Boolean));
+
   tags.push(...inferContentTags(episodes));
 
-  // Language tag
-  const langTag = languageTag(channelInfo.language);
+  const langTag = languageTag(channelInfo.language) ?? detectLanguageFromText(episodes);
   if (langTag) tags.push(langTag);
 
-  // Explicit tag
   if (channelInfo.explicit === true) tags.push("explicit");
+
+  if (!channelInfo.categories || channelInfo.categories.length === 0) {
+    tags.push(...inferKeywordTags(episodes));
+  }
 
   return tags;
 }
