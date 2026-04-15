@@ -327,7 +327,6 @@ header button.back:hover {
 #player-info {
   padding: var(--space-5) var(--space-6);
   background: linear-gradient(180deg, var(--surface-color) 0%, var(--bg-color) 100%);
-  border-top: 1px solid var(--border-color);
 }
 
 #player-info::before {
@@ -706,10 +705,6 @@ audio#player {
   gap: var(--space-5);
 }
 
-.autogrid.dimmed-fill {
-  margin-top: var(--space-5);
-}
-
 .autogrid.dimmed-fill .episode-card {
   opacity: 0.5;
   transition: opacity 0.2s;
@@ -1010,7 +1005,7 @@ audio#player {
 #search,
 #history {
   flex: 1;
-  padding: var(--space-8) var(--space-6) var(--space-6);
+  padding: var(--space-5) var(--space-6) var(--space-6);
   background: var(--surface-color);
   overflow-y: auto;
 }
@@ -1268,6 +1263,7 @@ audio#player {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  margin-bottom: var(--space-5);
 }
 
 #search form.cols input {
@@ -1512,7 +1508,7 @@ audio#player {
   #my-feed,
   #channel,
   #search {
-    padding: var(--space-6) var(--space-4) var(--space-4);
+    padding: var(--space-4) var(--space-4) var(--space-4);
   }
 
   #channel-details {

@@ -1385,9 +1385,9 @@ viewPlayerBar model =
                         |> List.take 5
 
                 featuredChannels =
-                    case model.featured of
-                        Loadable (Just (Ok cs)) ->
-                            cs
+                    case model.featuredByCategory of
+                        Loadable (Just (Ok cats)) ->
+                            Dict.get "featured" cats |> Maybe.withDefault []
 
                         _ ->
                             []
