@@ -16,6 +16,7 @@ import Json.Encode as E
 import Process
 import Set exposing (Set)
 import Task
+import Time
 import Url exposing (Url)
 import Url.Parser as P exposing ((</>), (<?>), Parser)
 import Url.Parser.Query as Q
@@ -75,6 +76,12 @@ type alias Model =
     }
 
 
+type alias DiscoverEpisode =
+    { rss : Url
+    , episode : Episode
+    }
+
+
 type alias SearchState =
     { query : String
     , results : Loadable (List Channel)
@@ -94,6 +101,8 @@ type alias Library =
     , watched : Set String -- watched episode IDs
     , watchHistory : List Episode -- most recently played first, capped
     , featured : List Channel -- cached tag:featured channels for bar
+    , discover : List DiscoverEpisode -- cached recent episodes from featured channels for dimmed fill
+    , discoverAt : Maybe Int -- posix millis of last discover refresh
     }
 
 
@@ -251,6 +260,8 @@ type Msg
     | SearchUrlFetched String (Result String Feed)
     | FeaturedFetched (Result Http.Error (List Channel))
     | FeaturedByCategoryFetched (Result Http.Error (Dict String (List Channel)))
+    | DiscoverFeedFetched Url (Result String Feed)
+    | MaybeRefreshDiscover Time.Posix
     | GoBack
     | LinkClicked Browser.UrlRequest
     | UrlChanged Url
@@ -524,7 +535,10 @@ update msg model =
                         | featured = Loadable (Just (Ok channels))
                         , library = Loadable (Just (Ok newLib))
                       }
-                    , librarySaving (libraryEncoder newLib)
+                    , Cmd.batch
+                        [ librarySaving (libraryEncoder newLib)
+                        , Task.perform MaybeRefreshDiscover Time.now
+                        ]
                     )
 
                 _ ->
@@ -538,6 +552,95 @@ update msg model =
 
         FeaturedByCategoryFetched (Err err) ->
             ( { model | featuredByCategory = Loadable (Just (Err (httpErrorToString err))) }, Cmd.none )
+
+        DiscoverFeedFetched rss (Ok feed) ->
+            case model.library of
+                Loadable (Just (Ok lib)) ->
+                    let
+                        fresh =
+                            feed.episodes
+                                |> Dict.values
+                                |> List.sortBy (\e -> -e.index)
+                                |> List.filter (not << isLikelyShort)
+                                |> List.take 2
+                                |> List.map
+                                    (\e ->
+                                        { rss = rss
+                                        , episode = enrichEpisodeWith feed.channel e
+                                        }
+                                    )
+
+                        existingIds =
+                            lib.discover |> List.map (.episode >> .id) |> Set.fromList
+
+                        merged =
+                            (lib.discover ++ List.filter (\d -> not (Set.member d.episode.id existingIds)) fresh)
+                                |> List.take 50
+
+                        newLib =
+                            { lib | discover = merged }
+                    in
+                    ( { model | library = Loadable (Just (Ok newLib)) }
+                    , librarySaving (libraryEncoder newLib)
+                    )
+
+                _ ->
+                    ( model, Cmd.none )
+
+        DiscoverFeedFetched _ (Err _) ->
+            ( model, Cmd.none )
+
+        MaybeRefreshDiscover now ->
+            case ( model.library, model.featured ) of
+                ( Loadable (Just (Ok lib)), Loadable (Just (Ok channels)) ) ->
+                    let
+                        nowMs =
+                            Time.posixToMillis now
+
+                        ttlMs =
+                            10 * 60 * 1000
+
+                        isStale =
+                            case lib.discoverAt of
+                                Nothing ->
+                                    True
+
+                                Just t ->
+                                    nowMs - t > ttlMs
+                    in
+                    if not isStale then
+                        ( model, Cmd.none )
+
+                    else
+                        let
+                            targets =
+                                channels
+                                    |> List.filter (\c -> not (Dict.member (Url.toString c.rss) lib.channels))
+                                    |> List.take 30
+
+                            cmds =
+                                targets
+                                    |> List.map
+                                        (\c ->
+                                            Http.get
+                                                { url = "/proxy/rss/" ++ Url.percentEncode (Url.toString c.rss)
+                                                , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> DiscoverFeedFetched c.rss)
+                                                }
+                                        )
+
+                            newLib =
+                                { lib | discover = [], discoverAt = Just nowMs }
+                        in
+                        if List.isEmpty cmds then
+                            ( model, Cmd.none )
+
+                        else
+                            ( { model | library = Loadable (Just (Ok newLib)) }
+                            , Cmd.batch (librarySaving (libraryEncoder newLib) :: cmds)
+                            )
+
+                _ ->
+                    ( model, Cmd.none )
 
         GoBack ->
             ( model, Nav.back model.key 1 )
@@ -1120,12 +1223,52 @@ viewBody model =
                                 div [ class "empty-state" ] [ text "No episodes in your queue. Paste a feed URL in the search bar to subscribe." ]
 
                         else
-                            div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) episodesToShow)
+                            div []
+                                [ div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) episodesToShow)
+                                , viewDimmedFill lib episodesToShow
+                                ]
                     )
                     model.library
                 , viewFeaturedCategories model
                 , viewDiscoverMore
                 ]
+
+
+viewDimmedFill : Library -> List Episode -> Html Msg
+viewDimmedFill lib episodesToShow =
+    let
+        target =
+            12
+    in
+    if List.length episodesToShow >= target || List.isEmpty lib.discover then
+        text ""
+
+    else
+        let
+            shownIds =
+                episodesToShow |> List.map .id |> Set.fromList
+
+            subscribed =
+                lib.channels |> Dict.keys |> Set.fromList
+
+            filtered =
+                lib.discover
+                    |> List.filter
+                        (\d ->
+                            not (Set.member d.episode.id shownIds)
+                                && not (Set.member d.episode.id lib.watched)
+                                && not (Dict.member d.episode.id lib.queue)
+                                && not (Set.member (Url.toString d.rss) subscribed)
+                                && not (isLikelyShort d.episode)
+                        )
+                    |> List.take (target - List.length episodesToShow)
+        in
+        if List.isEmpty filtered then
+            text ""
+
+        else
+            div [ class "autogrid dimmed-fill" ]
+                (List.map (\d -> viewEpisodeCard (Just lib) (Just d.rss) d.episode) filtered)
 
 
 viewFeaturedCategories : Model -> Html Msg
@@ -1937,6 +2080,8 @@ libraryDecoder =
         |> D.optional "watched" (D.list D.string |> D.map Set.fromList) Set.empty
         |> D.optional "watchHistory" (D.list episodeDecoder) []
         |> D.optional "featured" (D.list channelDecoder) []
+        |> D.optional "discover" (D.list discoverEpisodeDecoder) []
+        |> D.optional "discoverAt" (D.maybe D.int) Nothing
 
 
 channelDecoder : D.Decoder Channel
@@ -1991,6 +2136,13 @@ episodeDecoder =
         |> D.optional "isExplicit" D.bool False
 
 
+discoverEpisodeDecoder : D.Decoder DiscoverEpisode
+discoverEpisodeDecoder =
+    D.map2 DiscoverEpisode
+        (D.field "rss" urlDecoder)
+        (D.field "episode" episodeDecoder)
+
+
 urlDecoder : D.Decoder Url
 urlDecoder =
     D.string
@@ -2022,6 +2174,16 @@ libraryEncoder lib =
         , ( "watched", lib.watched |> Set.toList |> E.list E.string )
         , ( "watchHistory", lib.watchHistory |> E.list episodeEncoder )
         , ( "featured", E.list channelEncoder lib.featured )
+        , ( "discover", E.list discoverEpisodeEncoder lib.discover )
+        , ( "discoverAt", encodeMaybe E.int lib.discoverAt )
+        ]
+
+
+discoverEpisodeEncoder : DiscoverEpisode -> E.Value
+discoverEpisodeEncoder d =
+    E.object
+        [ ( "rss", E.string (Url.toString d.rss) )
+        , ( "episode", episodeEncoder d.episode )
         ]
 
 
