@@ -1071,7 +1071,7 @@ viewBody model =
                             , case feed.channel.categories of
                                 Just cats ->
                                     div [ class "channel-categories" ]
-                                        (List.map (\cat -> span [ class "category-tag" ] [ text cat ]) cats)
+                                        (List.map (\cat -> span [ class "tag tag--solid" ] [ text cat ]) cats)
 
                                 Nothing ->
                                     text ""
