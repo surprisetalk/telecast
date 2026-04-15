@@ -705,12 +705,16 @@ audio#player {
   gap: var(--space-5);
 }
 
-.autogrid.dimmed-fill .episode-card {
+.episode-card-dimmed {
+  display: contents;
+}
+
+.episode-card-dimmed > .episode-card {
   opacity: 0.5;
   transition: opacity 0.2s;
 }
 
-.autogrid.dimmed-fill .episode-card:hover {
+.episode-card-dimmed > .episode-card:hover {
   opacity: 1;
 }
 

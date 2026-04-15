@@ -1214,8 +1214,36 @@ viewBody model =
 
                                     Nothing ->
                                         lib.queue |> Dict.values |> List.filter (\ep -> not (Set.member ep.id lib.watched))
+                            shownIds =
+                                episodesToShow |> List.map .id |> Set.fromList
+
+                            subscribed =
+                                lib.channels |> Dict.keys |> Set.fromList
+
+                            fillEpisodes =
+                                lib.discover
+                                    |> List.filter
+                                        (\d ->
+                                            not (Set.member d.episode.id shownIds)
+                                                && not (Set.member d.episode.id lib.watched)
+                                                && not (Dict.member d.episode.id lib.queue)
+                                                && not (Set.member (Url.toString d.rss) subscribed)
+                                                && not (isLikelyShort d.episode)
+                                        )
+                                    |> List.take (max 0 (12 - List.length episodesToShow))
+
+                            queueCards =
+                                List.map (viewEpisodeCard (Just lib) Nothing) episodesToShow
+
+                            fillCards =
+                                List.map
+                                    (\d ->
+                                        div [ class "episode-card-dimmed" ]
+                                            [ viewEpisodeCard (Just lib) (Just d.rss) d.episode ]
+                                    )
+                                    fillEpisodes
                         in
-                        if List.isEmpty episodesToShow then
+                        if List.isEmpty episodesToShow && List.isEmpty fillEpisodes then
                             if Dict.isEmpty lib.channels then
                                 viewWelcomeHero
 
@@ -1223,52 +1251,12 @@ viewBody model =
                                 div [ class "empty-state" ] [ text "No episodes in your queue. Paste a feed URL in the search bar to subscribe." ]
 
                         else
-                            div []
-                                [ div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) episodesToShow)
-                                , viewDimmedFill lib episodesToShow
-                                ]
+                            div [ class "autogrid" ] (queueCards ++ fillCards)
                     )
                     model.library
                 , viewFeaturedCategories model
                 , viewDiscoverMore
                 ]
-
-
-viewDimmedFill : Library -> List Episode -> Html Msg
-viewDimmedFill lib episodesToShow =
-    let
-        target =
-            12
-    in
-    if List.length episodesToShow >= target || List.isEmpty lib.discover then
-        text ""
-
-    else
-        let
-            shownIds =
-                episodesToShow |> List.map .id |> Set.fromList
-
-            subscribed =
-                lib.channels |> Dict.keys |> Set.fromList
-
-            filtered =
-                lib.discover
-                    |> List.filter
-                        (\d ->
-                            not (Set.member d.episode.id shownIds)
-                                && not (Set.member d.episode.id lib.watched)
-                                && not (Dict.member d.episode.id lib.queue)
-                                && not (Set.member (Url.toString d.rss) subscribed)
-                                && not (isLikelyShort d.episode)
-                        )
-                    |> List.take (target - List.length episodesToShow)
-        in
-        if List.isEmpty filtered then
-            text ""
-
-        else
-            div [ class "autogrid dimmed-fill" ]
-                (List.map (\d -> viewEpisodeCard (Just lib) (Just d.rss) d.episode) filtered)
 
 
 viewFeaturedCategories : Model -> Html Msg
