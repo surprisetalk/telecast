@@ -1113,13 +1113,18 @@ viewBody model =
                                         lib.queue |> Dict.values |> List.filter (\ep -> not (Set.member ep.id lib.watched))
                         in
                         if List.isEmpty episodesToShow then
-                            div [ class "empty-state" ] [ text "No episodes in your queue. Paste a feed URL in the search bar to subscribe." ]
+                            if Dict.isEmpty lib.channels then
+                                viewWelcomeHero
+
+                            else
+                                div [ class "empty-state" ] [ text "No episodes in your queue. Paste a feed URL in the search bar to subscribe." ]
 
                         else
                             div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) episodesToShow)
                     )
                     model.library
                 , viewFeaturedCategories model
+                , viewDiscoverMore
                 ]
 
 
@@ -1139,7 +1144,7 @@ viewFeaturedCategories model =
                         |> String.replace "-" " "
 
                 categoryOrder =
-                    [ "featured", "technology", "education", "news", "comedy", "science", "business", "arts", "music", "health", "games", "history", "film", "sports", "politics" ]
+                    [ "featured", "technology", "science", "comedy", "film", "history", "games", "music", "business", "education", "arts", "health", "news", "sports", "politics" ]
 
                 row cat =
                     case Dict.get cat cats of
@@ -1147,14 +1152,21 @@ viewFeaturedCategories model =
                             let
                                 unseen =
                                     channels |> List.filter (\c -> not (Set.member (Url.toString c.rss) subscribedRss))
+
+                                rowClass =
+                                    if cat == "featured" then
+                                        "category-row featured-hero"
+
+                                    else
+                                        "category-row"
                             in
                             if List.isEmpty unseen then
                                 text ""
 
                             else
-                                div [ class "category-row" ]
+                                div [ class rowClass ]
                                     [ h3 [ class "category-title" ]
-                                        [ a [ href ("/?q=tag:" ++ cat) ] [ text (prettyName cat) ] ]
+                                        [ a [ href ("/?tag=" ++ cat) ] [ text (prettyName cat) ] ]
                                     , div [ class "cols category-scroll" ]
                                         (List.map viewBarChannel unseen)
                                     ]
@@ -1166,6 +1178,38 @@ viewFeaturedCategories model =
 
         _ ->
             text ""
+
+
+viewWelcomeHero : Html Msg
+viewWelcomeHero =
+    div [ class "welcome-hero" ]
+        [ h2 [] [ text "Welcome to Telecasts" ]
+        , p [] [ text "A lean aggregator for podcasts and video feeds. Pick a category to get started, search for a channel, or paste any RSS URL." ]
+        , div [ class "starter-chips" ]
+            (List.map viewTagLink starterPackTags)
+        ]
+
+
+viewDiscoverMore : Html Msg
+viewDiscoverMore =
+    div [ class "discover-more" ]
+        [ h3 [ class "category-title" ] [ text "Keep browsing" ]
+        , div [ class "quick-tags" ]
+            (List.map viewTagLink discoverTags)
+        ]
+
+
+starterPackTags : List ( String, String )
+starterPackTags =
+    [ ( "technology", "Tech" )
+    , ( "science", "Science" )
+    , ( "comedy", "Comedy" )
+    , ( "film", "Film" )
+    , ( "history", "History" )
+    , ( "games", "Games" )
+    , ( "music", "Music" )
+    , ( "news", "News" )
+    ]
 
 
 viewHistory : Model -> Html Msg
