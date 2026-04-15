@@ -49,7 +49,11 @@ export async function onRequest({ env }: { env: Env }) {
           coalesce(
             (select thumb from episode e
              where e.channel_id = c.channel_id and e.thumb is not null
-               and not (lower(title) like '%#shorts%' or lower(title) like '%#short%')
+               and not (lower(coalesce(title,'')) like '%#shorts%'
+                     or lower(coalesce(title,'')) like '%#short%'
+                     or lower(coalesce(description,'')) like '%#shorts%'
+                     or lower(coalesce(description,'')) like '%#short%'
+                     or coalesce(link,'') like '%/shorts/%')
              order by published_at desc nulls last limit 1),
             (select thumb from episode e
              where e.channel_id = c.channel_id and e.thumb is not null
