@@ -1007,7 +1007,7 @@ viewBody model =
                         []
                     ]
                 , div [ class "quick-tags" ]
-                    (List.map viewTagLink quickSearchTags)
+                    (List.map viewTagLink discoverTags)
                 , viewLoadable
                     (\channels ->
                         if List.isEmpty channels then
@@ -1144,7 +1144,7 @@ viewFeaturedCategories model =
                         |> String.replace "-" " "
 
                 categoryOrder =
-                    [ "featured", "technology", "science", "comedy", "film", "history", "games", "music", "business", "education", "arts", "health", "news", "sports", "politics" ]
+                    "featured" :: List.map Tuple.first discoverTags
 
                 row cat =
                     case Dict.get cat cats of
@@ -1186,7 +1186,7 @@ viewWelcomeHero =
         [ h2 [] [ text "Welcome to Telecasts" ]
         , p [] [ text "A lean aggregator for podcasts and video feeds. Pick a category to get started, search for a channel, or paste any RSS URL." ]
         , div [ class "starter-chips" ]
-            (List.map viewTagLink starterPackTags)
+            (List.map viewTagLink discoverTags)
         ]
 
 
@@ -1197,19 +1197,6 @@ viewDiscoverMore =
         , div [ class "quick-tags" ]
             (List.map viewTagLink discoverTags)
         ]
-
-
-starterPackTags : List ( String, String )
-starterPackTags =
-    [ ( "technology", "Tech" )
-    , ( "science", "Science" )
-    , ( "comedy", "Comedy" )
-    , ( "film", "Film" )
-    , ( "history", "History" )
-    , ( "games", "Games" )
-    , ( "music", "Music" )
-    , ( "news", "News" )
-    ]
 
 
 viewHistory : Model -> Html Msg
@@ -1392,7 +1379,7 @@ viewEpisodeCard maybeLib maybeRss episode =
                         div [ class "episode-meta" ] [ text date ]
 
                     _ ->
-                        text ""
+                        div [ class "episode-meta" ] []
                 , case maybeLib of
                     Just lib ->
                         if Set.member episode.id lib.watched then
@@ -1585,47 +1572,6 @@ viewLoadable viewOk loadable =
 
         Loadable (Just (Ok a)) ->
             viewOk a
-
-
-quickSearchTags : List ( String, String )
-quickSearchTags =
-    [ ( "youtube", "YouTube" )
-    , ( "video", "Video" )
-    , ( "audio", "Audio" )
-    , ( "technology", "Tech" )
-    , ( "science", "Science" )
-    , ( "comedy", "Comedy" )
-    , ( "history", "History" )
-    , ( "philosophy", "Philosophy" )
-    , ( "math", "Math" )
-    , ( "physics", "Physics" )
-    , ( "biology", "Biology" )
-    , ( "psychology", "Psychology" )
-    , ( "economics", "Economics" )
-    , ( "art", "Art" )
-    , ( "photography", "Photography" )
-    , ( "music", "Music" )
-    , ( "film", "Film" )
-    , ( "gaming", "Gaming" )
-    , ( "fitness", "Fitness" )
-    , ( "cooking", "Cooking" )
-    , ( "travel", "Travel" )
-    , ( "languages", "Languages" )
-    , ( "journalism", "Journalism" )
-    , ( "documentary", "Documentary" )
-    , ( "cybersecurity", "Cybersecurity" )
-    , ( "ai", "AI / ML" )
-    , ( "linux", "Linux" )
-    , ( "programming", "Programming" )
-    , ( "design", "Design" )
-    , ( "electronics", "Electronics" )
-    , ( "engineering", "Engineering" )
-    , ( "astronomy", "Astronomy" )
-    , ( "politics", "Politics" )
-    , ( "nature", "Nature" )
-    , ( "true-crime", "True Crime" )
-    , ( "education", "Education" )
-    ]
 
 
 discoverTags : List ( String, String )
