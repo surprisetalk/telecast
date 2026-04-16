@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -e
+
+elm-format --validate src/ tests/
+deno fmt --check functions/ scripts/
+elm make src/Main.elm --output=/dev/null
+npx --yes elm-test
+deno check functions/ scripts/
+deno test functions/
