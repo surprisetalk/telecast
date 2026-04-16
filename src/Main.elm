@@ -69,6 +69,7 @@ type alias Model =
     , search : Maybe SearchState
     , episode : Maybe Id -- episode ID
     , refreshing : Maybe (Set String) -- Nothing = idle, Just pending = refreshing RSS URLs
+    , discoverPending : Maybe { pending : Set String, buffer : List DiscoverEpisode } -- batched discover refresh
     , feedSnapshot : Maybe (List Episode) -- snapshot of queue on My Feed entry; sticky across watched marks
     , featured : Loadable (List Channel)
     , featuredByCategory : Loadable (Dict String (List Channel))
@@ -208,6 +209,7 @@ initModel flags key =
     , search = Nothing
     , episode = Nothing
     , refreshing = Nothing
+    , discoverPending = Nothing
     , feedSnapshot = Nothing
     , featured = cachedFeatured
     , featuredByCategory = Loadable Nothing
@@ -288,7 +290,11 @@ update msg model =
                     else
                         Loadable (Just (Ok lib.featured))
               }
-            , Task.perform (always RefreshFeeds) (Task.succeed ())
+            , if model.refreshing == Nothing then
+                Task.perform (always RefreshFeeds) (Task.succeed ())
+
+              else
+                Cmd.none
             )
 
         LibraryLoaded (Err _) ->
@@ -553,42 +559,54 @@ update msg model =
         FeaturedByCategoryFetched (Err err) ->
             ( { model | featuredByCategory = Loadable (Just (Err (httpErrorToString err))) }, Cmd.none )
 
-        DiscoverFeedFetched rss (Ok feed) ->
-            case model.library of
-                Loadable (Just (Ok lib)) ->
+        DiscoverFeedFetched rss result ->
+            case ( model.discoverPending, model.library ) of
+                ( Just { pending, buffer }, Loadable (Just (Ok lib)) ) ->
                     let
-                        fresh =
-                            feed.episodes
-                                |> Dict.values
-                                |> List.sortBy (\e -> -e.index)
-                                |> List.filter (not << isLikelyShort)
-                                |> List.take 2
-                                |> List.map
-                                    (\e ->
-                                        { rss = rss
-                                        , episode = enrichEpisodeWith feed.channel e
-                                        }
-                                    )
+                        newBuffer =
+                            case result of
+                                Ok feed ->
+                                    buffer
+                                        ++ (feed.episodes
+                                                |> Dict.values
+                                                |> List.sortBy (\e -> -e.index)
+                                                |> List.filter (not << isLikelyShort)
+                                                |> List.take 2
+                                                |> List.map (\e -> { rss = rss, episode = enrichEpisodeWith feed.channel e })
+                                           )
 
-                        existingIds =
-                            lib.discover |> List.map (.episode >> .id) |> Set.fromList
+                                Err _ ->
+                                    buffer
 
-                        merged =
-                            (lib.discover ++ List.filter (\d -> not (Set.member d.episode.id existingIds)) fresh)
-                                |> List.take 50
-
-                        newLib =
-                            { lib | discover = merged }
+                        newPending =
+                            Set.remove (Url.toString rss) pending
                     in
-                    ( { model | library = Loadable (Just (Ok newLib)) }
-                    , librarySaving (libraryEncoder newLib)
-                    )
+                    if Set.isEmpty newPending then
+                        let
+                            newDiscover =
+                                if List.isEmpty newBuffer then
+                                    lib.discover
+
+                                else
+                                    newBuffer |> List.take 50
+
+                            newLib =
+                                { lib | discover = newDiscover }
+                        in
+                        ( { model
+                            | library = Loadable (Just (Ok newLib))
+                            , discoverPending = Nothing
+                          }
+                        , librarySaving (libraryEncoder newLib)
+                        )
+
+                    else
+                        ( { model | discoverPending = Just { pending = newPending, buffer = newBuffer } }
+                        , Cmd.none
+                        )
 
                 _ ->
                     ( model, Cmd.none )
-
-        DiscoverFeedFetched _ (Err _) ->
-            ( model, Cmd.none )
 
         MaybeRefreshDiscover now ->
             case ( model.library, model.featured ) of
@@ -608,7 +626,7 @@ update msg model =
                                 Just t ->
                                     nowMs - t > ttlMs
                     in
-                    if not isStale then
+                    if not isStale || model.discoverPending /= Nothing then
                         ( model, Cmd.none )
 
                     else
@@ -628,14 +646,20 @@ update msg model =
                                                 }
                                         )
 
+                            pendingUrls =
+                                targets |> List.map (.rss >> Url.toString) |> Set.fromList
+
                             newLib =
-                                { lib | discover = [], discoverAt = Just nowMs }
+                                { lib | discoverAt = Just nowMs }
                         in
                         if List.isEmpty cmds then
                             ( model, Cmd.none )
 
                         else
-                            ( { model | library = Loadable (Just (Ok newLib)) }
+                            ( { model
+                                | library = Loadable (Just (Ok newLib))
+                                , discoverPending = Just { pending = pendingUrls, buffer = [] }
+                              }
                             , Cmd.batch (librarySaving (libraryEncoder newLib) :: cmds)
                             )
 
@@ -1206,9 +1230,13 @@ viewBody model =
                                                 snap |> List.map .id |> Set.fromList
 
                                             newQueueItems =
-                                                lib.queue
-                                                    |> Dict.values
-                                                    |> List.filter (\ep -> not (Set.member ep.id snapIds) && not (Set.member ep.id lib.watched))
+                                                if model.refreshing == Nothing then
+                                                    lib.queue
+                                                        |> Dict.values
+                                                        |> List.filter (\ep -> not (Set.member ep.id snapIds) && not (Set.member ep.id lib.watched))
+
+                                                else
+                                                    []
                                         in
                                         newQueueItems ++ snap
 
