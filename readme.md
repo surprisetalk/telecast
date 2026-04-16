@@ -20,5 +20,11 @@ prereqs: `postgresql`, `postgresql-client`, `postgresql-contrib`, & neon [consol
 psql $DATABASE_URL -f db.sql
 npm run dev-server
 npm run dev-client
-npx tsx --env-file .env scripts/refresh.ts
+deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys scripts/refresh.ts
+```
+
+one-time hook setup:
+
+```bash
+git config core.hooksPath .githooks
 ```

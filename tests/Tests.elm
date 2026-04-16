@@ -79,6 +79,9 @@ sampleLibrary =
     , queue = Dict.fromList [ ( "ep3", sampleEpisode "ep3" ) ]
     , watched = Set.fromList [ "ep-watched" ]
     , watchHistory = []
+    , featured = []
+    , discover = []
+    , discoverAt = Nothing
     }
 
 
@@ -89,6 +92,9 @@ emptyLibrary =
     , queue = Dict.empty
     , watched = Set.empty
     , watchHistory = []
+    , featured = []
+    , discover = []
+    , discoverAt = Nothing
     }
 
 

@@ -445,10 +445,6 @@ header button.back:hover {
     transform var(--anim);
 }
 
-#search button:hover {
-  /* background: var(--accent-hot); */
-}
-
 #search button:active {
   transform: translateY(1px);
 }
@@ -1093,8 +1089,7 @@ audio#player {
   align-items: center;
 }
 
-.bar-thumb,
-.bar-stack {
+.bar-thumb {
   display: block;
   flex: 0 0 auto;
   width: 80px;
@@ -1107,8 +1102,7 @@ audio#player {
   position: relative;
 }
 
-.bar-thumb:hover,
-.bar-stack:hover {
+.bar-thumb:hover {
   opacity: 1;
 }
 
@@ -1137,56 +1131,6 @@ audio#player {
 
 .bar-thumb-img.thumb-placeholder {
   background: var(--border-color);
-}
-
-.bar-stack {
-  background: var(--header-color);
-  color: var(--bg-color);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 2px;
-}
-
-.bar-stack-icon {
-  font-size: 0.85rem;
-  line-height: 1;
-  color: var(--bg-color);
-  position: relative;
-  z-index: 1;
-}
-
-.bar-stack-label {
-  font-size: 9px;
-  letter-spacing: 0.05em;
-  line-height: 1;
-  color: var(--bg-color);
-  position: relative;
-  z-index: 1;
-  font-weight: 600;
-}
-
-.bar-stack::before,
-.bar-stack::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: var(--header-color);
-  border-radius: inherit;
-  pointer-events: none;
-  z-index: -1;
-}
-
-.bar-stack::before {
-  transform: translate(3px, 3px);
-  opacity: 0.5;
-}
-
-.bar-stack::after {
-  transform: translate(6px, 6px);
-  opacity: 0.25;
 }
 
 .tags {

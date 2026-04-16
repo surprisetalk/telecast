@@ -16,8 +16,9 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
+      - run: deno fmt --check functions/ scripts/
       - run: deno test functions/
-      - run: deno check functions/
+      - run: deno check functions/ scripts/
 
   elm-test:
     runs-on: ubuntu-latest
@@ -29,5 +30,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+      - run: npx --yes elm-format --validate src/ tests/
       - run: npx --yes elm-test
       - run: elm make src/Main.elm --output=/dev/null

@@ -1,5 +1,5 @@
 import db from "postgres";
-import { parse, parseEpisodes, Episode, Channel } from "../functions/_shared/rss";
+import { Channel, Episode, parse, parseEpisodes } from "../functions/_shared/rss";
 
 const BATCH_SIZE = 500;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -10,7 +10,11 @@ async function pool(items: readonly any[], n: number, work: (item: any) => Promi
   const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
     while (i < items.length) {
       const item = items[i++];
-      try { await work(item); } catch (e) { console.error(`pool worker swallowed: ${(e as Error).message}`); }
+      try {
+        await work(item);
+      } catch (e) {
+        console.error(`pool worker swallowed: ${(e as Error).message}`);
+      }
     }
   });
   await Promise.all(workers);
@@ -59,29 +63,98 @@ function slugTag(s: string): string {
 }
 
 const KEYWORD_TAG_MAP: Record<string, string> = {
-  programming: "technology", code: "technology", coding: "technology", javascript: "technology",
-  python: "technology", rust: "technology", typescript: "technology", software: "technology",
-  developer: "technology", computer: "technology", linux: "technology", docker: "technology",
-  ai: "technology", ml: "technology",
-  gameplay: "games", speedrun: "games", gaming: "games", minecraft: "games", playthrough: "games",
-  nintendo: "games", playstation: "games", xbox: "games", esports: "games",
-  recipe: "food", cooking: "food", baking: "food", kitchen: "food", chef: "food", cuisine: "food",
-  workout: "fitness", exercise: "fitness", gym: "fitness", yoga: "fitness", running: "fitness",
-  science: "science", physics: "science", chemistry: "science", biology: "science", astronomy: "science",
-  history: "history", historical: "history", ancient: "history", war: "history",
-  music: "music", guitar: "music", piano: "music", concert: "music", song: "music", album: "music",
-  news: "news", politics: "politics", election: "politics", government: "politics",
-  film: "film", movie: "film", cinema: "film", director: "film", trailer: "film",
-  art: "arts", painting: "arts", drawing: "arts", sculpture: "arts", gallery: "arts",
-  business: "business", startup: "business", entrepreneur: "business", investing: "business", finance: "business",
-  health: "health", medical: "health", doctor: "health", medicine: "health", wellness: "health",
-  education: "education", tutorial: "education", lesson: "education", course: "education", learn: "education",
-  comedy: "comedy", funny: "comedy", humor: "comedy", sketch: "comedy", standup: "comedy",
-  religion: "religion", christianity: "religion", bible: "religion", prayer: "religion", faith: "religion",
+  programming: "technology",
+  code: "technology",
+  coding: "technology",
+  javascript: "technology",
+  python: "technology",
+  rust: "technology",
+  typescript: "technology",
+  software: "technology",
+  developer: "technology",
+  computer: "technology",
+  linux: "technology",
+  docker: "technology",
+  ai: "technology",
+  ml: "technology",
+  gameplay: "games",
+  speedrun: "games",
+  gaming: "games",
+  minecraft: "games",
+  playthrough: "games",
+  nintendo: "games",
+  playstation: "games",
+  xbox: "games",
+  esports: "games",
+  recipe: "food",
+  cooking: "food",
+  baking: "food",
+  kitchen: "food",
+  chef: "food",
+  cuisine: "food",
+  workout: "fitness",
+  exercise: "fitness",
+  gym: "fitness",
+  yoga: "fitness",
+  running: "fitness",
+  science: "science",
+  physics: "science",
+  chemistry: "science",
+  biology: "science",
+  astronomy: "science",
+  history: "history",
+  historical: "history",
+  ancient: "history",
+  war: "history",
+  music: "music",
+  guitar: "music",
+  piano: "music",
+  concert: "music",
+  song: "music",
+  album: "music",
+  news: "news",
+  politics: "politics",
+  election: "politics",
+  government: "politics",
+  film: "film",
+  movie: "film",
+  cinema: "film",
+  director: "film",
+  trailer: "film",
+  art: "arts",
+  painting: "arts",
+  drawing: "arts",
+  sculpture: "arts",
+  gallery: "arts",
+  business: "business",
+  startup: "business",
+  entrepreneur: "business",
+  investing: "business",
+  finance: "business",
+  health: "health",
+  medical: "health",
+  doctor: "health",
+  medicine: "health",
+  wellness: "health",
+  education: "education",
+  tutorial: "education",
+  lesson: "education",
+  course: "education",
+  learn: "education",
+  comedy: "comedy",
+  funny: "comedy",
+  humor: "comedy",
+  sketch: "comedy",
+  standup: "comedy",
+  religion: "religion",
+  christianity: "religion",
+  bible: "religion",
+  prayer: "religion",
+  faith: "religion",
 };
 
 function inferKeywordTags(episodes: Episode[]): string[] {
-  const text = episodes.slice(0, 20).map(e => `${e.title ?? ""} ${e.description ?? ""}`).join(" ").toLowerCase();
+  const text = episodes.slice(0, 20).map((e) => `${e.title ?? ""} ${e.description ?? ""}`).join(" ").toLowerCase();
   const hits: Record<string, number> = {};
   for (const [kw, tag] of Object.entries(KEYWORD_TAG_MAP)) {
     const re = new RegExp(`\\b${kw}\\b`, "g");
@@ -92,7 +165,7 @@ function inferKeywordTags(episodes: Episode[]): string[] {
 }
 
 function detectLanguageFromText(episodes: Episode[]): string | null {
-  const text = episodes.slice(0, 20).map(e => e.title ?? "").join(" ");
+  const text = episodes.slice(0, 20).map((e) => e.title ?? "").join(" ");
   if (!text) return null;
   const ranges: Array<[RegExp, string]> = [
     [/[\u3040-\u309f\u30a0-\u30ff]/, "japanese"],
@@ -113,8 +186,8 @@ function detectLanguageFromText(episodes: Episode[]): string | null {
 }
 
 function inferContentTags(episodes: Episode[]): string[] {
-  const hasVideo = episodes.some(e => e.src_type?.startsWith("video/"));
-  const hasAudio = episodes.some(e => e.src_type?.startsWith("audio/"));
+  const hasVideo = episodes.some((e) => e.src_type?.startsWith("video/"));
+  const hasAudio = episodes.some((e) => e.src_type?.startsWith("audio/"));
   const tags: string[] = [];
   if (hasVideo) tags.push("video");
   if (hasAudio && !hasVideo) tags.push("audio");
@@ -149,10 +222,10 @@ function inferAllTags(channelInfo: Channel, episodes: Episode[]): string[] {
 }
 
 async function main() {
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl = Deno.env.get("DATABASE_URL");
   if (!databaseUrl) {
     console.error("DATABASE_URL not set");
-    process.exit(1);
+    Deno.exit(1);
   }
 
   const sql = db(databaseUrl, { max: CONCURRENCY, idle_timeout: 20, connect_timeout: 30 });
@@ -178,28 +251,28 @@ async function main() {
   let succeeded = 0;
   const failures: { rss: string; error: string }[] = [];
 
-  await pool(channels, CONCURRENCY, async channel => {
-      const index = ++completed;
-      const shortUrl = channel.rss.replace(/^https?:\/\//, "").slice(0, 50);
+  await pool(channels, CONCURRENCY, async (channel) => {
+    const index = ++completed;
+    const shortUrl = channel.rss.replace(/^https?:\/\//, "").slice(0, 50);
 
-      try {
-        const controller = new AbortController();
-        const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-        const res = await fetch(channel.rss, {
-          headers: { "User-Agent": "Telecasts/1.0" },
-          signal: controller.signal,
-        });
-        clearTimeout(timeout);
+      const res = await fetch(channel.rss, {
+        headers: { "User-Agent": "Telecasts/1.0" },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
 
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
-        const text = await res.text();
-        const channelInfo = parse(text);
-        const episodes = parseEpisodes(text, channel.channel_id);
+      const text = await res.text();
+      const channelInfo = parse(text);
+      const episodes = parseEpisodes(text, channel.channel_id);
 
-        if (episodes.length > 0) {
-          await sql`
+      if (episodes.length > 0) {
+        await sql`
             INSERT INTO episode ${sql(episodes)}
             ON CONFLICT (channel_id, episode_id) DO UPDATE
             SET title = EXCLUDED.title,
@@ -216,13 +289,13 @@ async function main() {
                 explicit = EXCLUDED.explicit,
                 updated_at = now()
           `;
-        }
+      }
 
-        // Infer tags from channel metadata and episodes
-        const inferredTags = inferAllTags(channelInfo, episodes);
+      // Infer tags from channel metadata and episodes
+      const inferredTags = inferAllTags(channelInfo, episodes);
 
-        // Update channel metadata and stats on success
-        await sql`
+      // Update channel metadata and stats on success
+      await sql`
           UPDATE channel SET
             title = coalesce(${channelInfo.title}, title),
             description = coalesce(${channelInfo.description}, description),
@@ -278,15 +351,15 @@ async function main() {
           WHERE channel_id = ${channel.channel_id}
         `;
 
-        succeeded++;
-        console.log(`[${index}/${total}] ✓ ${shortUrl} (${episodes.length} episodes)`);
-      } catch (e) {
-        const msg = (e as Error).name === "AbortError" ? "Request timed out" : (e as Error).message;
-        const isRateLimit = msg === "HTTP 429";
+      succeeded++;
+      console.log(`[${index}/${total}] ✓ ${shortUrl} (${episodes.length} episodes)`);
+    } catch (e) {
+      const msg = (e as Error).name === "AbortError" ? "Request timed out" : (e as Error).message;
+      const isRateLimit = msg === "HTTP 429";
 
-        // Track errors (excluding rate-limits which are transient)
-        if (!isRateLimit) {
-          await sql`
+      // Track errors (excluding rate-limits which are transient)
+      if (!isRateLimit) {
+        await sql`
             UPDATE channel SET
               consecutive_errors = consecutive_errors + 1,
               last_error = ${msg},
@@ -319,12 +392,12 @@ async function main() {
               )
             WHERE channel_id = ${channel.channel_id}
           `;
-        }
-
-        failures.push({ rss: channel.rss, error: msg });
-        console.log(`[${index}/${total}] ✗ ${shortUrl} → ${msg}`);
       }
-    });
+
+      failures.push({ rss: channel.rss, error: msg });
+      console.log(`[${index}/${total}] ✗ ${shortUrl} → ${msg}`);
+    }
+  });
 
   // Summary
   console.log(`\nDone: ${succeeded} succeeded, ${failures.length} failed`);
@@ -340,7 +413,7 @@ async function main() {
   await sql.end();
 }
 
-main().catch(e => {
+main().catch((e) => {
   console.error(e);
-  process.exit(1);
+  Deno.exit(1);
 });

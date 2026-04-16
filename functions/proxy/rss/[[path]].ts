@@ -5,12 +5,6 @@ import type { Sql } from "../../search";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
-export interface RssProxyDeps {
-  sql: Sql;
-  bucket: R2Bucket;
-  fetcher: typeof fetch;
-}
-
 export async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetch): Promise<{ url: string } | { error: string }> {
   let u: URL;
   try {
@@ -44,16 +38,25 @@ export async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetc
   let id: string | undefined;
   for (const p of patterns) {
     const m = html.match(p);
-    if (m) { id = m[1]; break; }
+    if (m) {
+      id = m[1];
+      break;
+    }
   }
   if (!id) {
     const snippet = html.slice(0, 200).replace(/\s+/g, " ").trim();
-    return { error: `Could not extract channelId from ${pageUrl} (HTML ${html.length} bytes). Tried 6 patterns including "channelId":"UC...", canonical link, /channel/UC... sweep. First 200 chars: ${snippet}` };
+    return {
+      error:
+        `Could not extract channelId from ${pageUrl} (HTML ${html.length} bytes). Tried 6 patterns including "channelId":"UC...", canonical link, /channel/UC... sweep. First 200 chars: ${snippet}`,
+    };
   }
   return { url: `https://www.youtube.com/feeds/videos.xml?channel_id=${id}` };
 }
 
-export async function handleRssProxy(deps: RssProxyDeps, input: { rssUrl: string }): Promise<Response> {
+export async function handleRssProxy(
+  deps: { sql: Sql; bucket: R2Bucket; fetcher: typeof fetch },
+  input: { rssUrl: string },
+): Promise<Response> {
   const { sql, bucket, fetcher } = deps;
   const rawUrl = input.rssUrl;
   const resolvedKey = `resolved:${rawUrl}`;
@@ -78,8 +81,7 @@ export async function handleRssProxy(deps: RssProxyDeps, input: { rssUrl: string
   if (cachedText && cachedAge < CACHE_TTL_MS) {
     return new Response(cachedText, { headers: { "content-type": "application/xml" } });
   }
-  const stale = (): Response =>
-    new Response(cachedText!, { headers: { "content-type": "application/xml", "x-telecast-stale": "1" } });
+  const stale = (): Response => new Response(cachedText!, { headers: { "content-type": "application/xml", "x-telecast-stale": "1" } });
   let fetchResponse: Response;
   try {
     fetchResponse = await fetcher(rssUrl);
@@ -90,7 +92,10 @@ export async function handleRssProxy(deps: RssProxyDeps, input: { rssUrl: string
   }
   if (!fetchResponse.ok) {
     if (cachedText) return stale();
-    return new Response(`Upstream feed fetch failed for ${rssUrl} (raw input: ${rawUrl}): HTTP ${fetchResponse.status} ${fetchResponse.statusText}`, { status: 502 });
+    return new Response(
+      `Upstream feed fetch failed for ${rssUrl} (raw input: ${rawUrl}): HTTP ${fetchResponse.status} ${fetchResponse.statusText}`,
+      { status: 502 },
+    );
   }
   const text = await fetchResponse.text();
   if (!/<(feed|rss|RDF)[\s>]/.test(text)) {

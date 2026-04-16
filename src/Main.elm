@@ -4,7 +4,6 @@ import Browser
 import Browser.Dom
 import Browser.Events
 import Browser.Navigation as Nav
-import Char
 import Dict exposing (Dict)
 import Html exposing (..)
 import Html.Attributes as A exposing (class, href, id, src, title, value)
@@ -264,7 +263,6 @@ type Msg
     | FeaturedByCategoryFetched (Result Http.Error (Dict String (List Channel)))
     | DiscoverFeedFetched Url (Result String Feed)
     | MaybeRefreshDiscover Time.Posix
-    | GoBack
     | LinkClicked Browser.UrlRequest
     | UrlChanged Url
     | RefreshFeeds
@@ -666,9 +664,6 @@ update msg model =
                 _ ->
                     ( model, Cmd.none )
 
-        GoBack ->
-            ( model, Nav.back model.key 1 )
-
         LinkClicked (Browser.Internal url) ->
             ( model
             , Nav.pushUrl model.key (Url.toString url)
@@ -1022,7 +1017,10 @@ view model =
                                                         |> String.dropLeft 4
                                                         |> String.replace "-" " "
                                                         |> String.words
-                                                        |> List.map capitalize
+                                                        |> List.map
+                                                            (\w ->
+                                                                String.toUpper (String.left 1 w) ++ String.dropLeft 1 w
+                                                            )
                                                         |> String.join " "
 
                                                 else
@@ -1139,7 +1137,7 @@ viewBody model =
                     (\channels ->
                         if List.isEmpty channels then
                             div [ class "empty-state" ] [ text "No channels found" ]
-    
+
                         else
                             div [ class "autogrid", id "results" ]
                                 (List.map (viewChannelCard (isLoaded model.library)) channels)
@@ -1153,7 +1151,8 @@ viewBody model =
                     Loadable (Just (Ok feed)) ->
                         [ div [ class "rows channel-header" ]
                             [ div [ class "cols" ]
-                                [ viewThumb "channel-thumb" (channelThumbWithFallback feed.channel.thumb feed.episodes)
+                                [ div [ class "channel-thumb-wrapper" ]
+                                    [ viewThumbInner "channel-thumb" (channelThumbWithFallback feed.channel.thumb feed.episodes) ]
                                 , div [ class "rows channel-header-info" ]
                                     [ h1 [] [ text feed.channel.title ]
                                     , div [ class "channel-header-meta" ]
@@ -1242,6 +1241,7 @@ viewBody model =
 
                                     Nothing ->
                                         lib.queue |> Dict.values |> List.filter (\ep -> not (Set.member ep.id lib.watched))
+
                             shownIds =
                                 episodesToShow |> List.map .id |> Set.fromList
 
@@ -1384,12 +1384,6 @@ viewPlayerBar model =
                 currentId =
                     model.episode
 
-                {- recentWatched =
-                       lib.watchHistory
-                           |> List.filter (\ep -> Just ep.id /= currentId)
-                           |> List.take 2
-                           |> List.reverse
-                -}
                 currentEpisode =
                     findSelectedEpisode model.episode model.channel model.library
                         |> Maybe.map Tuple.first
@@ -1714,12 +1708,6 @@ channelThumbWithFallback channelThumb episodes =
                     List.head anyThumb
 
 
-viewThumb : String -> Maybe Url -> Html msg
-viewThumb className maybeUrl =
-    div [ class (className ++ "-wrapper") ]
-        [ viewThumbInner className maybeUrl ]
-
-
 viewLoadable : (a -> Html msg) -> Loadable a -> Html msg
 viewLoadable viewOk loadable =
     case loadable of
@@ -1858,13 +1846,6 @@ normalizeFeedUrl raw =
 
         _ ->
             stripped
-
-
-capitalize : String -> String
-capitalize str =
-    String.uncons str
-        |> Maybe.map (\( first, rest ) -> String.cons (Char.toUpper first) rest)
-        |> Maybe.withDefault str
 
 
 {-| Get the best available thumbnail for an episode.
@@ -2163,10 +2144,13 @@ urlDecoder : D.Decoder Url
 urlDecoder =
     D.string
         |> D.andThen
-            (identity
-                >> Url.fromString
-                >> Maybe.map D.succeed
-                >> Maybe.withDefault (D.fail "Invalid URL")
+            (\s ->
+                case Url.fromString s of
+                    Just u ->
+                        D.succeed u
+
+                    Nothing ->
+                        D.fail "Invalid URL"
             )
 
 
@@ -2238,6 +2222,7 @@ episodeEncoder episode =
         , ( "fileSizeBytes", encodeMaybe E.int episode.fileSizeBytes )
         , ( "isExplicit", E.bool episode.isExplicit )
         ]
+
 
 
 -- XML
@@ -2403,33 +2388,6 @@ standardItemDecoder =
         }
 
 
-{-| Parse duration string (HH:MM:SS, MM:SS, or raw seconds) to seconds.
--}
-parseDuration : String -> Int
-parseDuration str =
-    let
-        parts =
-            String.split ":" str |> List.filterMap String.toInt
-    in
-    case parts of
-        [ h, m, s ] ->
-            h * 3600 + m * 60 + s
-
-        [ m, s ] ->
-            m * 60 + s
-
-        [ s ] ->
-            s
-
-        _ ->
-            String.toInt str |> Maybe.withDefault 0
-
-
-parseInt : String -> Int
-parseInt str =
-    String.toInt str |> Maybe.withDefault 0
-
-
 itemDecoderWith :
     { thumbPath : List String -- 16:9 video thumbnail (media:thumbnail)
     , thumbDecoder : X.Decoder Url
@@ -2442,7 +2400,9 @@ itemDecoderWith :
     -> X.Decoder Episode
 itemDecoderWith { thumbPath, thumbDecoder, coverArtPath, coverArtDecoder, srcPath, srcAsString, srcAsUrl } =
     let
-        -- Build episode from parsed fields (using nested tuples to avoid Elm's 3-tuple limit)
+        parseInt s =
+            String.toInt s |> Maybe.withDefault 0
+
         buildEpisode ( ( id, title, thumb ), ( coverArt, src, desc ) ) maybeDuration maybePubDate ( maybeSeason, maybeEpNum ) ( maybeFileSize, isExplicit ) =
             { id = id
             , title = title
@@ -2463,7 +2423,6 @@ itemDecoderWith { thumbPath, thumbDecoder, coverArtPath, coverArtDecoder, srcPat
             , isExplicit = isExplicit
             }
 
-        -- Shared decoders for metadata fields
         durationDecoder =
             X.maybe (X.path [ "itunes:duration" ] (X.single (X.string |> X.map parseDuration)))
 
@@ -2477,10 +2436,9 @@ itemDecoderWith { thumbPath, thumbDecoder, coverArtPath, coverArtDecoder, srcPat
 
         fileSizeExplicitDecoder =
             X.succeed Tuple.pair
-                |> X.possiblePath [ "enclosure" ] (X.single (X.stringAttr "length" |> X.map (String.toInt >> Maybe.withDefault 0)))
+                |> X.possiblePath [ "enclosure" ] (X.single (X.stringAttr "length" |> X.map parseInt))
                 |> X.optionalPath [ "itunes:explicit" ] (X.single (X.string |> X.map isExplicitValue)) False
 
-        -- Core fields decoder with a given ID source
         coreFieldsWithId idPath idDecoder_ =
             X.succeed (\a b c d e f -> ( ( a, b, c ), ( d, e, f ) ))
                 |> X.requiredPath idPath (X.single idDecoder_)
@@ -2506,8 +2464,22 @@ itemDecoderWith { thumbPath, thumbDecoder, coverArtPath, coverArtDecoder, srcPat
         ]
 
 
-{-| Parse itunes:explicit value - can be "true", "yes", "1" or "false", "no", "0".
--}
+parseDuration : String -> Int
+parseDuration str =
+    case String.split ":" str |> List.filterMap String.toInt of
+        [ h, m, s ] ->
+            h * 3600 + m * 60 + s
+
+        [ m, s ] ->
+            m * 60 + s
+
+        [ s ] ->
+            s
+
+        _ ->
+            0
+
+
 isExplicitValue : String -> Bool
 isExplicitValue str =
     List.member (String.toLower str) [ "true", "yes", "1" ]

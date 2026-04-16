@@ -1,5 +1,5 @@
-import { assertEquals, assert } from "jsr:@std/assert";
-import { resolveYoutubeFeedUrl, handleRssProxy } from "./[[path]].ts";
+import { assert, assertEquals } from "jsr:@std/assert";
+import { handleRssProxy, resolveYoutubeFeedUrl } from "./[[path]].ts";
 import type { Sql } from "../../search.ts";
 
 const stub = (body: string, ok = true): typeof fetch =>
@@ -58,19 +58,24 @@ const fakeBucket = (seed: Record<string, { text: string; uploaded?: Date }> = {}
     Object.entries(seed).map(([k, v]) => [k, { text: v.text, uploaded: v.uploaded ?? new Date() }]),
   );
   return {
-    get: (k: string) => Promise.resolve(
-      store.has(k)
-        ? { body: store.get(k)!.text, uploaded: store.get(k)!.uploaded, text: () => Promise.resolve(store.get(k)!.text) }
-        : null,
-    ),
-    put: (k: string, v: string) => { store.set(k, { text: v, uploaded: new Date() }); return Promise.resolve({}); },
+    get: (k: string) =>
+      Promise.resolve(
+        store.has(k)
+          ? { body: store.get(k)!.text, uploaded: store.get(k)!.uploaded, text: () => Promise.resolve(store.get(k)!.text) }
+          : null,
+      ),
+    put: (k: string, v: string) => {
+      store.set(k, { text: v, uploaded: new Date() });
+      return Promise.resolve({});
+    },
   } as unknown as R2Bucket;
 };
 
 const fakeSql = (() => Promise.resolve([])) as unknown as Sql;
 
 Deno.test("handleRssProxy end-to-end: @handle → scrape → feeds XML", async () => {
-  const xml = `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><link rel="alternate" href="https://www.youtube.com/channel/UCreal"/><title>ok</title><entry><id>x</id><title>t</title><link href="https://y"/><published>2026-01-01T00:00:00Z</published></entry></feed>`;
+  const xml =
+    `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"><link rel="alternate" href="https://www.youtube.com/channel/UCreal"/><title>ok</title><entry><id>x</id><title>t</title><link href="https://y"/><published>2026-01-01T00:00:00Z</published></entry></feed>`;
   const fetcher = ((input: RequestInfo | URL) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url.includes("/@AtriocClips")) return Promise.resolve(new Response(`"channelId":"UCreal"`));
@@ -90,7 +95,10 @@ Deno.test("handleRssProxy: fresh cache hit skips origin fetch", async () => {
   const url = "https://example.com/feed.xml";
   const xml = `<?xml version="1.0"?><rss><channel><title>cached</title></channel></rss>`;
   let fetched = false;
-  const fetcher = ((_: RequestInfo | URL) => { fetched = true; return Promise.resolve(new Response("")); }) as typeof fetch;
+  const fetcher = ((_: RequestInfo | URL) => {
+    fetched = true;
+    return Promise.resolve(new Response(""));
+  }) as typeof fetch;
   const res = await handleRssProxy(
     { sql: fakeSql, bucket: fakeBucket({ [url]: { text: xml } }), fetcher },
     { rssUrl: url },

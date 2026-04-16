@@ -23,12 +23,10 @@ export function transformYouTubeThumb(url: string): string {
   return url;
 }
 
-export interface ThumbProxyDeps {
-  bucket: R2Bucket;
-  fetcher: typeof fetch;
-}
-
-export async function handleThumbProxy(deps: ThumbProxyDeps, input: { thumbUrl: string }): Promise<Response> {
+export async function handleThumbProxy(
+  deps: { bucket: R2Bucket; fetcher: typeof fetch },
+  input: { thumbUrl: string },
+): Promise<Response> {
   const { bucket, fetcher } = deps;
   const { thumbUrl } = input;
   if (!thumbUrl) return serveFallback();

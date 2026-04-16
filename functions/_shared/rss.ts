@@ -115,8 +115,7 @@ export function parseDuration(raw: any): number | null {
 
 export function parseExplicit(raw: any): boolean | null {
   if (raw === undefined || raw === null) return null;
-  const str = extractText(raw);
-  return str === "yes" || str === "true" || str === "Yes" || str === "True";
+  return ["yes", "true"].includes(extractText(raw).toLowerCase());
 }
 
 export function parseCategories(raw: any): string[] | null {
@@ -168,7 +167,7 @@ export function findEpisodeThumbnail(item: any): string | null {
   const mediaContent = item["media:content"];
   if (mediaContent) {
     const contents = Array.isArray(mediaContent) ? mediaContent : [mediaContent];
-    const image = contents.find(c => c["@_medium"] === "image" || c["@_type"]?.startsWith("image/"));
+    const image = contents.find((c) => c["@_medium"] === "image" || c["@_type"]?.startsWith("image/"));
     if (image?.["@_url"]) return image["@_url"];
   }
 
@@ -213,7 +212,7 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
   else if (xml.rss?.channel?.item) items = Array.isArray(xml.rss.channel.item) ? xml.rss.channel.item : [xml.rss.channel.item];
   else if (xml.RDF?.item) items = Array.isArray(xml.RDF.item) ? xml.RDF.item : [xml.RDF.item];
 
-  return items.slice(0, 50).map(item => {
+  return items.slice(0, 50).map((item) => {
     const thumb = findEpisodeThumbnail(item);
     const enclosure = item.enclosure;
     const enclosureUrl = enclosure?.["@_url"];
@@ -254,111 +253,84 @@ function findThumbnail(channel: any): string | null {
   return null;
 }
 
-function findAtomThumbnail(feed: any): string | null {
-  if (feed.icon) return feed.icon;
-  if (feed.logo) return feed.logo;
-  if (feed["media:thumbnail"]?.["@_url"]) return feed["media:thumbnail"]["@_url"];
-  return null;
-}
-
-function parseYouTubeFeed(feed: any): Channel {
-  const channelId = feed["yt:channelId"];
-  const authorUri = feed.author?.uri;
-
-  // Use first video thumbnail as channel thumb (YouTube RSS doesn't include channel avatars)
-  const entries = feed.entry;
-  const firstEntry = Array.isArray(entries) ? entries[0] : entries;
-  const thumb = httpsUrl(firstEntry?.["media:group"]?.["media:thumbnail"]?.["@_url"]);
-
-  return {
-    channel_id: `youtube.com/channel/${channelId}`,
-    rss: authorUri || `https://www.youtube.com/channel/${channelId}`,
-    title: sanitizeText(feed.title),
-    description: sanitizeText(feed.subtitle),
-    thumb,
-    updated_at: new Date(),
-    author: sanitizeText(feed.author?.name) || null,
-    language: null,
-    explicit: null,
-    website: authorUri || `https://www.youtube.com/channel/${channelId}`,
-    categories: null,
-    tags: ["youtube"],
-  };
-}
-
-function parseRss2Feed(channel: any): Channel {
-  return {
-    channel_id: generateChannelId(channel.link),
-    rss: channel.link,
-    title: sanitizeText(channel.title),
-    description: sanitizeText(channel.description),
-    thumb: findThumbnail(channel),
-    updated_at: new Date(),
-    author: sanitizeText(channel["itunes:author"]) || null,
-    language: sanitizeText(channel.language) || null,
-    explicit: parseExplicit(channel["itunes:explicit"]),
-    website: channel.link || null,
-    categories: parseCategories(channel["itunes:category"]),
-    tags: null,
-  };
-}
-
-function parseAtomFeed(feed: any): Channel {
-  const link = Array.isArray(feed.link)
-    ? feed.link.find((l: any) => l["@_rel"] === "alternate")?.["@_href"] || feed.link[0]["@_href"]
-    : feed.link["@_href"];
-  return {
-    channel_id: generateChannelId(link),
-    rss: link,
-    title: sanitizeText(feed.title),
-    description: sanitizeText(feed.subtitle || feed.description),
-    thumb: findAtomThumbnail(feed),
-    updated_at: new Date(),
-    author: sanitizeText(feed.author?.name) || null,
-    language: feed["@_xml:lang"] || null,
-    explicit: parseExplicit(feed["itunes:explicit"]),
-    website: link || null,
-    categories: parseCategories(feed["itunes:category"]),
-    tags: null,
-  };
-}
-
-function parseRdfFeed(rdf: any): Channel {
-  const channel = rdf.channel;
-  return {
-    channel_id: generateChannelId(channel.link),
-    rss: channel.link,
-    title: sanitizeText(channel.title),
-    description: sanitizeText(channel.description),
-    thumb: findThumbnail(channel),
-    updated_at: new Date(),
-    author: sanitizeText(channel["dc:creator"]) || null,
-    language: sanitizeText(channel["dc:language"]) || null,
-    explicit: null,
-    website: channel.link || null,
-    categories: null,
-    tags: null,
-  };
-}
-
 export function parse(xmlText: string): Channel {
   const xml = parser.parse(xmlText);
 
-  // Handle different feed formats
   if (xml.feed) {
-    // Check for YouTube feed (yt:channelId starts with UC)
-    const ytChannelId = xml.feed["yt:channelId"];
+    const feed = xml.feed;
+    const ytChannelId = feed["yt:channelId"];
     if (typeof ytChannelId === "string" && ytChannelId.startsWith("UC")) {
-      return parseYouTubeFeed(xml.feed);
+      const authorUri = feed.author?.uri;
+      const entries = feed.entry;
+      const firstEntry = Array.isArray(entries) ? entries[0] : entries;
+      return {
+        channel_id: `youtube.com/channel/${ytChannelId}`,
+        rss: authorUri || `https://www.youtube.com/channel/${ytChannelId}`,
+        title: sanitizeText(feed.title),
+        description: sanitizeText(feed.subtitle),
+        thumb: httpsUrl(firstEntry?.["media:group"]?.["media:thumbnail"]?.["@_url"]),
+        updated_at: new Date(),
+        author: sanitizeText(feed.author?.name) || null,
+        language: null,
+        explicit: null,
+        website: authorUri || `https://www.youtube.com/channel/${ytChannelId}`,
+        categories: null,
+        tags: ["youtube"],
+      };
     }
-    // Standard Atom
-    return parseAtomFeed(xml.feed);
-  } else if (xml.rss) {
-    // RSS 2.0
-    return parseRss2Feed(xml.rss.channel);
-  } else if (xml.RDF) {
-    // RSS 1.0
-    return parseRdfFeed(xml.RDF);
+    const link = Array.isArray(feed.link)
+      ? feed.link.find((l: any) => l["@_rel"] === "alternate")?.["@_href"] || feed.link[0]["@_href"]
+      : feed.link["@_href"];
+    return {
+      channel_id: generateChannelId(link),
+      rss: link,
+      title: sanitizeText(feed.title),
+      description: sanitizeText(feed.subtitle || feed.description),
+      thumb: feed.icon || feed.logo || feed["media:thumbnail"]?.["@_url"] || null,
+      updated_at: new Date(),
+      author: sanitizeText(feed.author?.name) || null,
+      language: feed["@_xml:lang"] || null,
+      explicit: parseExplicit(feed["itunes:explicit"]),
+      website: link || null,
+      categories: parseCategories(feed["itunes:category"]),
+      tags: null,
+    };
+  }
+
+  if (xml.rss) {
+    const channel = xml.rss.channel;
+    return {
+      channel_id: generateChannelId(channel.link),
+      rss: channel.link,
+      title: sanitizeText(channel.title),
+      description: sanitizeText(channel.description),
+      thumb: findThumbnail(channel),
+      updated_at: new Date(),
+      author: sanitizeText(channel["itunes:author"]) || null,
+      language: sanitizeText(channel.language) || null,
+      explicit: parseExplicit(channel["itunes:explicit"]),
+      website: channel.link || null,
+      categories: parseCategories(channel["itunes:category"]),
+      tags: null,
+    };
+  }
+
+  if (xml.RDF) {
+    const channel = xml.RDF.channel;
+    return {
+      channel_id: generateChannelId(channel.link),
+      rss: channel.link,
+      title: sanitizeText(channel.title),
+      description: sanitizeText(channel.description),
+      thumb: findThumbnail(channel),
+      updated_at: new Date(),
+      author: sanitizeText(channel["dc:creator"]) || null,
+      language: sanitizeText(channel["dc:language"]) || null,
+      explicit: null,
+      website: channel.link || null,
+      categories: null,
+      tags: null,
+    };
   }
 
   throw new Error("Unsupported feed format");

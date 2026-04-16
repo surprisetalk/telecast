@@ -139,7 +139,9 @@ function mockR2Bucket(): MockR2Bucket {
 async function captureConsoleError<T>(fn: () => Promise<T>): Promise<{ result: T; logs: string[] }> {
   const logs: string[] = [];
   const orig = console.error;
-  console.error = (...args: unknown[]) => { logs.push(args.map(String).join(" ")); };
+  console.error = (...args: unknown[]) => {
+    logs.push(args.map(String).join(" "));
+  };
   try {
     const result = await fn();
     return { result, logs };
@@ -311,8 +313,7 @@ function bigFeedXml(itemCount: number): string {
       <guid>item-${i}-guid</guid>
       <pubDate>Mon, 01 Jan 2024 12:00:00 GMT</pubDate>
       <enclosure url="https://example.com/${i}.mp3" length="100" type="audio/mpeg"/>
-    </item>`
-  ).join("\n");
+    </item>`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
@@ -640,7 +641,8 @@ const FAKE_CHANNEL_ROW = {
 };
 
 Deno.test("handleSearch: happy text search returns JSON rows", async () => {
-  const sql = mockSql([[], [FAKE_CHANNEL_ROW]]);
+  // Text branch emits 3 templates: thumb subquery + optional tag fragment + outer.
+  const sql = mockSql([[], [], [FAKE_CHANNEL_ROW]]);
   const res = await handleSearch({ sql: sql as any }, { query: "rust" });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("Content-Type"), "application/json");
@@ -649,26 +651,25 @@ Deno.test("handleSearch: happy text search returns JSON rows", async () => {
 });
 
 Deno.test("handleSearch: records a query with websearch_to_tsquery for text search", async () => {
-  const sql = mockSql([[], []]);
+  const sql = mockSql([[], [], []]);
   await handleSearch({ sql: sql as any }, { query: "rust" });
-  // 2 tagged-template calls: subquery + outer
-  const templates = sql.calls.filter(c => c.kind === "template");
-  assertEquals(templates.length, 2);
-  const outerSql = templates[1]!.strings!.join(" ");
+  const templates = sql.calls.filter((c) => c.kind === "template");
+  assertEquals(templates.length, 3);
+  const outerSql = templates[2]!.strings!.join(" ");
   assertStringIncludes(outerSql, "websearch_to_tsquery");
-  // Query string is interpolated as a value, not in the raw SQL
-  assert(templates[1]!.values!.includes("rust"));
+  assert(templates[2]!.values!.includes("rust"));
   assert(!outerSql.includes("'rust'"));
 });
 
-Deno.test("handleSearch: tag: prefix takes the any(tags) branch", async () => {
+Deno.test("handleSearch: tag: prefix filters by c.tags @> array", async () => {
   const sql = mockSql([[], []]);
   await handleSearch({ sql: sql as any }, { query: "tag:programming" });
-  const templates = sql.calls.filter(c => c.kind === "template");
+  const templates = sql.calls.filter((c) => c.kind === "template");
+  assertEquals(templates.length, 2);
   const outerSql = templates[1]!.strings!.join(" ");
-  assertStringIncludes(outerSql, "= any(tags)");
-  // Only the tag name after "tag:" is interpolated
-  assertEquals(templates[1]!.values![1], "programming");
+  assertStringIncludes(outerSql, "c.tags @>");
+  const tagsArg = templates[1]!.values!.find((v) => Array.isArray(v));
+  assertEquals(tagsArg, ["programming"]);
 });
 
 Deno.test("handleSearch: missing query returns 400 with field name and example", async () => {
@@ -689,13 +690,12 @@ Deno.test("handleSearch: empty results return 200 with empty array", async () =>
 });
 
 Deno.test("handleSearch: quality threshold appears in generated SQL", async () => {
-  const sql = mockSql([[], []]);
+  const sql = mockSql([[], [], []]);
   await handleSearch({ sql: sql as any }, { query: "rust" });
-  const templates = sql.calls.filter(c => c.kind === "template");
-  const outerSql = templates[1]!.strings!.join(" ");
+  const templates = sql.calls.filter((c) => c.kind === "template");
+  const outerSql = templates[2]!.strings!.join(" ");
   assertMatch(outerSql, /quality\s*>=\s*/);
-  // The threshold (10) is interpolated as a value, not inlined
-  assert(templates[1]!.values!.includes(10));
+  assert(templates[2]!.values!.includes(10));
 });
 
 // ==================================================================
@@ -729,8 +729,8 @@ Deno.test("handleRssProxy: cache miss fetches, parses, upserts, caches", async (
   assertEquals(res.status, 200);
   assertEquals(fetcher.calls, [url]);
   // sql was invoked both as direct (sql(channel)) and as template (insert ... ${...})
-  const directs = sql.calls.filter(c => c.kind === "direct");
-  const templates = sql.calls.filter(c => c.kind === "template");
+  const directs = sql.calls.filter((c) => c.kind === "direct");
+  const templates = sql.calls.filter((c) => c.kind === "template");
   assertEquals(directs.length, 1);
   assertEquals(templates.length, 1);
   // Inserted channel object shape
@@ -751,7 +751,7 @@ Deno.test("handleRssProxy: YouTube feed results in youtube.com/channel/... chann
   const sql = mockSql([null]);
   const fetcher = mockFetch({ [url]: xmlResponse(YOUTUBE_XML) });
   await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
-  const inserted = sql.calls.find(c => c.kind === "direct")!.direct as { channel_id: string; tags: string[] };
+  const inserted = sql.calls.find((c) => c.kind === "direct")!.direct as { channel_id: string; tags: string[] };
   assertEquals(inserted.channel_id, "youtube.com/channel/UCtestchannelid12345");
   assertEquals(inserted.tags, ["youtube"]);
 });
@@ -772,7 +772,11 @@ Deno.test("handleRssProxy: fetch rejection returns 502 with URL and cause", asyn
   const bucket = mockR2Bucket();
   const url = "https://broken.example.com/feed.xml";
   const sql = mockSql();
-  const fetcher = mockFetch({ [url]: () => { throw new TypeError("DNS lookup failed"); } });
+  const fetcher = mockFetch({
+    [url]: () => {
+      throw new TypeError("DNS lookup failed");
+    },
+  });
   const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   const body = await res.text();
@@ -881,7 +885,7 @@ Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG + logs status and
   const thumbUrl = "https://example.com/broken.jpg";
   const fetcher = mockFetch({ [thumbUrl]: new Response("", { status: 503, statusText: "Service Unavailable" }) });
   const { result: res, logs } = await captureConsoleError(() =>
-    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl }),
+    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
   );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
@@ -896,7 +900,7 @@ Deno.test("handleThumbProxy: non-image content-type → fallback SVG + logs type
     [thumbUrl]: new Response("<html/>", { status: 200, headers: { "content-type": "text/html" } }),
   });
   const { result: res, logs } = await captureConsoleError(() =>
-    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl }),
+    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
   );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
@@ -907,9 +911,13 @@ Deno.test("handleThumbProxy: non-image content-type → fallback SVG + logs type
 Deno.test("handleThumbProxy: fetch rejection → fallback SVG + logs cause and URL", async () => {
   const bucket = mockR2Bucket();
   const thumbUrl = "https://example.com/nope.jpg";
-  const fetcher = mockFetch({ [thumbUrl]: () => { throw new TypeError("DNS lookup failed"); } });
+  const fetcher = mockFetch({
+    [thumbUrl]: () => {
+      throw new TypeError("DNS lookup failed");
+    },
+  });
   const { result: res, logs } = await captureConsoleError(() =>
-    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl }),
+    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
   );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
