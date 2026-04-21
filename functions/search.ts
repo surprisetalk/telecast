@@ -2,7 +2,6 @@ import db from "postgres";
 import type { Env } from "./env";
 
 const QUALITY_THRESHOLD = 10;
-const TRIGRAM_THRESHOLD = 0.3;
 
 export type Sql = ReturnType<typeof db>;
 
@@ -70,11 +69,10 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
           where c.quality >= ${QUALITY_THRESHOLD}
             ${tags.length > 0 ? sql`and c.tags @> ${tags}::text[]` : sql``}
             and (
-              websearch_to_tsquery('english', ${text}) @@ (
-                to_tsvector('english', c.title || ' ' || coalesce(c.description, '')) ||
-                  coalesce(c.keywords, ''::tsvector)
-              )
-              or similarity(lower(c.title), ${text.toLowerCase()}) > ${TRIGRAM_THRESHOLD}
+              to_tsvector('english', c.title || ' ' || coalesce(c.description, ''))
+                @@ websearch_to_tsquery('english', ${text})
+              or c.keywords @@ websearch_to_tsquery('english', ${text})
+              or lower(c.title) % ${text.toLowerCase()}
             )
           order by score desc
           limit 50
@@ -89,7 +87,10 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
   }
 }
 
+let sqlClient: Sql | null = null;
+
 export async function onRequest({ request, env }: { request: Request; env: Env }) {
+  if (!sqlClient) sqlClient = db(env.DATABASE_URL!);
   const url = new URL(request.url);
-  return handleSearch({ sql: db(env.DATABASE_URL!) }, { query: url.searchParams.get("q") });
+  return handleSearch({ sql: sqlClient }, { query: url.searchParams.get("q") });
 }
