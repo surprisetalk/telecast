@@ -356,7 +356,7 @@ update msg model =
                     ( { model | search = Just { searchState | query = query } }
                     , Cmd.batch
                         [ Nav.replaceUrl model.key ("/?q=" ++ Url.percentEncode query)
-                        , Process.sleep 350 |> Task.perform (always (SearchDebounced query))
+                        , Process.sleep 600 |> Task.perform (always (SearchDebounced query))
                         ]
                     )
 
