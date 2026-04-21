@@ -43,9 +43,10 @@ function extractText(raw: any): string {
 
 export function httpsUrl(url: string | null | undefined): string | null {
   if (!url) return null;
-  if (url.startsWith("https://")) return url;
-  if (url.startsWith("http://")) return url.replace("http://", "https://");
-  if (url.startsWith("//")) return "https:" + url;
+  const s = url.trim();
+  if (/^https:\/\//i.test(s)) return "https://" + s.slice(8);
+  if (/^http:\/\//i.test(s)) return "https://" + s.slice(7);
+  if (s.startsWith("//")) return "https:" + s;
   return null;
 }
 
@@ -260,12 +261,13 @@ export function parse(xmlText: string): Channel {
     const feed = xml.feed;
     const ytChannelId = feed["yt:channelId"];
     if (typeof ytChannelId === "string" && ytChannelId.startsWith("UC")) {
-      const authorUri = feed.author?.uri;
+      const authorUri = httpsUrl(feed.author?.uri);
       const entries = feed.entry;
       const firstEntry = Array.isArray(entries) ? entries[0] : entries;
+      const channelUrl = `https://www.youtube.com/channel/${ytChannelId}`;
       return {
         channel_id: `youtube.com/channel/${ytChannelId}`,
-        rss: authorUri || `https://www.youtube.com/channel/${ytChannelId}`,
+        rss: authorUri || channelUrl,
         title: sanitizeText(feed.title),
         description: sanitizeText(feed.subtitle),
         thumb: httpsUrl(firstEntry?.["media:group"]?.["media:thumbnail"]?.["@_url"]),
@@ -273,20 +275,21 @@ export function parse(xmlText: string): Channel {
         author: sanitizeText(feed.author?.name) || null,
         language: null,
         explicit: null,
-        website: authorUri || `https://www.youtube.com/channel/${ytChannelId}`,
+        website: authorUri || channelUrl,
         categories: null,
         tags: ["youtube"],
       };
     }
-    const link = Array.isArray(feed.link)
+    const rawLink = Array.isArray(feed.link)
       ? feed.link.find((l: any) => l["@_rel"] === "alternate")?.["@_href"] || feed.link[0]["@_href"]
       : feed.link["@_href"];
+    const link = httpsUrl(rawLink);
     return {
-      channel_id: generateChannelId(link),
-      rss: link,
+      channel_id: generateChannelId(rawLink),
+      rss: link!,
       title: sanitizeText(feed.title),
       description: sanitizeText(feed.subtitle || feed.description),
-      thumb: feed.icon || feed.logo || feed["media:thumbnail"]?.["@_url"] || null,
+      thumb: httpsUrl(feed.icon || feed.logo || feed["media:thumbnail"]?.["@_url"]),
       updated_at: new Date(),
       author: sanitizeText(feed.author?.name) || null,
       language: feed["@_xml:lang"] || null,
@@ -299,17 +302,18 @@ export function parse(xmlText: string): Channel {
 
   if (xml.rss) {
     const channel = xml.rss.channel;
+    const link = httpsUrl(channel.link);
     return {
       channel_id: generateChannelId(channel.link),
-      rss: channel.link,
+      rss: link!,
       title: sanitizeText(channel.title),
       description: sanitizeText(channel.description),
-      thumb: findThumbnail(channel),
+      thumb: httpsUrl(findThumbnail(channel)),
       updated_at: new Date(),
       author: sanitizeText(channel["itunes:author"]) || null,
       language: sanitizeText(channel.language) || null,
       explicit: parseExplicit(channel["itunes:explicit"]),
-      website: channel.link || null,
+      website: link,
       categories: parseCategories(channel["itunes:category"]),
       tags: null,
     };
@@ -317,17 +321,18 @@ export function parse(xmlText: string): Channel {
 
   if (xml.RDF) {
     const channel = xml.RDF.channel;
+    const link = httpsUrl(channel.link);
     return {
       channel_id: generateChannelId(channel.link),
-      rss: channel.link,
+      rss: link!,
       title: sanitizeText(channel.title),
       description: sanitizeText(channel.description),
-      thumb: findThumbnail(channel),
+      thumb: httpsUrl(findThumbnail(channel)),
       updated_at: new Date(),
       author: sanitizeText(channel["dc:creator"]) || null,
       language: sanitizeText(channel["dc:language"]) || null,
       explicit: null,
-      website: channel.link || null,
+      website: link,
       categories: null,
       tags: null,
     };

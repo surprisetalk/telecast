@@ -87,10 +87,8 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
   }
 }
 
-let sqlClient: Sql | null = null;
-
 export async function onRequest({ request, env }: { request: Request; env: Env }) {
-  if (!sqlClient) sqlClient = db(env.DATABASE_URL!);
+  const sql = db(env.DATABASE_URL!);
   const url = new URL(request.url);
-  return handleSearch({ sql: sqlClient }, { query: url.searchParams.get("q") });
+  return handleSearch({ sql }, { query: url.searchParams.get("q") });
 }

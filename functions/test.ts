@@ -517,6 +517,12 @@ Deno.test("httpsUrl: garbage → null", () => {
   assertEquals(httpsUrl(undefined), null);
 });
 
+Deno.test("httpsUrl: uppercase scheme lowercased", () => {
+  assertEquals(httpsUrl("HTTPS://memorizing.libsyn.com/rss"), "https://memorizing.libsyn.com/rss");
+  assertEquals(httpsUrl("Http://example.com/feed"), "https://example.com/feed");
+  assertEquals(httpsUrl("  https://example.com "), "https://example.com");
+});
+
 Deno.test("parse: RSS 2.0 podcast", () => {
   const channel = parse(PODCAST_ITUNES_XML);
   assertEquals(channel.title, "Test Podcast & Friends");
