@@ -247,6 +247,7 @@ header .cols>* {
   font-size: var(--text-sm);
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 header a {
@@ -1292,53 +1293,8 @@ audio#player {
 }
 
 /* --------------------------------------------------------------------------
-   Welcome Hero (empty library)
+   Discover More (bottom chip cloud)
    -------------------------------------------------------------------------- */
-.welcome-hero {
-  padding: var(--space-8) var(--space-6);
-  text-align: center;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-lg);
-  background:
-    radial-gradient(circle at 30% 0%, var(--accent-ghost), transparent 60%),
-    var(--surface-elevated, transparent);
-  margin: var(--space-4) 0;
-}
-
-.welcome-hero h2 {
-  font-family: var(--font-display);
-  font-size: var(--text-2xl, 1.75rem);
-  margin: 0 0 var(--space-2);
-  letter-spacing: -0.02em;
-}
-
-.welcome-hero p {
-  max-width: 56ch;
-  margin: 0 auto var(--space-5);
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
-.starter-chips {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: var(--space-2);
-}
-
-/* --------------------------------------------------------------------------
-   Featured Category Rows
-   -------------------------------------------------------------------------- */
-.featured-categories {
-  gap: var(--space-6);
-}
-
-.category-row {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-
 .category-title {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
@@ -1350,53 +1306,6 @@ audio#player {
   padding: 0 var(--space-2);
 }
 
-.category-title a {
-  color: inherit;
-  text-decoration: none;
-  border-bottom: 1px solid transparent;
-  transition: color var(--anim), border-color var(--anim);
-}
-
-.category-title a:hover {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-.category-scroll {
-  display: flex;
-  flex-direction: row;
-  gap: var(--space-3);
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: var(--space-2);
-  scroll-snap-type: x proximity;
-}
-
-.category-scroll .bar-thumb {
-  width: 180px;
-  height: 101px;
-  opacity: 0.85;
-  scroll-snap-align: start;
-}
-
-.category-scroll .bar-thumb:hover {
-  opacity: 1;
-  border-color: var(--accent);
-}
-
-.featured-hero .category-title {
-  font-size: var(--text-base);
-  color: var(--accent);
-}
-
-.featured-hero .category-scroll .bar-thumb {
-  width: 240px;
-  height: 135px;
-}
-
-/* --------------------------------------------------------------------------
-   Discover More (bottom chip cloud)
-   -------------------------------------------------------------------------- */
 .discover-more {
   display: flex;
   flex-direction: column;
@@ -1451,6 +1360,17 @@ audio#player {
 @media (max-width: 767px) {
   header.cols {
     padding: var(--space-3) var(--space-4);
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-3);
+  }
+
+  header.cols .cols {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  header .cols>* {
+    letter-spacing: 0.04em;
   }
 
   #my-feed,

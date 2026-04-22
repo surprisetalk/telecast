@@ -1272,81 +1272,15 @@ viewBody model =
                                     fillEpisodes
                         in
                         if List.isEmpty episodesToShow && List.isEmpty fillEpisodes then
-                            if Dict.isEmpty lib.channels then
-                                viewWelcomeHero
-
-                            else
-                                div [ class "empty-state" ] [ text "No episodes in your queue. Paste a feed URL in the search bar to subscribe." ]
+                            div [ class "empty-state" ]
+                                [ text "Loading featured episodes…" ]
 
                         else
                             div [ class "autogrid" ] (queueCards ++ fillCards)
                     )
                     model.library
-                , viewFeaturedCategories model
                 , viewDiscoverMore
                 ]
-
-
-viewFeaturedCategories : Model -> Html Msg
-viewFeaturedCategories model =
-    case model.featuredByCategory of
-        Loadable (Just (Ok cats)) ->
-            let
-                subscribedRss =
-                    getLibrary model
-                        |> Maybe.map (\lib -> lib.channels |> Dict.keys |> Set.fromList)
-                        |> Maybe.withDefault Set.empty
-
-                prettyName s =
-                    s
-                        |> String.replace "-and-" " & "
-                        |> String.replace "-" " "
-
-                categoryOrder =
-                    "featured" :: List.map Tuple.first discoverTags
-
-                row cat =
-                    case Dict.get cat cats of
-                        Just channels ->
-                            let
-                                unseen =
-                                    channels |> List.filter (\c -> not (Set.member (Url.toString c.rss) subscribedRss))
-
-                                rowClass =
-                                    if cat == "featured" then
-                                        "category-row featured-hero"
-
-                                    else
-                                        "category-row"
-                            in
-                            if List.isEmpty unseen then
-                                text ""
-
-                            else
-                                div [ class rowClass ]
-                                    [ h3 [ class "category-title" ]
-                                        [ a [ href ("/?tag=" ++ cat) ] [ text (prettyName cat) ] ]
-                                    , div [ class "cols category-scroll" ]
-                                        (List.map viewBarChannel unseen)
-                                    ]
-
-                        Nothing ->
-                            text ""
-            in
-            div [ class "rows featured-categories" ] (List.map row categoryOrder)
-
-        _ ->
-            text ""
-
-
-viewWelcomeHero : Html Msg
-viewWelcomeHero =
-    div [ class "welcome-hero" ]
-        [ h2 [] [ text "Welcome to Telecasts" ]
-        , p [] [ text "A lean aggregator for podcasts and video feeds. Pick a category to get started, search for a channel, or paste any RSS URL." ]
-        , div [ class "starter-chips" ]
-            (List.map viewTagLink discoverTags)
-        ]
 
 
 viewDiscoverMore : Html Msg
