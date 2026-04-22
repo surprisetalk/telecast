@@ -71,7 +71,6 @@ type alias Model =
     , discoverPending : Maybe { pending : Set String, buffer : List DiscoverEpisode } -- batched discover refresh
     , feedSnapshot : Maybe (List Episode) -- snapshot of queue on My Feed entry; sticky across watched marks
     , featured : Loadable (List Channel)
-    , featuredByCategory : Loadable (Dict String (List Channel))
     , showHistory : Bool
     }
 
@@ -173,10 +172,6 @@ init flags url key =
             { url = "/search?q=tag:featured"
             , expect = Http.expectJson FeaturedFetched (D.list channelDecoder)
             }
-        , Http.get
-            { url = "/featured"
-            , expect = Http.expectJson FeaturedByCategoryFetched (D.dict (D.list channelDecoder))
-            }
         , Task.perform (always RefreshFeeds) (Task.succeed ())
         ]
     )
@@ -211,7 +206,6 @@ initModel flags key =
     , discoverPending = Nothing
     , feedSnapshot = Nothing
     , featured = cachedFeatured
-    , featuredByCategory = Loadable Nothing
     , showHistory = False
     }
 
@@ -260,7 +254,6 @@ type Msg
     | EpisodeWatched Id
     | SearchUrlFetched String (Result String Feed)
     | FeaturedFetched (Result Http.Error (List Channel))
-    | FeaturedByCategoryFetched (Result Http.Error (Dict String (List Channel)))
     | DiscoverFeedFetched Url (Result String Feed)
     | MaybeRefreshDiscover Time.Posix
     | LinkClicked Browser.UrlRequest
@@ -550,12 +543,6 @@ update msg model =
 
         FeaturedFetched (Err err) ->
             ( { model | featured = Loadable (Just (Err (httpErrorToString err))) }, Cmd.none )
-
-        FeaturedByCategoryFetched (Ok d) ->
-            ( { model | featuredByCategory = Loadable (Just (Ok d)) }, Cmd.none )
-
-        FeaturedByCategoryFetched (Err err) ->
-            ( { model | featuredByCategory = Loadable (Just (Err (httpErrorToString err))) }, Cmd.none )
 
         DiscoverFeedFetched rss result ->
             case ( model.discoverPending, model.library ) of
@@ -1329,9 +1316,9 @@ viewPlayerBar model =
                         |> List.take 5
 
                 featuredChannels =
-                    case model.featuredByCategory of
-                        Loadable (Just (Ok cats)) ->
-                            Dict.get "featured" cats |> Maybe.withDefault []
+                    case model.featured of
+                        Loadable (Just (Ok channels)) ->
+                            channels
 
                         _ ->
                             []
