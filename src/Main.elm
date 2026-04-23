@@ -4,6 +4,7 @@ import Browser
 import Browser.Dom
 import Browser.Events
 import Browser.Navigation as Nav
+import Char
 import Dict exposing (Dict)
 import Html exposing (..)
 import Html.Attributes as A exposing (class, href, id, src, title, value)
@@ -556,7 +557,7 @@ update msg model =
                                                 |> Dict.values
                                                 |> List.sortBy .index
                                                 |> List.filter (not << isLikelyShort)
-                                                |> List.take 2
+                                                |> List.take 1
                                                 |> List.map (\e -> { rss = rss, episode = enrichEpisodeWith feed.channel e })
                                            )
 
@@ -573,7 +574,7 @@ update msg model =
                                     lib.discover
 
                                 else
-                                    newBuffer |> List.take 50
+                                    newBuffer |> List.take 30
 
                             newLib =
                                 { lib | discover = newDiscover }
@@ -616,9 +617,13 @@ update msg model =
 
                     else
                         let
+                            shuffleScore s =
+                                String.foldl (\ch acc -> modBy 1000003 (acc * 31 + Char.toCode ch)) nowMs s
+
                             targets =
                                 channels
                                     |> List.filter (\c -> not (Dict.member (Url.toString c.rss) lib.channels))
+                                    |> List.sortBy (\c -> shuffleScore (Url.toString c.rss))
                                     |> List.take 30
 
                             cmds =
