@@ -554,7 +554,7 @@ update msg model =
                                     buffer
                                         ++ (feed.episodes
                                                 |> Dict.values
-                                                |> List.sortBy (\e -> -e.index)
+                                                |> List.sortBy .index
                                                 |> List.filter (not << isLikelyShort)
                                                 |> List.take 2
                                                 |> List.map (\e -> { rss = rss, episode = enrichEpisodeWith feed.channel e })
