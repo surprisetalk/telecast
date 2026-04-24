@@ -73,6 +73,7 @@ type alias Model =
     , feedSnapshot : Maybe (List Episode) -- snapshot of queue on My Feed entry; sticky across watched marks
     , featured : Loadable (List Channel)
     , showHistory : Bool
+    , playerError : Maybe Id
     }
 
 
@@ -208,6 +209,7 @@ initModel flags key =
     , feedSnapshot = Nothing
     , featured = cachedFeatured
     , showHistory = False
+    , playerError = Nothing
     }
 
 
@@ -261,6 +263,9 @@ type Msg
     | UrlChanged Url
     | RefreshFeeds
     | RefreshFeedFetched String (Result String Feed)
+    | ChannelRetrying String
+    | PlayerFailed Id
+    | PlayerRetrying
     | KeyPressed String
     | NoOp
 
@@ -299,26 +304,38 @@ update msg model =
                 rssUrl =
                     Url.fromString originalRss |> Maybe.withDefault feed.channel.rss
 
-                setChannelRss : Url -> Channel -> Channel
-                setChannelRss url channel =
-                    { channel | rss = url }
-
                 correctedFeed =
-                    { feed | channel = setChannelRss rssUrl feed.channel }
-            in
-            recordPlayback
-                ( { model | channel = Just ( rssUrl, Loadable (Just (Ok correctedFeed)) ), search = Nothing, episode = maybeEpisodeId }
-                , Cmd.none
-                )
+                    { feed | channel = (\c -> { c | rss = rssUrl }) feed.channel }
 
-        FeedFetched originalRss maybeEpisodeId (Err err) ->
-            case model.channel of
-                Just ( rssUrl, _ ) ->
-                    ( { model | channel = Just ( rssUrl, Loadable (Just (Err err)) ) }
+                isStale =
+                    case model.channel of
+                        Just ( currentRss, _ ) ->
+                            currentRss /= rssUrl
+
+                        Nothing ->
+                            True
+            in
+            if isStale then
+                ( model, Cmd.none )
+
+            else
+                recordPlayback
+                    ( { model | channel = Just ( rssUrl, Loadable (Just (Ok correctedFeed)) ), search = Nothing, episode = maybeEpisodeId }
                     , Cmd.none
                     )
 
-                Nothing ->
+        FeedFetched originalRss _ (Err err) ->
+            case ( Url.fromString originalRss, model.channel ) of
+                ( Just rssUrl, Just ( currentRss, _ ) ) ->
+                    if rssUrl == currentRss then
+                        ( { model | channel = Just ( currentRss, Loadable (Just (Err err)) ) }
+                        , Cmd.none
+                        )
+
+                    else
+                        ( model, Cmd.none )
+
+                _ ->
                     ( model, Cmd.none )
 
         ChannelsFetched result ->
@@ -769,6 +786,25 @@ update msg model =
         NoOp ->
             ( model, Cmd.none )
 
+        ChannelRetrying rss ->
+            case model.channel of
+                Just ( rssUrl, _ ) ->
+                    ( { model | channel = Just ( rssUrl, Loadable Nothing ) }
+                    , Http.get
+                        { url = "/proxy/rss/" ++ Url.percentEncode rss
+                        , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss Nothing)
+                        }
+                    )
+
+                Nothing ->
+                    ( model, Cmd.none )
+
+        PlayerFailed episodeId ->
+            ( { model | playerError = Just episodeId }, Cmd.none )
+
+        PlayerRetrying ->
+            ( { model | playerError = Nothing }, Cmd.none )
+
         KeyPressed key ->
             case key of
                 "j" ->
@@ -797,7 +833,7 @@ routeQueryParser =
 
 
 route : Url -> Model -> ( Model, Cmd Msg )
-route url model =
+route url modelIn =
     let
         parsedQuery =
             P.parse (P.top <?> routeQueryParser) { url | path = "/" }
@@ -811,6 +847,13 @@ route url model =
 
         episodeId =
             parsedQuery.e
+
+        model =
+            if modelIn.playerError /= Nothing && modelIn.episode /= episodeId then
+                { modelIn | playerError = Nothing }
+
+            else
+                modelIn
     in
     case ( url.path, searchQuery, tagFilter ) of
         ( "/history", _, _ ) ->
@@ -1057,33 +1100,40 @@ view model =
             , case findSelectedEpisode model.episode model.channel model.library of
                 Just ( episode, maybeChannel ) ->
                     div [ class "rows", id "player-section" ]
-                        [ let
-                            srcStr =
-                                Url.toString episode.src
-
-                            isPeerTubeDownload =
-                                String.contains "/download/videos/" srcStr
-
-                            peerTubeEmbedUrl =
-                                if isPeerTubeDownload then
-                                    episode.id
-                                        |> String.replace "/w/" "/videos/embed/"
-                                        |> String.replace "/videos/watch/" "/videos/embed/"
-
-                                else
-                                    ""
-                          in
-                          if String.contains "youtube" srcStr then
-                            iframe [ id "player", src srcStr, A.autoplay True ] []
-
-                          else if isPeerTubeDownload && String.contains "/videos/embed/" peerTubeEmbedUrl then
-                            iframe [ id "player", src peerTubeEmbedUrl, A.autoplay True, A.attribute "allowfullscreen" "true", A.attribute "sandbox" "allow-same-origin allow-scripts allow-popups allow-forms" ] []
-
-                          else if String.endsWith ".mp3" srcStr || String.endsWith ".m4a" srcStr then
-                            audio [ id "player", src srcStr, A.controls True, A.autoplay True ] []
+                        [ if model.playerError == Just episode.id then
+                            viewPlayerError episode
 
                           else
-                            video [ id "player", src srcStr, A.controls True, A.autoplay True ] []
+                            let
+                                srcStr =
+                                    Url.toString episode.src
+
+                                isPeerTubeDownload =
+                                    String.contains "/download/videos/" srcStr
+
+                                peerTubeEmbedUrl =
+                                    if isPeerTubeDownload then
+                                        episode.id
+                                            |> String.replace "/w/" "/videos/embed/"
+                                            |> String.replace "/videos/watch/" "/videos/embed/"
+
+                                    else
+                                        ""
+
+                                onMediaError =
+                                    Html.Events.on "error" (D.succeed (PlayerFailed episode.id))
+                            in
+                            if String.contains "youtube" srcStr then
+                                iframe [ id "player", src srcStr, A.autoplay True ] []
+
+                            else if isPeerTubeDownload && String.contains "/videos/embed/" peerTubeEmbedUrl then
+                                iframe [ id "player", src peerTubeEmbedUrl, A.autoplay True, A.attribute "allowfullscreen" "true", A.attribute "sandbox" "allow-same-origin allow-scripts allow-popups allow-forms" ] []
+
+                            else if String.endsWith ".mp3" srcStr || String.endsWith ".m4a" srcStr then
+                                audio [ id "player", src srcStr, A.controls True, A.autoplay True, onMediaError ] []
+
+                            else
+                                video [ id "player", src srcStr, A.controls True, A.autoplay True, onMediaError ] []
                         , div [ id "player-info" ]
                             [ h2 [] [ text episode.title ]
                             , case maybeChannel of
@@ -1125,7 +1175,7 @@ viewBody model =
                     ]
                 , div [ class "quick-tags" ]
                     (List.map viewTagLink discoverTags)
-                , viewLoadable
+                , viewLoadable (Just SearchSubmitting)
                     (\channels ->
                         if List.isEmpty channels then
                             div [ class "empty-state" ] [ text "No channels found" ]
@@ -1191,12 +1241,12 @@ viewBody model =
                         [ div [ class "loading" ] [] ]
 
                     Loadable (Just (Err err)) ->
-                        [ div [ class "error" ] [ text err ] ]
+                        [ viewError (Just (ChannelRetrying (Url.toString rss))) err ]
                 )
 
         ( Nothing, Nothing ) ->
             div [ class "rows", id "my-feed" ]
-                [ viewLoadable
+                [ viewLoadable Nothing
                     (\lib ->
                         let
                             episodesToShow =
@@ -1273,7 +1323,7 @@ viewDiscoverMore =
 viewHistory : Model -> Html Msg
 viewHistory model =
     div [ class "rows", id "history" ]
-        [ viewLoadable
+        [ viewLoadable Nothing
             (\lib ->
                 if List.isEmpty lib.watchHistory then
                     div [ class "empty-state" ] [ text "No watch history yet." ]
@@ -1472,6 +1522,8 @@ viewThumbInner className maybeUrl =
             img
                 [ class className
                 , src ("/proxy/thumb/" ++ Url.percentEncode (Url.toString url))
+                , A.attribute "loading" "lazy"
+                , A.attribute "decoding" "async"
                 , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
                 ]
                 []
@@ -1507,12 +1559,16 @@ viewChannelThumbLayered maybeUrl =
             [ img
                 [ class "channel-thumb-bg"
                 , src thumbUrl
+                , A.attribute "loading" "lazy"
+                , A.attribute "decoding" "async"
                 , A.attribute "aria-hidden" "true"
                 ]
                 []
             , img
                 [ class fgClass
                 , src thumbUrl
+                , A.attribute "loading" "lazy"
+                , A.attribute "decoding" "async"
                 , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
                 ]
                 []
@@ -1638,17 +1694,43 @@ channelThumbWithFallback channelThumb episodes =
                     List.head anyThumb
 
 
-viewLoadable : (a -> Html msg) -> Loadable a -> Html msg
-viewLoadable viewOk loadable =
+viewPlayerError : Episode -> Html Msg
+viewPlayerError episode =
+    div [ class "player-error" ]
+        [ div [ class "player-error-msg" ] [ text "Couldn't play this file." ]
+        , div [ class "player-error-actions" ]
+            [ button [ class "error-retry", onClick PlayerRetrying ] [ text "retry" ]
+            , a [ href (Url.toString episode.src), A.target "_blank", A.rel "noopener", class "player-error-link" ]
+                [ text "open source" ]
+            ]
+        ]
+
+
+viewLoadable : Maybe msg -> (a -> Html msg) -> Loadable a -> Html msg
+viewLoadable retryMsg viewOk loadable =
     case loadable of
         Loadable Nothing ->
             div [ class "loading" ] []
 
         Loadable (Just (Err err)) ->
-            div [ class "error" ] [ text err ]
+            viewError retryMsg err
 
         Loadable (Just (Ok a)) ->
             viewOk a
+
+
+viewError : Maybe msg -> String -> Html msg
+viewError retryMsg err =
+    div [ class "error" ]
+        (text err
+            :: (case retryMsg of
+                    Just msg ->
+                        [ button [ class "error-retry", onClick msg ] [ text "retry" ] ]
+
+                    Nothing ->
+                        []
+               )
+        )
 
 
 discoverTags : List ( String, String )

@@ -55,6 +55,23 @@
           console.error("Error saving library:", error);
         }
       });
+
+      document.addEventListener("keydown", event => {
+        const tag = event.target?.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA") return;
+        const player = document.getElementById("player");
+        if (!player || typeof player.play !== "function") return;
+        if (event.key === " ") {
+          event.preventDefault();
+          player.paused ? player.play() : player.pause();
+        } else if (event.key === "ArrowLeft" && Number.isFinite(player.currentTime)) {
+          event.preventDefault();
+          player.currentTime = Math.max(0, player.currentTime - 15);
+        } else if (event.key === "ArrowRight" && Number.isFinite(player.currentTime)) {
+          event.preventDefault();
+          player.currentTime = Math.min(player.duration || Infinity, player.currentTime + 15);
+        }
+      });
     </script>
   </body>
 </html>
