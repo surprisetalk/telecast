@@ -816,6 +816,7 @@ audio#player {
 
 /* Card action buttons — inline before title */
 .card-action {
+  position: relative;
   flex-shrink: 0;
   width: var(--space-5);
   font-family: var(--font-mono);
@@ -831,6 +832,12 @@ audio#player {
     color var(--anim),
     border-color var(--anim),
     background var(--anim);
+}
+
+.card-action::before {
+  content: "";
+  position: absolute;
+  inset: -10px;
 }
 
 .card-action:hover {
@@ -1271,6 +1278,8 @@ audio#player {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.25ch;
   min-height: 160px;
   padding: var(--space-6);
   text-align: center;
@@ -1279,6 +1288,19 @@ audio#player {
   color: var(--text-tertiary);
   font-style: italic;
   letter-spacing: -0.01em;
+}
+
+.empty-state em {
+  font-family: var(--font-mono);
+  font-style: normal;
+  font-size: 0.9em;
+  color: var(--text-secondary);
+}
+
+.empty-state a {
+  color: var(--accent-hot);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 /* Error */

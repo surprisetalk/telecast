@@ -1028,7 +1028,7 @@ loadChannel rss episodeId model =
 
 view : Model -> Browser.Document Msg
 view model =
-    { title = "Telecasts"
+    { title = documentTitle model
     , body =
         [ div [ class "rows", id "body" ]
             [ header [ class "cols" ]
@@ -1178,7 +1178,11 @@ viewBody model =
                 , viewLoadable (Just SearchSubmitting)
                     (\channels ->
                         if List.isEmpty channels then
-                            div [ class "empty-state" ] [ text "No channels found" ]
+                            div [ class "empty-state" ]
+                                [ text "No channels for "
+                                , em [] [ text searchState.query ]
+                                , text ". Try a broader term or a tag: filter."
+                                ]
 
                         else
                             div [ class "autogrid", id "results" ]
@@ -1300,8 +1304,15 @@ viewBody model =
                                     fillEpisodes
                         in
                         if List.isEmpty episodesToShow && List.isEmpty fillEpisodes then
-                            div [ class "empty-state" ]
-                                [ text "Loading featured episodes…" ]
+                            if Dict.isEmpty lib.channels then
+                                div [ class "empty-state" ]
+                                    [ text "Subscribe to a channel to build your feed. Try "
+                                    , a [ href "/?q=" ] [ text "search" ]
+                                    , text "."
+                                    ]
+
+                            else
+                                div [ class "empty-state" ] [ text "Finding episodes…" ]
 
                         else
                             div [ class "autogrid" ] (queueCards ++ fillCards)
@@ -1326,7 +1337,7 @@ viewHistory model =
         [ viewLoadable Nothing
             (\lib ->
                 if List.isEmpty lib.watchHistory then
-                    div [ class "empty-state" ] [ text "No watch history yet." ]
+                    div [ class "empty-state" ] [ text "Play an episode to start your history." ]
 
                 else
                     div [ class "autogrid" ] (List.map (viewEpisodeCard (Just lib) Nothing) lib.watchHistory)
@@ -1692,6 +1703,45 @@ channelThumbWithFallback channelThumb episodes =
 
                 [] ->
                     List.head anyThumb
+
+
+documentTitle : Model -> String
+documentTitle model =
+    let
+        playingPrefix =
+            case findSelectedEpisode model.episode model.channel model.library of
+                Just ( ep, _ ) ->
+                    "▸ " ++ ep.title ++ " — "
+
+                Nothing ->
+                    ""
+
+        context =
+            if model.showHistory then
+                "History"
+
+            else
+                case ( model.search, model.channel ) of
+                    ( _, Just ( _, Loadable (Just (Ok feed)) ) ) ->
+                        feed.channel.title
+
+                    ( Just { query }, _ ) ->
+                        if String.isEmpty query then
+                            "Telecasts"
+
+                        else if query == "tag:saved" then
+                            "My Channels"
+
+                        else if String.startsWith "tag:" query then
+                            String.dropLeft 4 query
+
+                        else
+                            "Search: " ++ query
+
+                    _ ->
+                        "Telecasts"
+    in
+    playingPrefix ++ context
 
 
 viewPlayerError : Episode -> Html Msg
