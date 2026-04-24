@@ -1150,21 +1150,7 @@ viewBody model =
                                     , div [ class "channel-header-meta" ]
                                         (List.filterMap identity
                                             [ feed.channel.author |> Maybe.map (\a -> span [] [ text a ])
-                                            , (case feed.channel.episodeCount of
-                                                Just c ->
-                                                    Just c
-
-                                                Nothing ->
-                                                    let
-                                                        n =
-                                                            Dict.size feed.episodes
-                                                    in
-                                                    if n > 0 then
-                                                        Just n
-
-                                                    else
-                                                        Nothing
-                                              )
+                                            , channelEpisodeCount feed.channel.episodeCount feed.episodes
                                                 |> Maybe.map (\c -> span [] [ text (String.fromInt c ++ " episodes") ])
                                             ]
                                             |> List.intersperse (span [ class "meta-sep" ] [ text " · " ])
@@ -1603,6 +1589,24 @@ viewChannelCard maybeLib channel =
                     text ""
             ]
         ]
+
+
+channelEpisodeCount : Maybe Int -> Dict String Episode -> Maybe Int
+channelEpisodeCount declared episodes =
+    case declared of
+        Just c ->
+            Just c
+
+        Nothing ->
+            let
+                n =
+                    Dict.size episodes
+            in
+            if n > 0 then
+                Just n
+
+            else
+                Nothing
 
 
 channelThumbWithFallback : Maybe Url -> Dict String Episode -> Maybe Url

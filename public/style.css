@@ -10,7 +10,7 @@
    -------------------------------------------------------------------------- */
 :root {
   /* Dark Mode (default) — warm off-black, grayscale */
-  --header-color: #000000;
+  --header-color: oklch(0.04 0.005 60);
   --bg-color: #0b0b0d;
   --surface-color: #0b0b0d;
   --surface-elevated: #1a1a1e;
@@ -24,7 +24,7 @@
 
   /* Grayscale accent */
   --accent: #ccc;
-  --accent-hot: #fff;
+  --accent-hot: oklch(0.99 0.003 60);
   --accent-dim: rgba(255, 255, 255, 0.12);
   --accent-ghost: rgba(255, 255, 255, 0.05);
 
@@ -79,7 +79,7 @@
 /* Light Mode — warm paper */
 @media (prefers-color-scheme: light) {
   :root {
-    --header-color: #ffffff;
+    --header-color: oklch(0.99 0.003 60);
     --bg-color: #fafafa;
     --surface-color: #fafafa;
     --surface-elevated: #f0f0f0;
@@ -91,7 +91,7 @@
     --active-bg: rgba(0, 0, 0, 0.06);
     --focus-ring: rgba(0, 0, 0, 0.2);
     --accent: #444;
-    --accent-hot: #111;
+    --accent-hot: oklch(0.12 0.005 60);
     --accent-dim: rgba(0, 0, 0, 0.08);
     --accent-ghost: rgba(0, 0, 0, 0.03);
     --shadow-sm: 0 4px 12px -2px rgba(0, 0, 0, 0.08);
@@ -327,7 +327,7 @@ header button.back:hover {
 
 #player-info {
   padding: var(--space-5) var(--space-6);
-  background: linear-gradient(180deg, var(--surface-color) 0%, var(--bg-color) 100%);
+  background: var(--surface-color);
 }
 
 #player-info::before {
@@ -1282,7 +1282,6 @@ audio#player {
   color: var(--accent);
   background: var(--accent-ghost);
   border: 1px solid var(--accent);
-  border-left-width: 3px;
   border-radius: var(--radius-sm);
 }
 
@@ -1312,7 +1311,6 @@ audio#player {
   gap: var(--space-3);
   padding-top: var(--space-6);
   border-top: 1px dashed var(--border-color);
-  margin-top: var(--space-4);
 }
 
 /* --------------------------------------------------------------------------
