@@ -1124,7 +1124,7 @@ view model =
                                     Html.Events.on "error" (D.succeed (PlayerFailed episode.id))
                             in
                             if String.contains "youtube" srcStr then
-                                iframe [ id "player", src srcStr, A.autoplay True ] []
+                                iframe [ id "player", src srcStr, A.autoplay True, A.attribute "allow" "fullscreen; autoplay; encrypted-media; picture-in-picture", A.attribute "allowfullscreen" "true" ] []
 
                             else if isPeerTubeDownload && String.contains "/videos/embed/" peerTubeEmbedUrl then
                                 iframe [ id "player", src peerTubeEmbedUrl, A.autoplay True, A.attribute "allowfullscreen" "true", A.attribute "sandbox" "allow-same-origin allow-scripts allow-popups allow-forms" ] []
