@@ -1290,7 +1290,7 @@ viewBody model =
                                                 && not (Set.member (Url.toString d.rss) subscribed)
                                                 && not (isLikelyShort d.episode)
                                         )
-                                    |> List.take (max 0 (12 - List.length episodesToShow))
+                                    |> List.take (max 0 (30 - List.length episodesToShow))
 
                             queueCards =
                                 List.map (viewEpisodeCard (Just lib) Nothing) episodesToShow
