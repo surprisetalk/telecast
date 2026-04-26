@@ -2,7 +2,8 @@
   "name": "telecasts",
   "scripts": {
     "dev-server": "wrangler pages dev public",
-    "dev-client": "watch -n 1 elm make src/Main.elm --debug --output=public/elm.js"
+    "dev-client": "watch -n 1 elm make src/Main.elm --debug --output=public/elm.js",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
     "fast-xml-parser": "^4.3.2",
@@ -10,6 +11,9 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260117.0",
+    "elm": "^0.19.1-6",
+    "elm-format": "^0.8.8",
+    "elm-test": "^0.19.1-revision12",
     "typescript": "^5.9.3",
     "wrangler": "^4.59.2"
   }

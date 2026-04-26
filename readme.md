@@ -22,9 +22,3 @@ npm run dev-server
 npm run dev-client
 deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys scripts/refresh.ts
 ```
-
-one-time hook setup:
-
-```bash
-git config core.hooksPath .githooks
-```
