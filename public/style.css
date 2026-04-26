@@ -186,7 +186,6 @@ img {
   min-height: 100dvh;
   background: var(--bg-color);
   overflow-x: hidden;
-  padding-bottom: 72px;
 }
 
 .cols {
@@ -1052,69 +1051,6 @@ audio#player {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-ghost);
-}
-
-/* --------------------------------------------------------------------------
-   Player control bar (bottom)
-   -------------------------------------------------------------------------- */
-.player-bar {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 15;
-  display: flex;
-  gap: 6px;
-  padding: 8px var(--space-4);
-  background: var(--bg-color);
-  border-top: 1px solid var(--border-color);
-  overflow-x: auto;
-  overflow-y: hidden;
-  align-items: center;
-}
-
-.bar-thumb {
-  display: block;
-  flex: 0 0 auto;
-  width: 80px;
-  height: 45px;
-  border-radius: var(--radius-sm, 4px);
-  overflow: hidden;
-  opacity: 0.55;
-  border: 1px solid var(--border-color);
-  transition: opacity var(--anim), transform var(--anim), border-color var(--anim);
-  position: relative;
-}
-
-.bar-thumb:hover {
-  opacity: 1;
-}
-
-.bar-thumb.current {
-  width: 100px;
-  height: 56px;
-  opacity: 1;
-  border: 2px solid var(--accent, #f90);
-  box-shadow: 0 0 0 2px var(--accent-ghost, rgba(255,153,0,0.25));
-}
-
-.bar-thumb.featured {
-  opacity: 0.4;
-}
-
-.bar-thumb.featured:hover {
-  opacity: 0.9;
-}
-
-.bar-thumb-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-
-.bar-thumb-img.thumb-placeholder {
-  background: var(--border-color);
 }
 
 .tags {

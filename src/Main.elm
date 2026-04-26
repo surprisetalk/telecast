@@ -1153,7 +1153,6 @@ view model =
 
               else
                 viewBody model
-            , viewPlayerBar model
             ]
         ]
     }
@@ -1344,85 +1343,6 @@ viewHistory model =
             )
             model.library
         ]
-
-
-viewPlayerBar : Model -> Html Msg
-viewPlayerBar model =
-    case getLibrary model of
-        Nothing ->
-            text ""
-
-        Just lib ->
-            let
-                currentId =
-                    model.episode
-
-                currentEpisode =
-                    findSelectedEpisode model.episode model.channel model.library
-                        |> Maybe.map Tuple.first
-
-                upcomingQueue =
-                    lib.queue
-                        |> Dict.values
-                        |> List.filter (\ep -> not (Set.member ep.id lib.watched) && Just ep.id /= currentId)
-                        |> List.take 5
-
-                featuredChannels =
-                    case model.featured of
-                        Loadable (Just (Ok channels)) ->
-                            channels
-
-                        _ ->
-                            []
-
-                subscribedRss =
-                    lib.channels |> Dict.keys |> Set.fromList
-
-                featuredUnseen =
-                    featuredChannels
-                        |> List.filter (\c -> not (Set.member (Url.toString c.rss) subscribedRss))
-
-                currentThumb =
-                    case currentEpisode of
-                        Just ep ->
-                            [ viewBarEpisode True ep ]
-
-                        Nothing ->
-                            []
-            in
-            div [ class "player-bar" ]
-                (List.concat
-                    [ currentThumb
-                    , List.map (viewBarEpisode False) upcomingQueue
-                    , List.map viewBarChannel featuredUnseen
-                    ]
-                )
-
-
-viewBarEpisode : Bool -> Episode -> Html Msg
-viewBarEpisode current ep =
-    a
-        [ href (episodeUrl Nothing ep.id)
-        , class
-            (if current then
-                "bar-thumb current"
-
-             else
-                "bar-thumb"
-            )
-        , title ep.title
-        ]
-        [ viewThumbInner "bar-thumb-img" (episodeThumbnail ep) ]
-
-
-viewBarChannel : Channel -> Html Msg
-viewBarChannel c =
-    a
-        [ href ("/" ++ Url.percentEncode (Url.toString c.rss))
-        , class "bar-thumb featured"
-        , title c.title
-        ]
-        [ viewThumbInner "bar-thumb-img" c.thumb ]
 
 
 findSelectedEpisode : Maybe Id -> Maybe ( Url, Loadable Feed ) -> Loadable Library -> Maybe ( Episode, Maybe Channel )
