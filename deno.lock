@@ -19,14 +19,14 @@
   "workspace": {
     "packageJson": {
       "dependencies": [
-        "npm:@cloudflare/workers-types@^4.20260117.0",
+        "npm:@cloudflare/workers-types@^4.20260426.1",
         "npm:elm-format@~0.8.8",
-        "npm:elm-test@~0.19.1-revision12",
+        "npm:elm-test@~0.19.1-revision17",
         "npm:elm@~0.19.1-6",
-        "npm:fast-xml-parser@^4.3.2",
-        "npm:postgres@^3.4.3",
-        "npm:typescript@^5.9.3",
-        "npm:wrangler@^4.59.2"
+        "npm:fast-xml-parser@^5.7.2",
+        "npm:postgres@^3.4.9",
+        "npm:typescript@^6.0.3",
+        "npm:wrangler@^4.85.0"
       ]
     }
   }
