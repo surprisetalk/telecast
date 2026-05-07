@@ -217,7 +217,7 @@ header.cols {
   border-bottom: 1px solid var(--border-color);
 }
 
-header .cols>* {
+header .cols > * {
   font-family: var(--font-mono);
   font-size: var(--text-sm);
   letter-spacing: 0.08em;
@@ -248,10 +248,7 @@ header a.header-action {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   color: var(--text-secondary);
-  transition:
-    color var(--anim),
-    border-color var(--anim),
-    background var(--anim);
+  transition: color var(--anim), border-color var(--anim), background var(--anim);
 }
 
 header a.header-action:hover {
@@ -318,7 +315,6 @@ header button.back:hover {
 }
 
 @keyframes pulse-live {
-
   0%,
   100% {
     opacity: 1;
@@ -393,9 +389,7 @@ header button.back:hover {
   background: var(--bg-color);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  transition:
-    border-color var(--anim),
-    box-shadow var(--anim);
+  transition: border-color var(--anim), box-shadow var(--anim);
 }
 
 #search input::placeholder {
@@ -416,9 +410,7 @@ header button.back:hover {
   font-weight: 500;
   text-transform: uppercase;
   border-radius: var(--radius-sm);
-  transition:
-    background var(--anim),
-    transform var(--anim);
+  transition: background var(--anim), transform var(--anim);
 }
 
 #search button:active {
@@ -525,7 +517,7 @@ header button.back:hover {
   letter-spacing: 0.12em;
 }
 
-#channel-details .meta>*:first-child::before {
+#channel-details .meta > *:first-child::before {
   content: "▸ ";
   color: var(--accent);
   margin-right: var(--space-1);
@@ -544,9 +536,7 @@ header button.back:hover {
   background: var(--accent);
   border: none;
   border-radius: var(--radius-sm);
-  transition:
-    background var(--anim),
-    transform var(--anim);
+  transition: background var(--anim), transform var(--anim);
 }
 
 #channel-details button:hover,
@@ -699,10 +689,7 @@ audio#player {
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border-color);
-  transition:
-    border-color var(--anim),
-    box-shadow var(--anim-slow),
-    transform var(--anim);
+  transition: border-color var(--anim), box-shadow var(--anim-slow), transform var(--anim);
 }
 
 .episode-card:hover {
@@ -788,7 +775,6 @@ audio#player {
   opacity: 0.7;
 }
 
-
 /* Card action buttons — inline before title */
 .card-action {
   position: relative;
@@ -803,10 +789,7 @@ audio#player {
   background: transparent;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  transition:
-    color var(--anim),
-    border-color var(--anim),
-    background var(--anim);
+  transition: color var(--anim), border-color var(--anim), background var(--anim);
 }
 
 .card-action::before {
@@ -855,10 +838,7 @@ audio#player {
   border-radius: var(--radius-lg);
   overflow: hidden;
   border: 1px solid var(--border-color);
-  transition:
-    border-color var(--anim),
-    box-shadow var(--anim-slow),
-    transform var(--anim);
+  transition: border-color var(--anim), box-shadow var(--anim-slow), transform var(--anim);
 }
 
 .channel-card:hover {
@@ -1017,7 +997,7 @@ audio#player {
   line-height: 1.65;
 }
 
-#my-feed>.cols {
+#my-feed > .cols {
   align-items: flex-end;
   gap: var(--space-5);
 }
@@ -1041,10 +1021,7 @@ audio#player {
   padding: var(--space-2) var(--space-3);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  transition:
-    color var(--anim),
-    border-color var(--anim),
-    background var(--anim);
+  transition: color var(--anim), border-color var(--anim), background var(--anim);
 }
 
 .saved-link:hover {
@@ -1071,10 +1048,7 @@ audio#player {
   background: transparent;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
-  transition:
-    background var(--anim),
-    color var(--anim),
-    border-color var(--anim);
+  transition: background var(--anim), color var(--anim), border-color var(--anim);
 }
 
 .tag:hover {
@@ -1367,7 +1341,7 @@ audio#player {
     gap: var(--space-2);
   }
 
-  header .cols>* {
+  header .cols > * {
     letter-spacing: 0.04em;
   }
 

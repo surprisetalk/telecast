@@ -179,12 +179,23 @@ export function findEpisodeThumbnail(item: any): string | null {
   return null;
 }
 
+function extractYoutubeChannelId(feed: any): string | null {
+  const direct = feed?.["yt:channelId"];
+  if (typeof direct === "string" && direct.startsWith("UC")) return direct;
+  const playlist = feed?.["yt:playlistId"];
+  if (typeof playlist === "string" && playlist.startsWith("UULF")) return "UC" + playlist.slice(4);
+  const entries = feed?.entry;
+  const first = Array.isArray(entries) ? entries[0] : entries;
+  const fromEntry = first?.["yt:channelId"];
+  if (typeof fromEntry === "string" && fromEntry.startsWith("UC")) return fromEntry;
+  return null;
+}
+
 export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
   const xml = parser.parse(xmlText);
 
-  // Check for YouTube feed (yt:channelId exists but may not have "UC" prefix at channel level)
-  const ytChannelId = xml.feed?.["yt:channelId"];
-  if (typeof ytChannelId === "string" && ytChannelId.length > 0) {
+  const ytChannelId = extractYoutubeChannelId(xml.feed);
+  if (ytChannelId) {
     const entries = xml.feed.entry;
     const items = Array.isArray(entries) ? entries : entries ? [entries] : [];
     return items.slice(0, 50).map((item: any) => {
@@ -254,20 +265,20 @@ function findThumbnail(channel: any): string | null {
   return null;
 }
 
-export function parse(xmlText: string): Channel {
+export function parse(xmlText: string, sourceUrl?: string): Channel {
   const xml = parser.parse(xmlText);
 
   if (xml.feed) {
     const feed = xml.feed;
-    const ytChannelId = feed["yt:channelId"];
-    if (typeof ytChannelId === "string" && ytChannelId.startsWith("UC")) {
+    const ytChannelId = extractYoutubeChannelId(feed);
+    if (ytChannelId) {
       const authorUri = httpsUrl(feed.author?.uri);
       const entries = feed.entry;
       const firstEntry = Array.isArray(entries) ? entries[0] : entries;
       const channelUrl = `https://www.youtube.com/channel/${ytChannelId}`;
       return {
         channel_id: `youtube.com/channel/${ytChannelId}`,
-        rss: authorUri || channelUrl,
+        rss: sourceUrl || authorUri || channelUrl,
         title: sanitizeText(feed.title),
         description: sanitizeText(feed.subtitle),
         thumb: httpsUrl(firstEntry?.["media:group"]?.["media:thumbnail"]?.["@_url"]),

@@ -1,7 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with
-code in this repository.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Development
 
@@ -18,8 +17,7 @@ Requires `.env` with `DATABASE_URL` (Neon PostgreSQL connection string).
 
 Telecasts is a podcast/video feed aggregator with:
 
-- **Frontend** (`src/Main.elm`): Elm 0.19.1 SPA with localStorage ports for
-  library persistence
+- **Frontend** (`src/Main.elm`): Elm 0.19.1 SPA with localStorage ports for library persistence
 - **Backend** (`functions/`): Cloudflare Workers (TypeScript) with R2 caching
 - **Database**: Neon PostgreSQL (schema in `db.sql`)
 
@@ -33,26 +31,25 @@ Telecasts is a podcast/video feed aggregator with:
 
 ### Feed Formats
 
-Supports RSS 2.0, Atom, RDF, and YouTube channel feeds. Feed parsing logic in
-`functions/_shared/rss.ts`.
+Supports RSS 2.0, Atom, RDF, and YouTube channel feeds. Feed parsing logic in `functions/_shared/rss.ts`.
 
 ### Data Flow
 
 1. User subscribes to RSS URL → stored in localStorage via Elm ports
-2. Frontend requests `/proxy/rss/{url}` → Worker fetches/caches feed, upserts to
-   PostgreSQL
+2. Frontend requests `/proxy/rss/{url}` → Worker fetches/caches feed, upserts to PostgreSQL
 3. Episodes render in middle column → playback tracked client-side
 
 ### R2 Buckets
 
 Workers use two R2 bindings (see `wrangler.toml`):
+
 - `BUCKET_RSS` - cached feed XML
 - `BUCKET_THUMB` - cached channel/episode images
 
 ### Search
 
-Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `tag:{tag_name}`
-filters channels by tag membership (channels have a `tags text[]` column).
+Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `tag:{tag_name}` filters channels by tag membership (channels have a
+`tags text[]` column).
 
 ## Elm Frontend
 
@@ -68,6 +65,7 @@ type alias Playback = { t : Time.Posix, s : (current, duration) }
 ### Ports
 
 Two-way localStorage sync:
+
 - `libraryLoaded` (incoming) - receives library on load
 - `librarySaving` (outgoing) - persists library on change
 

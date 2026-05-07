@@ -12,7 +12,7 @@ GET /proxy/thumb/*         # cache thumbnails
 
 ## local dev
 
-prereqs: `postgresql`, `postgresql-client`, `postgresql-contrib`, & neon [console ](https://console.neon.tech/)
+prereqs: `postgresql`, `postgresql-client`, `postgresql-contrib`, & neon [console](https://console.neon.tech/)
 
 `.env`: `.env.example`
 

@@ -5,6 +5,15 @@ import type { Sql } from "../../search";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 
+export async function preferUulfFeedUrl(ucId: string, fetcher: typeof fetch): Promise<string> {
+  const uulf = `https://www.youtube.com/feeds/videos.xml?playlist_id=UULF${ucId.slice(2)}`;
+  try {
+    const res = await fetcher(uulf, { method: "HEAD" });
+    if (res.ok) return uulf;
+  } catch { /* fall through to channel_id form */ }
+  return `https://www.youtube.com/feeds/videos.xml?channel_id=${ucId}`;
+}
+
 export async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetch): Promise<{ url: string } | { error: string }> {
   let u: URL;
   try {
@@ -13,9 +22,13 @@ export async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetc
     return { url: rawUrl };
   }
   if (!/(^|\.)youtube\.com$/.test(u.hostname)) return { url: rawUrl };
-  if (u.pathname.startsWith("/feeds/")) return { url: rawUrl };
+  if (u.pathname.startsWith("/feeds/")) {
+    const cid = u.searchParams.get("channel_id");
+    if (cid && /^UC[\w-]+$/.test(cid)) return { url: await preferUulfFeedUrl(cid, fetcher) };
+    return { url: rawUrl };
+  }
   const channelMatch = u.pathname.match(/^\/channel\/(UC[\w-]+)/);
-  if (channelMatch) return { url: `https://www.youtube.com/feeds/videos.xml?channel_id=${channelMatch[1]}` };
+  if (channelMatch) return { url: await preferUulfFeedUrl(channelMatch[1]!, fetcher) };
   const isHandle = u.pathname.startsWith("/@") || u.pathname.startsWith("/c/") || u.pathname.startsWith("/user/");
   if (!isHandle) return { url: rawUrl };
   const pageUrl = `https://www.youtube.com${u.pathname}`;
@@ -50,7 +63,7 @@ export async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetc
         `Could not extract channelId from ${pageUrl} (HTML ${html.length} bytes). Tried 6 patterns including "channelId":"UC...", canonical link, /channel/UC... sweep. First 200 chars: ${snippet}`,
     };
   }
-  return { url: `https://www.youtube.com/feeds/videos.xml?channel_id=${id}` };
+  return { url: await preferUulfFeedUrl(id, fetcher) };
 }
 
 export async function handleRssProxy(
@@ -59,7 +72,7 @@ export async function handleRssProxy(
 ): Promise<Response> {
   const { sql, bucket, fetcher } = deps;
   const rawUrl = input.rssUrl;
-  const resolvedKey = `resolved:${rawUrl}`;
+  const resolvedKey = `resolved2:${rawUrl}`;
   const cachedResolved = await bucket.get(resolvedKey);
   let rssUrl: string;
   if (cachedResolved) {
@@ -106,7 +119,7 @@ export async function handleRssProxy(
       { status: 400 },
     );
   }
-  const channel = rss.parse(text);
+  const channel = rss.parse(text, rssUrl);
   await sql`
     insert into channel ${sql(channel)}
     on conflict (channel_id) do update

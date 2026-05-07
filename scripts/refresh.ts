@@ -5,6 +5,22 @@ const BATCH_SIZE = 500;
 const FETCH_TIMEOUT_MS = 15_000;
 const CONCURRENCY = 20;
 
+async function maybeUpgradeToUulf(rss: string): Promise<string> {
+  const m = rss.match(/^https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?channel_id=(UC[\w-]+)$/);
+  if (!m) return rss;
+  const uulf = `https://www.youtube.com/feeds/videos.xml?playlist_id=UULF${m[1]!.slice(2)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 3_000);
+  try {
+    const res = await fetch(uulf, { method: "HEAD", signal: controller.signal });
+    return res.ok ? uulf : rss;
+  } catch {
+    return rss;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function pool(items: readonly any[], n: number, work: (item: any) => Promise<void>): Promise<void> {
   let i = 0;
   const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
@@ -256,10 +272,12 @@ async function main() {
     const shortUrl = channel.rss.replace(/^https?:\/\//, "").slice(0, 50);
 
     try {
+      const fetchUrl = await maybeUpgradeToUulf(channel.rss);
+
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-      const res = await fetch(channel.rss, {
+      const res = await fetch(fetchUrl, {
         headers: { "User-Agent": "Telecasts/1.0" },
         signal: controller.signal,
       });
@@ -268,7 +286,7 @@ async function main() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 
       const text = await res.text();
-      const channelInfo = parse(text);
+      const channelInfo = parse(text, fetchUrl);
       const episodes = parseEpisodes(text, channel.channel_id);
 
       if (episodes.length > 0) {
