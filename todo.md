@@ -1,18 +1,13 @@
-- [x] fetch/refresh feeds; add new episodes to watch queue
-- [x] fix channel subscriptions? esp. from search results page.
-- [x] simplify style.css
-- [-] make it not ugly
-- [ ] launch
-- [ ] ship bubbletea tui
-- [ ] support for livestreaming / clubhouse
-- [x] copy keywords from episode description to channel table for search
-- [ ] ios/tv app
-- [ ] crawl github datasets for as many yt channel ids as possible
+- [ ] make it not ugly
 - [ ] need better curation story
 - [ ] need better instructions on how to start your own telecast
-- [ ] consider making open yt db search project separate
+- [ ] crawl github datasets for as many yt channel ids as possible
 - [ ] populate from reddit and hn linked yt channels
 - [ ] mine moocs and lecutre series
+- [ ] consider making open yt db search project separate
 - [ ] telecast remixes
+- [ ] ship bubbletea tui
+- [ ] support for livestreaming / clubhouse
+- [ ] ios/tv app
 - [ ] mirror all of archive.org too
 - [ ] telecast livestreaming service, comments, and ads hosting
