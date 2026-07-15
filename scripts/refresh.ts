@@ -1,5 +1,6 @@
 import db from "postgres";
 import { Channel, Episode, parse, parseEpisodes } from "../functions/_shared/rss";
+import { pool } from "./pool.ts";
 
 const BATCH_SIZE = 500;
 const FETCH_TIMEOUT_MS = 15_000;
@@ -19,21 +20,6 @@ async function maybeUpgradeToUulf(rss: string): Promise<string> {
   } finally {
     clearTimeout(timeout);
   }
-}
-
-async function pool(items: readonly any[], n: number, work: (item: any) => Promise<void>): Promise<void> {
-  let i = 0;
-  const workers = Array.from({ length: Math.min(n, items.length) }, async () => {
-    while (i < items.length) {
-      const item = items[i++];
-      try {
-        await work(item);
-      } catch (e) {
-        console.error(`pool worker swallowed: ${(e as Error).message}`);
-      }
-    }
-  });
-  await Promise.all(workers);
 }
 
 // Language code to tag mapping
@@ -78,104 +64,204 @@ function slugTag(s: string): string {
   return s.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
-const KEYWORD_TAG_MAP: Record<string, string> = {
-  programming: "technology",
-  code: "technology",
-  coding: "technology",
-  javascript: "technology",
-  python: "technology",
-  rust: "technology",
-  typescript: "technology",
-  software: "technology",
-  developer: "technology",
-  computer: "technology",
-  linux: "technology",
-  docker: "technology",
-  ai: "technology",
-  ml: "technology",
-  gameplay: "games",
-  speedrun: "games",
-  gaming: "games",
-  minecraft: "games",
-  playthrough: "games",
-  nintendo: "games",
-  playstation: "games",
-  xbox: "games",
-  esports: "games",
-  recipe: "food",
-  cooking: "food",
-  baking: "food",
-  kitchen: "food",
-  chef: "food",
-  cuisine: "food",
-  workout: "fitness",
-  exercise: "fitness",
-  gym: "fitness",
-  yoga: "fitness",
-  running: "fitness",
-  science: "science",
-  physics: "science",
-  chemistry: "science",
-  biology: "science",
-  astronomy: "science",
-  history: "history",
-  historical: "history",
-  ancient: "history",
-  war: "history",
-  music: "music",
-  guitar: "music",
-  piano: "music",
-  concert: "music",
-  song: "music",
-  album: "music",
-  news: "news",
-  politics: "politics",
-  election: "politics",
-  government: "politics",
-  film: "film",
-  movie: "film",
-  cinema: "film",
-  director: "film",
-  trailer: "film",
-  art: "arts",
-  painting: "arts",
-  drawing: "arts",
-  sculpture: "arts",
-  gallery: "arts",
-  business: "business",
-  startup: "business",
-  entrepreneur: "business",
-  investing: "business",
-  finance: "business",
-  health: "health",
-  medical: "health",
-  doctor: "health",
-  medicine: "health",
-  wellness: "health",
-  education: "education",
-  tutorial: "education",
-  lesson: "education",
-  course: "education",
-  learn: "education",
-  comedy: "comedy",
-  funny: "comedy",
-  humor: "comedy",
-  sketch: "comedy",
-  standup: "comedy",
-  religion: "religion",
-  christianity: "religion",
-  bible: "religion",
-  prayer: "religion",
-  faith: "religion",
+// Keyword → tags. A keyword may imply a coarse tag and one or more fine-grained
+// discover tags (see discoverTags in src/Main.elm). Keys are matched with word
+// boundaries against lowercased episode text, so keep them free of regex specials.
+const KEYWORD_TAG_MAP: Record<string, string[]> = {
+  // technology
+  programming: ["technology"],
+  code: ["technology"],
+  coding: ["technology"],
+  javascript: ["technology"],
+  python: ["technology"],
+  rust: ["technology"],
+  typescript: ["technology"],
+  software: ["technology"],
+  developer: ["technology"],
+  computer: ["technology"],
+  linux: ["technology"],
+  docker: ["technology"],
+  ai: ["technology"],
+  ml: ["technology"],
+  kernel: ["technology", "systems"],
+  compiler: ["technology", "systems"],
+  "operating system": ["technology", "systems"],
+  "distributed systems": ["technology", "systems"],
+  "creative coding": ["technology", "creative-coding"],
+  shader: ["technology", "creative-coding"],
+  "generative art": ["technology", "creative-coding", "arts"],
+  "retro computing": ["technology", "retro-tech"],
+  retrocomputing: ["technology", "retro-tech"],
+  commodore: ["technology", "retro-tech"],
+  amiga: ["technology", "retro-tech"],
+  // conferences
+  conference: ["conferences"],
+  keynote: ["conferences"],
+  symposium: ["conferences"],
+  // math
+  mathematics: ["math"],
+  calculus: ["math"],
+  theorem: ["math"],
+  algebra: ["math"],
+  topology: ["math"],
+  // science
+  science: ["science"],
+  physics: ["science", "physics"],
+  quantum: ["science", "physics"],
+  relativity: ["science", "physics"],
+  chemistry: ["science", "chemistry"],
+  molecule: ["science", "chemistry"],
+  biology: ["science"],
+  astronomy: ["science"],
+  // engineering / electronics / makers
+  engineering: ["engineering"],
+  aerospace: ["engineering"],
+  electronics: ["electronics"],
+  circuit: ["electronics"],
+  arduino: ["electronics", "makers"],
+  soldering: ["electronics", "makers"],
+  microcontroller: ["electronics"],
+  "3d printing": ["makers"],
+  cnc: ["makers"],
+  fabrication: ["makers"],
+  woodworking: ["woodworking", "makers"],
+  carpentry: ["woodworking", "makers"],
+  joinery: ["woodworking", "makers"],
+  restoration: ["restoration"],
+  refurbish: ["restoration"],
+  // games
+  gameplay: ["games"],
+  gaming: ["games"],
+  minecraft: ["games"],
+  playthrough: ["games"],
+  nintendo: ["games"],
+  playstation: ["games"],
+  xbox: ["games"],
+  esports: ["games"],
+  speedrun: ["games", "speedrunning"],
+  speedrunning: ["games", "speedrunning"],
+  "game design": ["games", "game-design"],
+  gamedev: ["games", "game-design"],
+  "level design": ["games", "game-design"],
+  "game essay": ["games", "game-essays"],
+  ttrpg: ["games", "ttrpg"],
+  "tabletop rpg": ["games", "ttrpg"],
+  "dungeons and dragons": ["games", "ttrpg"],
+  pathfinder: ["games", "ttrpg"],
+  // food
+  recipe: ["food", "cooking"],
+  cooking: ["food", "cooking"],
+  baking: ["food", "cooking"],
+  kitchen: ["food", "cooking"],
+  chef: ["food", "cooking"],
+  cuisine: ["food", "cooking"],
+  coffee: ["food", "coffee"],
+  espresso: ["food", "coffee"],
+  barista: ["food", "coffee"],
+  // fitness
+  workout: ["fitness"],
+  exercise: ["fitness"],
+  gym: ["fitness"],
+  yoga: ["fitness"],
+  running: ["fitness"],
+  // history
+  history: ["history"],
+  historical: ["history"],
+  ancient: ["history"],
+  // music
+  music: ["music"],
+  guitar: ["music"],
+  piano: ["music"],
+  concert: ["music"],
+  song: ["music"],
+  album: ["music"],
+  "music theory": ["music", "music-theory"],
+  harmony: ["music", "music-theory"],
+  counterpoint: ["music", "music-theory"],
+  "music production": ["music", "music-production"],
+  mixing: ["music", "music-production"],
+  mastering: ["music", "music-production"],
+  ableton: ["music", "music-production"],
+  synthesizer: ["music", "synthesizers"],
+  synth: ["music", "synthesizers"],
+  eurorack: ["music", "synthesizers"],
+  guitarist: ["music", "musicians"],
+  pianist: ["music", "musicians"],
+  songwriter: ["music", "musicians"],
+  // news / politics
+  news: ["news"],
+  politics: ["politics"],
+  election: ["politics"],
+  government: ["politics"],
+  // film / video essays
+  film: ["film"],
+  movie: ["film"],
+  cinema: ["film"],
+  director: ["film"],
+  trailer: ["film"],
+  "film essay": ["film", "film-essays"],
+  filmmaking: ["film", "film-essays"],
+  "video essay": ["video-essays"],
+  anime: ["anime"],
+  manga: ["anime"],
+  vtuber: ["vtubers"],
+  hololive: ["vtubers"],
+  // arts / making places
+  art: ["arts"],
+  painting: ["arts"],
+  drawing: ["arts"],
+  sculpture: ["arts"],
+  gallery: ["arts"],
+  urbanism: ["urbanism"],
+  "urban planning": ["urbanism"],
+  transit: ["urbanism"],
+  zoning: ["urbanism"],
+  architecture: ["architecture"],
+  architectural: ["architecture"],
+  gardening: ["gardening"],
+  permaculture: ["gardening"],
+  horticulture: ["gardening"],
+  "tiny house": ["tiny-living"],
+  "van life": ["tiny-living"],
+  vanlife: ["tiny-living"],
+  // business
+  business: ["business"],
+  startup: ["business"],
+  entrepreneur: ["business"],
+  investing: ["business"],
+  finance: ["business"],
+  // health
+  health: ["health"],
+  medical: ["health"],
+  doctor: ["health"],
+  medicine: ["health"],
+  wellness: ["health"],
+  // education
+  education: ["education"],
+  tutorial: ["education"],
+  lesson: ["education"],
+  course: ["education"],
+  learn: ["education"],
+  // comedy
+  comedy: ["comedy"],
+  funny: ["comedy"],
+  humor: ["comedy"],
+  sketch: ["comedy"],
+  standup: ["comedy"],
+  // religion
+  religion: ["religion"],
+  christianity: ["religion"],
+  bible: ["religion"],
+  prayer: ["religion"],
+  faith: ["religion"],
 };
 
 function inferKeywordTags(episodes: Episode[]): string[] {
   const text = episodes.slice(0, 20).map((e) => `${e.title ?? ""} ${e.description ?? ""}`).join(" ").toLowerCase();
   const hits: Record<string, number> = {};
-  for (const [kw, tag] of Object.entries(KEYWORD_TAG_MAP)) {
-    const re = new RegExp(`\\b${kw}\\b`, "g");
-    const m = text.match(re);
-    if (m) hits[tag] = (hits[tag] ?? 0) + m.length;
+  for (const [kw, tags] of Object.entries(KEYWORD_TAG_MAP)) {
+    const m = text.match(new RegExp(`\\b${kw.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"));
+    if (m) { for (const tag of tags) hits[tag] = (hits[tag] ?? 0) + m.length; }
   }
   return Object.entries(hits).filter(([, n]) => n >= 2).map(([t]) => t);
 }
@@ -267,7 +353,7 @@ async function main() {
   let succeeded = 0;
   const failures: { rss: string; error: string }[] = [];
 
-  await pool(channels, CONCURRENCY, async (channel) => {
+  await pool(channels, CONCURRENCY, async (channel: any) => {
     const index = ++completed;
     const shortUrl = channel.rss.replace(/^https?:\/\//, "").slice(0, 50);
 

@@ -1,0 +1,17 @@
+name: Curate
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+jobs:
+  curate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno run --allow-net --allow-env --allow-read scripts/curate.ts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

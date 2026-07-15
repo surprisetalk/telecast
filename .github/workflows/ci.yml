@@ -17,7 +17,7 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno fmt --check functions/ scripts/
-      - run: deno test functions/
+      - run: deno test functions/ scripts/
       - run: deno check functions/ scripts/
 
   elm-test:

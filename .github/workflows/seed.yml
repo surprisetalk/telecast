@@ -1,0 +1,23 @@
+name: Seed
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Source to seed from"
+        default: all
+        type: choice
+        options: [all, hn, reddit, lectures]
+
+jobs:
+  seed:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+      - run: deno run --allow-net --allow-env --allow-read scripts/seed.ts --source=${{ inputs.source || 'all' }}
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

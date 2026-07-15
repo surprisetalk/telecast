@@ -9,9 +9,12 @@ npm run dev-server    # Wrangler Pages dev server (localhost:8788)
 npm run dev-client    # Elm watch/compile with debug mode
 elm make src/Main.elm --output=public/elm.js  # Production build
 npx tsx scripts/refresh.ts  # Batch refresh feeds (runs via GitHub Actions every 5 min)
+deno run -A scripts/seed.ts --source=all --dry-run    # Discover new channels (weekly CI)
+deno run -A scripts/curate.ts --dry-run               # Assign tag:featured (daily CI)
 ```
 
-Requires `.env` with `DATABASE_URL` (Neon PostgreSQL connection string).
+Requires `.env` with `DATABASE_URL` (Neon PostgreSQL connection string). Deno scripts (`scripts/*.ts`, `functions/`) are
+checked/tested/formatted with `deno check|test|fmt`.
 
 ## Architecture
 
@@ -50,6 +53,23 @@ Workers use two R2 bindings (see `wrangler.toml`):
 
 Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `tag:{tag_name}` filters channels by tag membership (channels have a
 `tags text[]` column).
+
+### Curation & Discovery
+
+- **Tags** are inferred by `scripts/refresh.ts` (`KEYWORD_TAG_MAP` → coarse + fine-grained tags, language, content type, iTunes categories).
+  The fine-grained tags match the `discoverTags` chips in `Main.elm`.
+- **`tag:featured`** drives the homepage bar (`Main.elm` loads `/search?q=tag:featured`). It is assigned by `scripts/curate.ts`:
+  auto-promote top-N channels per topic tag by `quality`, plus `featuredPin` / minus `blocked` from `scripts/curation.json`. The pass is
+  idempotent and self-syncing (removes `featured` from channels no longer selected).
+- **Seeding** new channels: `scripts/seed.ts` mines YouTube channel links from Hacker News (Algolia API) + Reddit and reads
+  `scripts/lectures.json` (curated MOOC/lecture channels), resolves them via `functions/_shared/youtube.ts`, and inserts rows
+  (`on conflict do nothing`). `refresh.ts` then fills in episodes/tags/quality.
+
+### Scripts & CI
+
+`scripts/refresh.ts` (feeds, every 5 min), `scripts/seed.ts` (discovery, weekly), `scripts/curate.ts` (featured, daily) — each has a GitHub
+Actions workflow in `.github/workflows/`. Shared helpers: `scripts/pool.ts` (concurrency), `functions/_shared/rss.ts` (parsing),
+`functions/_shared/youtube.ts` (channel-URL → feed-URL resolution, shared with the RSS proxy).
 
 ## Elm Frontend
 
