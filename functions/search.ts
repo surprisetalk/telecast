@@ -45,8 +45,19 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
     )`;
 
   try {
+    // `featured` is human-curated, so don't gate/order it by the automated
+    // `quality` score (which over-rewards prolific feeds); show curated picks
+    // by most-recent content instead.
     const results = tags.length > 0 && !text
-      ? await sql`
+      ? tags.includes("featured")
+        ? await sql`
+          select c.*, ${episodeThumbSubquery} as episode_thumb
+          from channel c
+          where c.tags @> ${tags}::text[]
+          order by c.latest_episode_at desc nulls last
+          limit 50
+        `
+        : await sql`
           select c.*, ${episodeThumbSubquery} as episode_thumb
           from channel c
           where c.tags @> ${tags}::text[]

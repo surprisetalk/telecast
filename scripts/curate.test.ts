@@ -1,7 +1,13 @@
 import { assertEquals } from "jsr:@std/assert";
 import { selectFeatured } from "./curate.ts";
 
-const base = { perTagLimit: 2, minQuality: 30, featuredPin: [] as string[], blocked: [] as string[] };
+const base = {
+  autoPromote: false,
+  perTagLimit: 2,
+  minQuality: 30,
+  priority: [] as string[],
+  blocked: [] as string[],
+};
 
 const rows = [
   { channel_id: "a", tags: ["technology"], quality: 90 },
@@ -12,28 +18,38 @@ const rows = [
   { channel_id: "f", tags: null, quality: 99 }, // no tags
 ];
 
-Deno.test("selectFeatured: top-N per tag by quality desc", () => {
-  // technology top-2 = a,b (c excluded); synthesizers+music top = d; e below threshold; f untagged
-  assertEquals(selectFeatured(rows, base), ["a", "b", "d"]);
+Deno.test("autoPromote off + no priority → empty", () => {
+  assertEquals(selectFeatured(rows, base), []);
 });
 
-Deno.test("selectFeatured: minQuality filters low-quality channels", () => {
-  // at minQuality 88 only a(90) qualifies; d(85) drops out
-  assertEquals(selectFeatured(rows, { ...base, minQuality: 88 }), ["a"]);
+Deno.test("priority is always featured regardless of tag/quality", () => {
+  // e (below floor) and f (untagged) are featured purely because they're priority
+  assertEquals(selectFeatured(rows, { ...base, priority: ["e", "f"] }), ["e", "f"]);
 });
 
-Deno.test("selectFeatured: pin adds regardless of tag/quality, blocked wins over everything", () => {
-  assertEquals(selectFeatured(rows, { ...base, featuredPin: ["e", "f"] }), ["a", "b", "d", "e", "f"]);
-  // blocking a (the #1 technology channel) frees its slot for c; pinned f is also blocked → dropped
-  assertEquals(selectFeatured(rows, { ...base, featuredPin: ["f"], blocked: ["a", "f"] }), ["b", "c", "d"]);
+Deno.test("blocked beats priority", () => {
+  assertEquals(selectFeatured(rows, { ...base, priority: ["e", "f"], blocked: ["e"] }), ["f"]);
 });
 
-Deno.test("selectFeatured: empty input → empty output", () => {
-  assertEquals(selectFeatured([], base), []);
-  assertEquals(selectFeatured(rows, { ...base, perTagLimit: 0, minQuality: 200 }), []);
+Deno.test("autoPromote on: top-N per tag by quality", () => {
+  // technology top-2 = a,b (c excluded); synthesizers+music top = d; e below floor; f untagged
+  assertEquals(selectFeatured(rows, { ...base, autoPromote: true }), ["a", "b", "d"]);
 });
 
-Deno.test("selectFeatured: dedups a channel matching multiple topic tags", () => {
+Deno.test("autoPromote on: minQuality filters low-quality channels", () => {
+  assertEquals(selectFeatured(rows, { ...base, autoPromote: true, minQuality: 88 }), ["a"]);
+});
+
+Deno.test("autoPromote on: priority is added on top of the algorithmic fill", () => {
+  // e is below the floor but featured because it's priority; a,b,d come from the scan
+  assertEquals(selectFeatured(rows, { ...base, autoPromote: true, priority: ["e"] }), ["a", "b", "d", "e"]);
+});
+
+Deno.test("autoPromote on: blocking the #1 channel frees its slot for the next", () => {
+  assertEquals(selectFeatured(rows, { ...base, autoPromote: true, blocked: ["a"] }), ["b", "c", "d"]);
+});
+
+Deno.test("autoPromote on: dedups a channel matching multiple topic tags", () => {
   const multi = [{ channel_id: "x", tags: ["music", "synthesizers", "music-production"], quality: 95 }];
-  assertEquals(selectFeatured(multi, base), ["x"]);
+  assertEquals(selectFeatured(multi, { ...base, autoPromote: true }), ["x"]);
 });

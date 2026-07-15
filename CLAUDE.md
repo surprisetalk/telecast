@@ -58,9 +58,11 @@ Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `tag:{tag_name}` 
 
 - **Tags** are inferred by `scripts/refresh.ts` (`KEYWORD_TAG_MAP` → coarse + fine-grained tags, language, content type, iTunes categories).
   The fine-grained tags match the `discoverTags` chips in `Main.elm`.
-- **`tag:featured`** drives the homepage bar (`Main.elm` loads `/search?q=tag:featured`). It is assigned by `scripts/curate.ts`:
-  auto-promote top-N channels per topic tag by `quality`, plus `featuredPin` / minus `blocked` from `scripts/curation.json`. The pass is
-  idempotent and self-syncing (removes `featured` from channels no longer selected).
+- **`tag:featured`** drives the homepage bar (`Main.elm` loads `/search?q=tag:featured`). It is human-curated: `scripts/curate.ts` syncs the
+  `featured` tag to the `priority` list in `scripts/curation.json` (minus `blocked`). **`autoPromote` is off by default** — the `quality`
+  score (freshness + volume) is a poor proxy for editorial quality (it surfaces prolific spam over great channels), so algorithmic
+  top-`perTagLimit`-per-tag fill is opt-in only. The pass is idempotent and self-syncing, so hand-picks must live in `priority` to survive.
+  `search.ts` also shows `tag:featured` by recent content (not gated/ordered by the broken `quality` score, unlike other tag pages).
 - **Seeding** new channels: `scripts/seed.ts` mines YouTube channel links from Hacker News (Algolia API) + Reddit and reads
   `scripts/lectures.json` (curated MOOC/lecture channels), resolves them via `functions/_shared/youtube.ts`, and inserts rows
   (`on conflict do nothing`). `refresh.ts` then fills in episodes/tags/quality.

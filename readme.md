@@ -36,5 +36,6 @@ deno run --env-file=.env --allow-net --allow-env --allow-read scripts/seed.ts --
 deno run --env-file=.env --allow-net --allow-env --allow-read scripts/curate.ts --dry-run
 ```
 
-Drop `--dry-run` to write. `scripts/curation.json` (`featuredPin` / `blocked` / `perTagLimit` / `minQuality`) and `scripts/lectures.json`
-(curated MOOC/lecture channel URLs) are the hand-editable curation surfaces.
+Drop `--dry-run` to write. `scripts/curation.json` is the hand-editable curation surface: `priority` (always-featured human picks),
+`blocked` (never featured), and `autoPromote` + `perTagLimit`/`minQuality` for optional algorithmic top-N-per-tag fill (off by default — the
+`quality` score over-rewards prolific feeds). `scripts/lectures.json` holds curated MOOC/lecture channel URLs for the seeder.

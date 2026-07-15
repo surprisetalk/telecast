@@ -51,22 +51,35 @@ const TOPIC_TAGS = [
   "religion",
 ];
 
-type Curation = { perTagLimit: number; minQuality: number; featuredPin: string[]; blocked: string[] };
+type Curation = {
+  autoPromote: boolean;
+  perTagLimit: number;
+  minQuality: number;
+  priority: string[];
+  blocked: string[];
+};
 type ChannelRow = { channel_id: string; tags: string[] | null; quality: number };
 
-// Pure: given all channels, pick the featured set — top-N per topic tag by
-// quality, plus pins, minus blocked. Deterministic (quality desc, id asc).
+// Pure: pick the featured set.
+//   priority    — human editorial picks, ALWAYS featured (minus blocked).
+//   autoPromote — optional algorithmic fill: top-`perTagLimit` per topic tag by
+//                 `quality`. OFF by default because `quality` (freshness+volume)
+//                 is a poor proxy for editorial quality — it surfaces prolific
+//                 spam over great channels. Featured is human-curated by default.
+//   blocked     — never featured (wins over everything).
 export function selectFeatured(rows: ChannelRow[], c: Curation): string[] {
   const blocked = new Set(c.blocked);
   const featured = new Set<string>();
-  for (const tag of TOPIC_TAGS) {
-    rows
-      .filter((r) => (r.tags ?? []).includes(tag) && r.quality >= c.minQuality && !blocked.has(r.channel_id))
-      .sort((a, b) => b.quality - a.quality || a.channel_id.localeCompare(b.channel_id))
-      .slice(0, c.perTagLimit)
-      .forEach((r) => featured.add(r.channel_id));
+  for (const id of c.priority) if (!blocked.has(id)) featured.add(id);
+  if (c.autoPromote) {
+    for (const tag of TOPIC_TAGS) {
+      rows
+        .filter((r) => (r.tags ?? []).includes(tag) && r.quality >= c.minQuality && !blocked.has(r.channel_id))
+        .sort((a, b) => b.quality - a.quality || a.channel_id.localeCompare(b.channel_id))
+        .slice(0, c.perTagLimit)
+        .forEach((r) => featured.add(r.channel_id));
+    }
   }
-  for (const id of c.featuredPin) if (!blocked.has(id)) featured.add(id);
   return [...featured].sort();
 }
 
@@ -85,9 +98,10 @@ function reqStrArray(v: unknown, field: string): string[] {
 async function loadCuration(): Promise<Curation> {
   const raw = JSON.parse(await (await fetch(new URL("./curation.json", import.meta.url))).text());
   return {
+    autoPromote: raw.autoPromote === true,
     perTagLimit: reqNum(raw.perTagLimit, "perTagLimit"),
     minQuality: reqNum(raw.minQuality, "minQuality"),
-    featuredPin: reqStrArray(raw.featuredPin, "featuredPin"),
+    priority: reqStrArray(raw.priority, "priority"),
     blocked: reqStrArray(raw.blocked, "blocked"),
   };
 }
@@ -113,7 +127,8 @@ async function main() {
 
   console.log(
     `${rows.length} channels · ${current.size} featured now → ${target.size} target ` +
-      `(perTag ${c.perTagLimit}, minQuality ${c.minQuality}, pin ${c.featuredPin.length}, blocked ${c.blocked.length})`,
+      `(priority ${c.priority.length}, autoPromote ${c.autoPromote ? `on perTag ${c.perTagLimit} minQuality ${c.minQuality}` : "off"}, ` +
+      `blocked ${c.blocked.length})`,
   );
   console.log(`  +${toAdd.length} to add, -${toRemove.length} to remove`);
   if (toAdd.length) console.log(`  add: ${toAdd.slice(0, 10).join(", ")}${toAdd.length > 10 ? " …" : ""}`);
@@ -141,7 +156,7 @@ async function main() {
     removed = r.length;
   }
 
-  if (added !== toAdd.length) console.warn(`  note: ${toAdd.length - added} pinned id(s) matched no channel row (dead pin?)`);
+  if (added !== toAdd.length) console.warn(`  note: ${toAdd.length - added} priority id(s) matched no channel row (dead pick?)`);
   console.log(`\nDone: +${added} / -${removed}`);
   await sql.end();
 }
