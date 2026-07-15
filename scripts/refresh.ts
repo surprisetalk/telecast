@@ -332,19 +332,22 @@ async function main() {
 
   const sql = db(databaseUrl, { max: CONCURRENCY, idle_timeout: 20, connect_timeout: 30 });
 
-  // Get oldest channels (don't update timestamps here - we'll update on success/failure)
-  const channels = await sql`
-    SELECT * FROM channel
-    ORDER BY
-      CASE WHEN last_success_at IS NULL AND last_error_at IS NULL THEN 0 ELSE 1 END,
-      updated_at
-        + random() * interval '1 day' * coalesce(consecutive_errors,0)
-        -- TODO: - random() * interval '1 week' * log(1+coalesce(episode_count,0))
-        -- TODO: - random() * interval '1 month' * coalesce((latest_episode_at-first_episode_at)/interval '1 year',0)
-        nulls first,
-      random()
-    LIMIT ${BATCH_SIZE}
-  `;
+  // `--featured` refreshes the curated set so hand-picks don't wait behind the
+  // huge never-fetched backlog; default refreshes the oldest channels by batch.
+  const channels = Deno.args.includes("--featured")
+    ? await sql`SELECT * FROM channel WHERE tags @> array['featured']::text[] ORDER BY updated_at`
+    : await sql`
+      SELECT * FROM channel
+      ORDER BY
+        CASE WHEN last_success_at IS NULL AND last_error_at IS NULL THEN 0 ELSE 1 END,
+        updated_at
+          + random() * interval '1 day' * coalesce(consecutive_errors,0)
+          -- TODO: - random() * interval '1 week' * log(1+coalesce(episode_count,0))
+          -- TODO: - random() * interval '1 month' * coalesce((latest_episode_at-first_episode_at)/interval '1 year',0)
+          nulls first,
+        random()
+      LIMIT ${BATCH_SIZE}
+    `;
 
   const total = channels.length;
   console.log(`Processing ${total} channels...\n`);
