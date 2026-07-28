@@ -8,3 +8,6 @@
 - [ ] ios/tv app
 - [ ] mirror all of archive.org too
 - [ ] telecast livestreaming service, comments, and ads hosting
+- [ ] need to create an open yt metadata db
+- [ ] let's make lectures and technical content and courses a first-class experience
+- [ ] get 10 daily active users
