@@ -1,3 +1,4 @@
+- [ ] use jsr:@surprisetalk/pgtemp
 - [ ] need better instructions on how to start your own telecast
 - [ ] crawl github datasets for as many yt channel ids as possible (seeder is source-pluggable — add a github adapter to scripts/seed.ts)
 - [ ] consider making open yt db search project separate
