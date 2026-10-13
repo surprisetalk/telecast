@@ -101,4 +101,4 @@ Used for channels/episodes that may be unloaded, loading, loaded, or errored.
 
 ## Code Style
 
-Prettier: 2-space indent, 140 char width, no semicolons in Elm (standard)
+`deno fmt` (config in deno.json): 2-space indent, 140 char width. Elm has no semicolons.

@@ -6,3 +6,5 @@ elm.json
 /elm-stuff
 public/elm.js
 .env
+.env.*
+!.env.example
