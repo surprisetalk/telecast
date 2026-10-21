@@ -93,3 +93,14 @@ Deno.test("channelId JSON wins over stray /channel/UC... in page body", async ()
   const r = await resolveYoutubeFeedUrl("https://www.youtube.com/@foo", stub(html));
   assertEquals(r, { url: "https://www.youtube.com/feeds/videos.xml?playlist_id=UULFgood_real_id" });
 });
+
+Deno.test("@handle page timeout throws with URL and timeout in ms", async () => {
+  const f = (() => Promise.reject(new DOMException("signal timed out", "TimeoutError"))) as typeof fetch;
+  let msg = "";
+  try {
+    await resolveYoutubeFeedUrl("https://www.youtube.com/@slow", f);
+  } catch (err) {
+    msg = (err as Error).message;
+  }
+  assertEquals(msg, "Timed out after 10000 ms fetching https://www.youtube.com/@slow");
+});

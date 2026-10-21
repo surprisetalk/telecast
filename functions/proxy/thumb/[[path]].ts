@@ -2,6 +2,7 @@ import type { Env } from "../../env";
 
 const SMALL_WIDTH = 256;
 const QUALITY = 80;
+const FETCH_TIMEOUT_MS = 10_000;
 
 const FALLBACK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <g fill="#666" transform="translate(50,50)">
@@ -45,6 +46,7 @@ export async function handleThumbProxy(
   let fetchResponse: Response;
   try {
     fetchResponse = await fetcher(fetchUrl, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       cf: {
         image: {
           width: SMALL_WIDTH,
@@ -55,7 +57,11 @@ export async function handleThumbProxy(
       },
     } as RequestInit);
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = err instanceof DOMException && err.name === "TimeoutError"
+      ? `Timed out after ${FETCH_TIMEOUT_MS} ms fetching ${fetchUrl}`
+      : err instanceof Error
+      ? err.message
+      : String(err);
     console.error(`thumb proxy: fetch rejected for ${fetchUrl}: ${msg}`);
     return serveFallback();
   }

@@ -1,7 +1,10 @@
+const UULF_PROBE_TIMEOUT_MS = 3_000;
+const HANDLE_PAGE_TIMEOUT_MS = 10_000;
+
 export async function preferUulfFeedUrl(ucId: string, fetcher: typeof fetch): Promise<string> {
   const uulf = `https://www.youtube.com/feeds/videos.xml?playlist_id=UULF${ucId.slice(2)}`;
   try {
-    const res = await fetcher(uulf, { method: "HEAD" });
+    const res = await fetcher(uulf, { method: "HEAD", signal: AbortSignal.timeout(UULF_PROBE_TIMEOUT_MS) });
     if (res.ok) return uulf;
   } catch { /* fall through to channel_id form */ }
   return `https://www.youtube.com/feeds/videos.xml?channel_id=${ucId}`;
@@ -25,12 +28,21 @@ export async function resolveYoutubeFeedUrl(rawUrl: string, fetcher: typeof fetc
   const isHandle = u.pathname.startsWith("/@") || u.pathname.startsWith("/c/") || u.pathname.startsWith("/user/");
   if (!isHandle) return { url: rawUrl };
   const pageUrl = `https://www.youtube.com${u.pathname}`;
-  const res = await fetcher(pageUrl, {
-    headers: {
-      "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-      "accept-language": "en-US,en;q=0.9",
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetcher(pageUrl, {
+      signal: AbortSignal.timeout(HANDLE_PAGE_TIMEOUT_MS),
+      headers: {
+        "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        "accept-language": "en-US,en;q=0.9",
+      },
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "TimeoutError") {
+      throw new Error(`Timed out after ${HANDLE_PAGE_TIMEOUT_MS} ms fetching ${pageUrl}`);
+    }
+    throw err;
+  }
   if (!res.ok) return { error: `Failed to resolve YouTube handle page ${pageUrl}: HTTP ${res.status} ${res.statusText}` };
   const html = await res.text();
   const patterns = [

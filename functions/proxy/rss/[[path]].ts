@@ -5,6 +5,7 @@ import type { Sql } from "../../search";
 import { resolveYoutubeFeedUrl } from "../../_shared/youtube";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 15_000;
 
 export async function handleRssProxy(
   deps: { sql: Sql; bucket: R2Bucket; fetcher: typeof fetch },
@@ -37,10 +38,14 @@ export async function handleRssProxy(
   const stale = (): Response => new Response(cachedText!, { headers: { "content-type": "application/xml", "x-telecast-stale": "1" } });
   let fetchResponse: Response;
   try {
-    fetchResponse = await fetcher(rssUrl);
+    fetchResponse = await fetcher(rssUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   } catch (err) {
     if (cachedText) return stale();
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = err instanceof DOMException && err.name === "TimeoutError"
+      ? `Timed out after ${FETCH_TIMEOUT_MS} ms fetching ${rssUrl}`
+      : err instanceof Error
+      ? err.message
+      : String(err);
     return new Response(`Network error fetching ${rssUrl} (raw input: ${rawUrl}): ${msg}`, { status: 502 });
   }
   if (!fetchResponse.ok) {

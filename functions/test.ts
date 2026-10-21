@@ -718,6 +718,20 @@ Deno.test("handleRssProxy: fetch rejection returns 502 with URL and cause", asyn
   assertStringIncludes(body, "DNS lookup failed");
 });
 
+Deno.test("handleRssProxy: origin timeout returns 502 naming the URL and the timeout in ms", async () => {
+  const bucket = mockR2Bucket();
+  const url = "https://slow.example.com/feed.xml";
+  const sql = mockSql();
+  const fetcher = mockFetch({
+    [url]: () => {
+      throw new DOMException("signal timed out", "TimeoutError");
+    },
+  });
+  const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  assertEquals(res.status, 502);
+  assertStringIncludes(await res.text(), `Timed out after 15000 ms fetching ${url}`);
+});
+
 Deno.test("handleRssProxy: HTML body returns 400 with URL and missing-root-element hint", async () => {
   const bucket = mockR2Bucket();
   const url = "https://html.example.com/page.html";
@@ -926,4 +940,20 @@ Deno.test("handleThumbProxy: fetch rejection → fallback SVG + logs cause and U
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, thumbUrl);
   assertStringIncludes(logs[0]!, "DNS lookup failed");
+});
+
+Deno.test("handleThumbProxy: fetch timeout → fallback SVG + logs URL and timeout in ms", async () => {
+  const bucket = mockR2Bucket();
+  const thumbUrl = "https://example.com/slow.jpg";
+  const fetcher = mockFetch({
+    [thumbUrl]: () => {
+      throw new DOMException("signal timed out", "TimeoutError");
+    },
+  });
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
+  );
+  assertEquals(res.headers.get("content-type"), "image/svg+xml");
+  assertEquals(logs.length, 1);
+  assertStringIncludes(logs[0]!, `Timed out after 10000 ms fetching ${thumbUrl}`);
 });
