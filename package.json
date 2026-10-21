@@ -6,6 +6,7 @@
     "prepare": "git config core.hooksPath .githooks || true"
   },
   "dependencies": {
+    "entities": "^8.1.0",
     "fast-xml-parser": "^5.7.2",
     "postgres": "^3.4.9"
   },

@@ -1,3 +1,4 @@
+import { decodeHTML } from "entities";
 import { XMLParser } from "fast-xml-parser";
 
 export interface Channel {
@@ -63,37 +64,8 @@ export function sanitizeText(text: any): string | null {
   // Ensure we have a string
   if (typeof text !== "string") text = String(text);
 
-  // Remove HTML tags
-  text = text.replace(/<[^>]*>/g, "");
+  text = decodeHTML(text.replace(/<[^>]*>/g, ""));
 
-  // Decode HTML entities
-  const entities: Record<string, string> = {
-    "&amp;": "&",
-    "&lt;": "<",
-    "&gt;": ">",
-    "&quot;": '"',
-    "&#39;": "'",
-    "&apos;": "'",
-    "&nbsp;": " ",
-    "&ndash;": "\u2013",
-    "&mdash;": "\u2014",
-    "&lsquo;": "\u2018",
-    "&rsquo;": "\u2019",
-    "&ldquo;": "\u201C",
-    "&rdquo;": "\u201D",
-    "&hellip;": "\u2026",
-    "&copy;": "\u00A9",
-    "&reg;": "\u00AE",
-    "&trade;": "\u2122",
-  };
-  for (const [entity, char] of Object.entries(entities)) {
-    text = text.replaceAll(entity, char);
-  }
-  // Decode numeric entities: &#123; and &#x1F;
-  text = text.replace(/&#(\d+);/g, (_: string, code: string) => String.fromCodePoint(parseInt(code, 10)));
-  text = text.replace(/&#x([0-9a-fA-F]+);/gi, (_: string, hex: string) => String.fromCodePoint(parseInt(hex, 16)));
-
-  // Normalize whitespace
   text = text.replace(/\s+/g, " ").trim();
 
   return text || null;

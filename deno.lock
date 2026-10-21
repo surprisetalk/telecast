@@ -23,6 +23,7 @@
         "npm:elm-format@~0.8.8",
         "npm:elm-test@~0.19.1-revision17",
         "npm:elm@~0.19.1-6",
+        "npm:entities@^8.1.0",
         "npm:fast-xml-parser@^5.7.2",
         "npm:postgres@^3.4.9",
         "npm:typescript@^6.0.3",

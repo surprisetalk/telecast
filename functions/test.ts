@@ -329,198 +329,126 @@ function bigFeedXml(itemCount: number): string {
 // Parser unit tests (functions/_shared/rss.ts)
 // ==================================================================
 
-Deno.test("sanitizeText: strips HTML tags", () => {
-  assertEquals(sanitizeText("<p>Hello <b>world</b></p>"), "Hello world");
+Deno.test("sanitizeText", () => {
+  const rows: { name: string; input: unknown; expected: string | null }[] = [
+    { name: "strips tags", input: "<p>Hello <b>world</b></p>", expected: "Hello world" },
+    { name: "basic named entities", input: "A &amp; B &lt;C&gt; &quot;D&quot; &#39;E&#39;", expected: `A & B <C> "D" 'E'` },
+    { name: "nbsp and dashes", input: "&nbsp;&ndash;&mdash;", expected: "–—" },
+    { name: "curly quotes", input: "&lsquo;x&rsquo; &ldquo;y&rdquo;", expected: "‘x’ “y”" },
+    { name: "symbols", input: "&hellip;&copy;&reg;&trade;", expected: "…©®™" },
+    { name: "numeric and hex entities", input: "&#123;&#x41;", expected: "{A" },
+    { name: "CDATA-shaped object", input: { "#text": "hello from CDATA" }, expected: "hello from CDATA" },
+    { name: "first element of array", input: ["one", "two"], expected: "one" },
+    { name: "collapses whitespace", input: "  a\t\tb\n\nc  ", expected: "a b c" },
+    { name: "null", input: null, expected: null },
+    { name: "undefined", input: undefined, expected: null },
+    { name: "empty string", input: "", expected: null },
+    { name: "blank string", input: "   ", expected: null },
+  ];
+  for (const { name, input, expected } of rows) assertEquals(sanitizeText(input), expected, name);
 });
 
-Deno.test("sanitizeText: decodes named HTML entities", () => {
-  assertEquals(sanitizeText("A &amp; B &lt;C&gt; &quot;D&quot; &#39;E&#39;"), `A & B <C> "D" 'E'`);
-  assertEquals(sanitizeText("&nbsp;&ndash;&mdash;"), "\u2013\u2014");
-  assertEquals(sanitizeText("&lsquo;x&rsquo; &ldquo;y&rdquo;"), "\u2018x\u2019 \u201Cy\u201D");
-  assertEquals(sanitizeText("&hellip;&copy;&reg;&trade;"), "\u2026\u00A9\u00AE\u2122");
+Deno.test("parseDuration", () => {
+  const rows: { name: string; input: unknown; expected: number | null }[] = [
+    { name: "HH:MM:SS", input: "01:02:03", expected: 3723 },
+    { name: "MM:SS", input: "45:30", expected: 2730 },
+    { name: "seconds only", input: "90", expected: 90 },
+    { name: "garbage", input: "garbage", expected: null },
+    { name: "non-numeric part", input: "1:XX:3", expected: null },
+    { name: "4 parts (adversarial)", input: "1:2:3:4", expected: null },
+    { name: "null", input: null, expected: null },
+    { name: "undefined", input: undefined, expected: null },
+  ];
+  for (const { name, input, expected } of rows) assertEquals(parseDuration(input), expected, name);
 });
 
-Deno.test("sanitizeText: decodes numeric and hex entities", () => {
-  assertEquals(sanitizeText("&#123;&#x41;"), "{A");
+Deno.test("parseExplicit", () => {
+  const rows: { name: string; input: unknown; expected: boolean | null }[] = [
+    { name: "yes", input: "yes", expected: true },
+    { name: "Yes", input: "Yes", expected: true },
+    { name: "true", input: "true", expected: true },
+    { name: "True", input: "True", expected: true },
+    { name: "no", input: "no", expected: false },
+    { name: "false", input: "false", expected: false },
+    { name: "empty string", input: "", expected: false },
+    { name: "undefined", input: undefined, expected: null },
+    { name: "null", input: null, expected: null },
+  ];
+  for (const { name, input, expected } of rows) assertEquals(parseExplicit(input), expected, name);
 });
 
-Deno.test("sanitizeText: handles CDATA-shaped object input", () => {
-  assertEquals(sanitizeText({ "#text": "hello from CDATA" }), "hello from CDATA");
+Deno.test("parseCategories", () => {
+  const rows: { name: string; input: unknown; expected: string[] | null }[] = [
+    { name: "single category", input: { "@_text": "Technology" }, expected: ["Technology"] },
+    { name: "array of categories", input: [{ "@_text": "News" }, { "@_text": "Politics" }], expected: ["News", "Politics"] },
+    {
+      name: "nested itunes:category subcategories",
+      input: { "@_text": "Technology", "itunes:category": { "@_text": "Podcasting" } },
+      expected: ["Technology", "Podcasting"],
+    },
+    { name: "null", input: null, expected: null },
+    { name: "undefined", input: undefined, expected: null },
+  ];
+  for (const { name, input, expected } of rows) assertEquals(parseCategories(input), expected, name);
 });
 
-Deno.test("sanitizeText: takes first element of array input", () => {
-  assertEquals(sanitizeText(["one", "two"]), "one");
+Deno.test("parseDate", () => {
+  const rows: { name: string; input: unknown; expected: string | null }[] = [
+    { name: "ISO string", input: "2024-01-15T12:30:45Z", expected: "2024-01-15T12:30:45.000Z" },
+    { name: "RFC 2822 string", input: "Mon, 15 Jan 2024 12:30:45 GMT", expected: "2024-01-15T12:30:45.000Z" },
+    { name: "invalid string does not throw", input: "not a date", expected: null },
+    { name: "null", input: null, expected: null },
+    { name: "undefined", input: undefined, expected: null },
+  ];
+  for (const { name, input, expected } of rows) assertEquals(parseDate(input as string)?.toISOString() ?? null, expected, name);
 });
 
-Deno.test("sanitizeText: collapses whitespace", () => {
-  assertEquals(sanitizeText("  a\t\tb\n\nc  "), "a b c");
-});
-
-Deno.test("sanitizeText: empty/falsy → null", () => {
-  assertEquals(sanitizeText(null), null);
-  assertEquals(sanitizeText(undefined), null);
-  assertEquals(sanitizeText(""), null);
-  assertEquals(sanitizeText("   "), null);
-});
-
-Deno.test("parseDuration: HH:MM:SS", () => {
-  assertEquals(parseDuration("01:02:03"), 3723);
-});
-
-Deno.test("parseDuration: MM:SS", () => {
-  assertEquals(parseDuration("45:30"), 2730);
-});
-
-Deno.test("parseDuration: seconds only", () => {
-  assertEquals(parseDuration("90"), 90);
-});
-
-Deno.test("parseDuration: non-numeric → null", () => {
-  assertEquals(parseDuration("garbage"), null);
-  assertEquals(parseDuration("1:XX:3"), null);
-});
-
-Deno.test("parseDuration: 4-part string → null (adversarial)", () => {
-  assertEquals(parseDuration("1:2:3:4"), null);
-});
-
-Deno.test("parseDuration: null/undefined → null", () => {
-  assertEquals(parseDuration(null), null);
-  assertEquals(parseDuration(undefined), null);
-});
-
-Deno.test("parseExplicit: truthy variants", () => {
-  assertEquals(parseExplicit("yes"), true);
-  assertEquals(parseExplicit("Yes"), true);
-  assertEquals(parseExplicit("true"), true);
-  assertEquals(parseExplicit("True"), true);
-});
-
-Deno.test("parseExplicit: falsy variants", () => {
-  assertEquals(parseExplicit("no"), false);
-  assertEquals(parseExplicit("false"), false);
-  assertEquals(parseExplicit(""), false);
-});
-
-Deno.test("parseExplicit: undefined/null → null", () => {
-  assertEquals(parseExplicit(undefined), null);
-  assertEquals(parseExplicit(null), null);
-});
-
-Deno.test("parseCategories: single category", () => {
-  assertEquals(parseCategories({ "@_text": "Technology" }), ["Technology"]);
-});
-
-Deno.test("parseCategories: array of categories", () => {
-  assertEquals(parseCategories([{ "@_text": "News" }, { "@_text": "Politics" }]), ["News", "Politics"]);
-});
-
-Deno.test("parseCategories: nested itunes:category subcategories", () => {
-  const raw = {
-    "@_text": "Technology",
-    "itunes:category": { "@_text": "Podcasting" },
-  };
-  assertEquals(parseCategories(raw), ["Technology", "Podcasting"]);
-});
-
-Deno.test("parseCategories: null → null", () => {
-  assertEquals(parseCategories(null), null);
-  assertEquals(parseCategories(undefined), null);
-});
-
-Deno.test("parseDate: valid ISO string", () => {
-  const d = parseDate("2024-01-15T12:30:45Z");
-  assertExists(d);
-  assertEquals(d.toISOString(), "2024-01-15T12:30:45.000Z");
-});
-
-Deno.test("parseDate: valid RFC 2822 string", () => {
-  const d = parseDate("Mon, 15 Jan 2024 12:30:45 GMT");
-  assertExists(d);
-  assertEquals(d.toISOString(), "2024-01-15T12:30:45.000Z");
-});
-
-Deno.test("parseDate: invalid string → null (no throw)", () => {
-  assertEquals(parseDate("not a date"), null);
-});
-
-Deno.test("parseDate: null/undefined → null", () => {
-  assertEquals(parseDate(null), null);
-  assertEquals(parseDate(undefined), null);
-});
-
-Deno.test("generateEpisodeId: deterministic for same input", () => {
-  const a = generateEpisodeId({ guid: "foo-bar" });
-  const b = generateEpisodeId({ guid: "foo-bar" });
-  assertEquals(a, b);
-});
-
-Deno.test("generateEpisodeId: different inputs produce different ids", () => {
-  const a = generateEpisodeId({ guid: "one" });
-  const b = generateEpisodeId({ guid: "two" });
-  assert(a !== b, "expected distinct ids for distinct guids");
-});
-
-Deno.test("generateEpisodeId: guid preferred over id and link", () => {
-  const guidOnly = generateEpisodeId({ guid: "g" });
-  const withId = generateEpisodeId({ guid: "g", id: "i", link: "l" });
-  assertEquals(guidOnly, withId);
-});
-
-Deno.test("generateEpisodeId: object-valued guid handled without throwing", () => {
+Deno.test("generateEpisodeId", () => {
+  const rows: { name: string; input: object; other: object; equal: boolean }[] = [
+    { name: "deterministic for same input", input: { guid: "foo-bar" }, other: { guid: "foo-bar" }, equal: true },
+    { name: "different guids differ", input: { guid: "one" }, other: { guid: "two" }, equal: false },
+    { name: "guid preferred over id and link", input: { guid: "g" }, other: { guid: "g", id: "i", link: "l" }, equal: true },
+  ];
+  for (const { name, input, other, equal } of rows) {
+    assertEquals(generateEpisodeId(input) === generateEpisodeId(other), equal, name);
+  }
   const id = generateEpisodeId({ guid: { "#text": "from-cdata" } });
-  assert(typeof id === "string" && id.length > 0);
+  assert(typeof id === "string" && id.length > 0, "object-valued guid gives a non-empty string");
 });
 
-Deno.test("findEpisodeThumbnail: itunes:image", () => {
-  assertEquals(findEpisodeThumbnail({ "itunes:image": { "@_href": "https://x/1.jpg" } }), "https://x/1.jpg");
+Deno.test("findEpisodeThumbnail", () => {
+  const rows: { name: string; input: object; expected: string | null }[] = [
+    { name: "itunes:image", input: { "itunes:image": { "@_href": "https://x/1.jpg" } }, expected: "https://x/1.jpg" },
+    { name: "media:thumbnail", input: { "media:thumbnail": { "@_url": "https://x/2.jpg" } }, expected: "https://x/2.jpg" },
+    {
+      name: "media:content with medium=image",
+      input: { "media:content": [{ "@_medium": "image", "@_url": "https://x/3.jpg" }] },
+      expected: "https://x/3.jpg",
+    },
+    {
+      name: "image enclosure",
+      input: { enclosure: { "@_type": "image/jpeg", "@_url": "https://x/4.jpg" } },
+      expected: "https://x/4.jpg",
+    },
+    { name: "none", input: { title: "no image" }, expected: null },
+  ];
+  for (const { name, input, expected } of rows) assertEquals(findEpisodeThumbnail(input), expected, name);
 });
 
-Deno.test("findEpisodeThumbnail: media:thumbnail", () => {
-  assertEquals(findEpisodeThumbnail({ "media:thumbnail": { "@_url": "https://x/2.jpg" } }), "https://x/2.jpg");
-});
-
-Deno.test("findEpisodeThumbnail: media:content with medium=image", () => {
-  assertEquals(
-    findEpisodeThumbnail({ "media:content": [{ "@_medium": "image", "@_url": "https://x/3.jpg" }] }),
-    "https://x/3.jpg",
-  );
-});
-
-Deno.test("findEpisodeThumbnail: image enclosure", () => {
-  assertEquals(
-    findEpisodeThumbnail({ enclosure: { "@_type": "image/jpeg", "@_url": "https://x/4.jpg" } }),
-    "https://x/4.jpg",
-  );
-});
-
-Deno.test("findEpisodeThumbnail: none → null", () => {
-  assertEquals(findEpisodeThumbnail({ title: "no image" }), null);
-});
-
-Deno.test("httpsUrl: https passes through", () => {
-  assertEquals(httpsUrl("https://example.com/x"), "https://example.com/x");
-});
-
-Deno.test("httpsUrl: http → https rewrite", () => {
-  assertEquals(httpsUrl("http://example.com/x"), "https://example.com/x");
-});
-
-Deno.test("httpsUrl: protocol-relative → https", () => {
-  assertEquals(httpsUrl("//example.com/x"), "https://example.com/x");
-});
-
-Deno.test("httpsUrl: garbage → null", () => {
-  assertEquals(httpsUrl("not-a-url"), null);
-  assertEquals(httpsUrl(""), null);
-  assertEquals(httpsUrl(null), null);
-  assertEquals(httpsUrl(undefined), null);
-});
-
-Deno.test("httpsUrl: uppercase scheme lowercased", () => {
-  assertEquals(httpsUrl("HTTPS://memorizing.libsyn.com/rss"), "https://memorizing.libsyn.com/rss");
-  assertEquals(httpsUrl("Http://example.com/feed"), "https://example.com/feed");
-  assertEquals(httpsUrl("  https://example.com "), "https://example.com");
+Deno.test("httpsUrl", () => {
+  const rows: { name: string; input: string | null | undefined; expected: string | null }[] = [
+    { name: "https passes through", input: "https://example.com/x", expected: "https://example.com/x" },
+    { name: "http rewritten", input: "http://example.com/x", expected: "https://example.com/x" },
+    { name: "protocol-relative", input: "//example.com/x", expected: "https://example.com/x" },
+    { name: "garbage", input: "not-a-url", expected: null },
+    { name: "empty", input: "", expected: null },
+    { name: "null", input: null, expected: null },
+    { name: "undefined", input: undefined, expected: null },
+    { name: "uppercase HTTPS", input: "HTTPS://memorizing.libsyn.com/rss", expected: "https://memorizing.libsyn.com/rss" },
+    { name: "mixed-case Http", input: "Http://example.com/feed", expected: "https://example.com/feed" },
+    { name: "surrounding whitespace", input: "  https://example.com ", expected: "https://example.com" },
+  ];
+  for (const { name, input, expected } of rows) assertEquals(httpsUrl(input), expected, name);
 });
 
 Deno.test("parse: RSS 2.0 podcast", () => {
@@ -816,6 +744,75 @@ Deno.test("handleRssProxy: gibberish XML bytes → parse throws (let it crash)",
     () => handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url }),
     Error,
   );
+});
+
+function resolveFetch(extra: (url: string) => Response | undefined): typeof fetch {
+  return ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (init?.method === "HEAD") return Promise.resolve(new Response(null, { status: 200 }));
+    if (url.includes("/@AtriocClips")) return Promise.resolve(new Response(`"channelId":"UCreal"`));
+    return Promise.resolve(extra(url) ?? new Response("nope", { status: 404 }));
+  }) as typeof fetch;
+}
+
+const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
+
+Deno.test("handleRssProxy: @handle → scrape → UULF feed XML", async () => {
+  const xml =
+    `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015"><yt:playlistId>UULFreal</yt:playlistId><title>ok</title><entry><id>x</id><title>t</title><link href="https://y"/><published>2026-01-01T00:00:00Z</published><yt:channelId>UCreal</yt:channelId></entry></feed>`;
+  const fetcher = resolveFetch((url) => url.includes("playlist_id=UULFreal") ? new Response(xml) : undefined);
+  const res = await handleRssProxy(
+    { sql: mockSql() as any, bucket: mockR2Bucket() as unknown as R2Bucket, fetcher },
+    { rssUrl: "https://www.youtube.com/@AtriocClips" },
+  );
+  assertEquals(res.status, 200);
+  assertStringIncludes(await res.text(), "<yt:playlistId>UULFreal");
+});
+
+Deno.test("handleRssProxy: expired cache triggers refetch", async () => {
+  const url = "https://example.com/feed.xml";
+  const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
+  const newXml = `<?xml version="1.0"?><rss><channel><title>new</title></channel></rss>`;
+  const bucket = mockR2Bucket();
+  bucket._storage.set(url, {
+    body: new TextEncoder().encode(oldXml),
+    httpMetadata: undefined,
+    uploaded: new Date(Date.now() - TWO_HOURS_MS),
+  });
+  const fetcher = mockFetch({ [url]: xmlResponse(newXml) });
+  const res = await handleRssProxy({ sql: mockSql() as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("x-telecast-stale"), null);
+  assertEquals(await res.text(), newXml);
+});
+
+Deno.test("handleRssProxy: expired cache + origin failure serves stale", async () => {
+  const url = "https://example.com/feed.xml";
+  const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
+  const bucket = mockR2Bucket();
+  bucket._storage.set(url, {
+    body: new TextEncoder().encode(oldXml),
+    httpMetadata: undefined,
+    uploaded: new Date(Date.now() - TWO_HOURS_MS),
+  });
+  const fetcher = mockFetch({ [url]: new Response("nope", { status: 500 }) });
+  const res = await handleRssProxy({ sql: mockSql() as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  assertEquals(res.status, 200);
+  assertEquals(res.headers.get("x-telecast-stale"), "1");
+  assertEquals(await res.text(), oldXml);
+});
+
+Deno.test("handleRssProxy: error body shows both raw and resolved URL on non-feed response", async () => {
+  const fetcher = resolveFetch(() => new Response("<html>youtube is down</html>"));
+  const res = await handleRssProxy(
+    { sql: mockSql() as any, bucket: mockR2Bucket() as unknown as R2Bucket, fetcher },
+    { rssUrl: "https://www.youtube.com/@AtriocClips" },
+  );
+  assertEquals(res.status, 400);
+  const body = await res.text();
+  assertStringIncludes(body, "@AtriocClips", `expected raw input in error, got: ${body}`);
+  assertStringIncludes(body, "playlist_id=UULFreal", `expected resolved url in error, got: ${body}`);
+  assertStringIncludes(body, "youtube is down", `expected body snippet in error, got: ${body}`);
 });
 
 // ==================================================================
