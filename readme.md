@@ -34,6 +34,9 @@ deno run --env-file=.env --allow-net --allow-env --allow-read scripts/seed.ts --
 
 # curate: sync tag:featured to scripts/curation.json priority minus blocked (daily via CI)
 deno run --env-file=.env --allow-net --allow-env --allow-read scripts/curate.ts --dry-run
+
+# production status: site, feed freshness, refresh error rate, curate/seed runs, DB size; exits 1 when any score is below 1.0
+deno task status
 ```
 
 Drop `--dry-run` to write. `scripts/curation.json` is the hand-editable curation surface: `priority` (always-featured human picks),

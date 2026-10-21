@@ -11,6 +11,7 @@ elm make src/Main.elm --output=public/elm.js  # Production build
 deno run -A scripts/refresh.ts  # Batch refresh feeds (runs via GitHub Actions every 5 min)
 deno run -A scripts/seed.ts --dry-run    # Discover new channels (weekly CI)
 deno run -A scripts/curate.ts --dry-run               # Assign tag:featured (daily CI)
+deno task status                                      # Production status; snitch runs it hourly on the mac
 ```
 
 Requires `.env` with `DATABASE_URL` (Neon PostgreSQL connection string). Deno scripts (`scripts/*.ts`, `functions/`) are

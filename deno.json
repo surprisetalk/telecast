@@ -4,5 +4,8 @@
     "indentWidth": 2,
     "semiColons": true,
     "useTabs": false
+  },
+  "tasks": {
+    "status": "deno run -A --env-file=.env scripts/status.ts"
   }
 }
