@@ -24,12 +24,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: jorelali/setup-elm@v6
-        with:
-          elm-version: 0.19.1
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - run: npx --yes elm-format --validate src/ tests/
-      - run: npx --yes elm-test
-      - run: elm make src/Main.elm --output=/dev/null
+          cache: "npm"
+      - run: npm ci
+      - run: npx elm-format --validate src/ tests/
+      - run: npx elm-test
+      - run: npx elm make src/Main.elm --output=/dev/null

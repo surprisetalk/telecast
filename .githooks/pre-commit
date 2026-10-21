@@ -6,4 +6,4 @@ deno fmt --check functions/ scripts/
 npx elm make src/Main.elm --output=/dev/null
 npx elm-test
 deno check functions/ scripts/
-deno test functions/
+deno test functions/ scripts/
