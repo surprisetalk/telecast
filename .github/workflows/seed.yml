@@ -3,12 +3,6 @@ on:
   schedule:
     - cron: "0 5 * * 1"
   workflow_dispatch:
-    inputs:
-      source:
-        description: "Source to seed from"
-        default: all
-        type: choice
-        options: [all, hn, reddit, lectures]
 
 jobs:
   seed:
@@ -18,6 +12,6 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - run: deno run --allow-net --allow-env --allow-read scripts/seed.ts --source=${{ inputs.source || 'all' }}
+      - run: deno run --allow-net --allow-env --allow-read scripts/seed.ts
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}

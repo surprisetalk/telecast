@@ -30,12 +30,11 @@ deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys script
 deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys scripts/refresh.ts
 
 # seed new channels from HN + Reddit links and scripts/lectures.json (weekly via CI)
-deno run --env-file=.env --allow-net --allow-env --allow-read scripts/seed.ts --source=all --dry-run
+deno run --env-file=.env --allow-net --allow-env --allow-read scripts/seed.ts --dry-run
 
 # curate: auto-promote top channels per topic to tag:featured, honoring scripts/curation.json (daily via CI)
 deno run --env-file=.env --allow-net --allow-env --allow-read scripts/curate.ts --dry-run
 ```
 
 Drop `--dry-run` to write. `scripts/curation.json` is the hand-editable curation surface: `priority` (always-featured human picks),
-`blocked` (never featured), and `autoPromote` + `perTagLimit`/`minQuality` for optional algorithmic top-N-per-tag fill (off by default — the
-`quality` score over-rewards prolific feeds). `scripts/lectures.json` holds curated MOOC/lecture channel URLs for the seeder.
+`blocked` (never featured). Featured = `priority` minus `blocked`. `scripts/lectures.json` holds curated MOOC/lecture channel URLs for the seeder.

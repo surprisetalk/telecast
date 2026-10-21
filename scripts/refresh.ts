@@ -1,5 +1,6 @@
 import db from "postgres";
 import { Channel, Episode, parse, parseEpisodes } from "../functions/_shared/rss";
+import { preferUulfFeedUrl } from "../functions/_shared/youtube.ts";
 import { pool } from "./pool.ts";
 
 const BATCH_SIZE = 500;
@@ -9,17 +10,7 @@ const CONCURRENCY = 20;
 async function maybeUpgradeToUulf(rss: string): Promise<string> {
   const m = rss.match(/^https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?channel_id=(UC[\w-]+)$/);
   if (!m) return rss;
-  const uulf = `https://www.youtube.com/feeds/videos.xml?playlist_id=UULF${m[1]!.slice(2)}`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 3_000);
-  try {
-    const res = await fetch(uulf, { method: "HEAD", signal: controller.signal });
-    return res.ok ? uulf : rss;
-  } catch {
-    return rss;
-  } finally {
-    clearTimeout(timeout);
-  }
+  return preferUulfFeedUrl(m[1]!, fetch);
 }
 
 // Language code to tag mapping
@@ -363,14 +354,10 @@ async function main() {
     try {
       const fetchUrl = await maybeUpgradeToUulf(channel.rss);
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
       const res = await fetch(fetchUrl, {
         headers: { "User-Agent": "Telecasts/1.0" },
-        signal: controller.signal,
+        signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-      clearTimeout(timeout);
 
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
 

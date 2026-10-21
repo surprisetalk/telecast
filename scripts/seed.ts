@@ -54,48 +54,36 @@ export function linksFromLectures(json: unknown): string[] {
 
 // --- Source adapters (network) ------------------------------------------------
 
-async function fromHackerNews(fetcher: typeof fetch, hitsPerPage = 1000): Promise<string[]> {
-  const url = `https://hn.algolia.com/api/v1/search?query=youtube.com&tags=(story,comment)&hitsPerPage=${hitsPerPage}`;
-  const res = await fetcher(url);
+async function fromHackerNews(): Promise<string[]> {
+  const url = `https://hn.algolia.com/api/v1/search?query=youtube.com&tags=(story,comment)&hitsPerPage=1000`;
+  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`HN Algolia HTTP ${res.status}`);
   const data = await res.json() as { hits?: unknown };
   if (!Array.isArray(data.hits)) throw new Error(`HN Algolia: expected hits[] array, got ${typeof data.hits}`);
   return linksFromHnHits(data.hits);
 }
 
-async function fromReddit(fetcher: typeof fetch): Promise<string[]> {
+async function fromReddit(): Promise<string[]> {
   const queries = ["youtube.com/channel", "youtube.com/@", "youtube channel"];
   const out: string[] = [];
   for (const q of queries) {
     const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&limit=100&type=link`;
-    const res = await fetcher(url, { headers: { "user-agent": "telecast-seeder/1.0" } });
+    const res = await fetch(url, { headers: { "user-agent": "telecast-seeder/1.0" }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) throw new Error(`Reddit HTTP ${res.status} for "${q}"`);
     out.push(...linksFromRedditListing(await res.json()));
   }
   return out;
 }
 
-async function fromLectures(): Promise<string[]> {
-  const url = new URL("./lectures.json", import.meta.url);
-  return linksFromLectures(JSON.parse(await (await fetch(url)).text()));
-}
-
 // --- Seeding ------------------------------------------------------------------
 
-async function fetchWithTimeout(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  try {
-    return await fetch(url, { headers: { "user-agent": "Telecasts/1.0" }, signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
 type Sql = ReturnType<typeof db>;
-type SeedResult = { link: string; feed?: string; channelId?: string; status: string };
 
-async function seedChannel(sql: Sql | null, link: string, dryRun: boolean): Promise<SeedResult> {
+async function seedChannel(
+  sql: Sql | null,
+  link: string,
+  dryRun: boolean,
+): Promise<{ link: string; feed?: string; channelId?: string; status: string }> {
   let resolved: { url: string } | { error: string };
   try {
     resolved = await resolveYoutubeFeedUrl(link, fetch);
@@ -108,7 +96,7 @@ async function seedChannel(sql: Sql | null, link: string, dryRun: boolean): Prom
 
   let text: string;
   try {
-    const res = await fetchWithTimeout(feed);
+    const res = await fetch(feed, { headers: { "user-agent": "Telecasts/1.0" }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
     if (!res.ok) return { link, feed, status: `feed HTTP ${res.status}` };
     text = await res.text();
   } catch (e) {
@@ -140,49 +128,47 @@ async function seedChannel(sql: Sql | null, link: string, dryRun: boolean): Prom
 
 // --- CLI ----------------------------------------------------------------------
 
-function parseArgs(args: string[]): { source: string; dryRun: boolean; limit: number } {
-  let source = "all";
+function parseArgs(args: string[]): { dryRun: boolean } {
   let dryRun = false;
-  let limit = DEFAULT_LIMIT;
   for (const a of args) {
     if (a === "--dry-run") dryRun = true;
-    else if (a.startsWith("--source=")) source = a.slice("--source=".length);
-    else if (a.startsWith("--limit=")) limit = parseInt(a.slice("--limit=".length), 10);
-    else throw new Error(`Unknown argument: ${a}. Use --source=hn|reddit|lectures|all --dry-run --limit=N`);
+    else throw new Error(`Unknown argument: ${a}. The only accepted flag is --dry-run`);
   }
-  if (!["hn", "reddit", "lectures", "all"].includes(source)) throw new Error(`Invalid --source=${source}`);
-  if (!Number.isFinite(limit) || limit <= 0) throw new Error(`Invalid --limit`);
-  return { source, dryRun, limit };
+  return { dryRun };
 }
 
-async function gather(source: string): Promise<string[]> {
-  const wanted = source === "all" ? ["hn", "reddit", "lectures"] : [source];
+async function gather(): Promise<string[]> {
+  const sources: [string, () => Promise<string[]>][] = [
+    ["hn", fromHackerNews],
+    ["reddit", fromReddit],
+    ["lectures", async () => linksFromLectures(JSON.parse(await Deno.readTextFile(new URL("./lectures.json", import.meta.url))))],
+  ];
   const links: string[] = [];
-  for (const s of wanted) {
+  for (const [name, load] of sources) {
     try {
-      const found = s === "hn" ? await fromHackerNews(fetch) : s === "reddit" ? await fromReddit(fetch) : await fromLectures();
-      console.log(`  ${s}: ${found.length} links`);
-      if (found.length === 0) console.warn(`  WARNING: ${s} returned 0 links (schema drift, rate-limit, or block?)`);
+      const found = await load();
+      console.log(`  ${name}: ${found.length} links`);
+      if (found.length === 0) console.warn(`  WARNING: ${name} returned 0 links (schema drift, rate-limit, or block?)`);
       links.push(...found);
     } catch (e) {
-      console.error(`  ${s}: FAILED — ${(e as Error).message}`);
+      console.error(`  ${name}: FAILED — ${(e as Error).message}`);
     }
   }
   return links;
 }
 
 async function main() {
-  const { source, dryRun, limit } = parseArgs(Deno.args);
+  const { dryRun } = parseArgs(Deno.args);
   const databaseUrl = Deno.env.get("DATABASE_URL");
   if (!databaseUrl && !dryRun) {
     console.error("DATABASE_URL not set (use --dry-run to preview without a DB)");
     Deno.exit(1);
   }
 
-  console.log(`Gathering links (source=${source})...`);
-  const all = await gather(source);
-  const unique = [...new Set(all)].slice(0, limit);
-  console.log(`\n${all.length} raw → ${unique.length} unique channels (limit ${limit})\n`);
+  console.log(`Gathering links...`);
+  const all = await gather();
+  const unique = [...new Set(all)].slice(0, DEFAULT_LIMIT);
+  console.log(`\n${all.length} raw → ${unique.length} unique channels (limit ${DEFAULT_LIMIT})\n`);
 
   const sql = dryRun || !databaseUrl ? null : db(databaseUrl, { max: CONCURRENCY, idle_timeout: 20, connect_timeout: 30 });
   const tally: Record<string, number> = {};

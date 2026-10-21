@@ -1,91 +1,11 @@
 import db from "postgres";
 
-// Topic tags that get auto-promoted to `featured` (mirrors discoverTags in
-// src/Main.elm plus the coarse tags the refresh pipeline infers).
-const TOPIC_TAGS = [
-  "conferences",
-  "systems",
-  "creative-coding",
-  "math",
-  "physics",
-  "chemistry",
-  "engineering",
-  "electronics",
-  "makers",
-  "woodworking",
-  "restoration",
-  "music-theory",
-  "music-production",
-  "synthesizers",
-  "musicians",
-  "film-essays",
-  "game-design",
-  "game-essays",
-  "video-essays",
-  "anime",
-  "urbanism",
-  "architecture",
-  "gardening",
-  "cooking",
-  "coffee",
-  "tiny-living",
-  "retro-tech",
-  "speedrunning",
-  "ttrpg",
-  "vtubers",
-  "technology",
-  "games",
-  "food",
-  "fitness",
-  "science",
-  "history",
-  "music",
-  "news",
-  "politics",
-  "film",
-  "arts",
-  "business",
-  "health",
-  "education",
-  "comedy",
-  "religion",
-];
+type Curation = { priority: string[]; blocked: string[] };
+type ChannelRow = { channel_id: string; tags: string[] | null };
 
-type Curation = {
-  autoPromote: boolean;
-  perTagLimit: number;
-  minQuality: number;
-  priority: string[];
-  blocked: string[];
-};
-type ChannelRow = { channel_id: string; tags: string[] | null; quality: number };
-
-// Pure: pick the featured set.
-//   priority    — human editorial picks, ALWAYS featured (minus blocked).
-//   autoPromote — optional algorithmic fill: top-`perTagLimit` per topic tag by
-//                 `quality`. OFF by default because `quality` (freshness+volume)
-//                 is a poor proxy for editorial quality — it surfaces prolific
-//                 spam over great channels. Featured is human-curated by default.
-//   blocked     — never featured (wins over everything).
-export function selectFeatured(rows: ChannelRow[], c: Curation): string[] {
+export function selectFeatured(c: Curation): string[] {
   const blocked = new Set(c.blocked);
-  const featured = new Set<string>();
-  for (const id of c.priority) if (!blocked.has(id)) featured.add(id);
-  if (c.autoPromote) {
-    for (const tag of TOPIC_TAGS) {
-      rows
-        .filter((r) => (r.tags ?? []).includes(tag) && r.quality >= c.minQuality && !blocked.has(r.channel_id))
-        .sort((a, b) => b.quality - a.quality || a.channel_id.localeCompare(b.channel_id))
-        .slice(0, c.perTagLimit)
-        .forEach((r) => featured.add(r.channel_id));
-    }
-  }
-  return [...featured].sort();
-}
-
-function reqNum(v: unknown, field: string): number {
-  if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`curation.json: ${field} must be a number, got ${JSON.stringify(v)}`);
-  return v;
+  return [...new Set(c.priority.filter((id) => !blocked.has(id)))].sort();
 }
 
 function reqStrArray(v: unknown, field: string): string[] {
@@ -97,10 +17,12 @@ function reqStrArray(v: unknown, field: string): string[] {
 
 async function loadCuration(): Promise<Curation> {
   const raw = JSON.parse(await (await fetch(new URL("./curation.json", import.meta.url))).text());
+  for (const k of Object.keys(raw)) {
+    if (k !== "priority" && k !== "blocked") {
+      throw new Error(`curation.json: unknown key "${k}"; expected only "priority" and "blocked". Remove it.`);
+    }
+  }
   return {
-    autoPromote: raw.autoPromote === true,
-    perTagLimit: reqNum(raw.perTagLimit, "perTagLimit"),
-    minQuality: reqNum(raw.minQuality, "minQuality"),
     priority: reqStrArray(raw.priority, "priority"),
     blocked: reqStrArray(raw.blocked, "blocked"),
   };
@@ -117,18 +39,17 @@ async function main() {
   const c = await loadCuration();
   const sql = db(databaseUrl, { idle_timeout: 20, connect_timeout: 30 });
 
-  const rows: ChannelRow[] = (await sql`select channel_id, tags, quality from channel`)
-    .map((r: any) => ({ channel_id: r.channel_id, tags: r.tags, quality: r.quality }));
+  const rows: ChannelRow[] = (await sql`select channel_id, tags from channel`)
+    .map((r: any) => ({ channel_id: r.channel_id, tags: r.tags }));
 
-  const target = new Set(selectFeatured(rows, c));
+  const target = new Set(selectFeatured(c));
   const current = new Set(rows.filter((r) => (r.tags ?? []).includes("featured")).map((r) => r.channel_id));
   const toAdd = [...target].filter((id) => !current.has(id));
   const toRemove = [...current].filter((id) => !target.has(id));
 
   console.log(
     `${rows.length} channels · ${current.size} featured now → ${target.size} target ` +
-      `(priority ${c.priority.length}, autoPromote ${c.autoPromote ? `on perTag ${c.perTagLimit} minQuality ${c.minQuality}` : "off"}, ` +
-      `blocked ${c.blocked.length})`,
+      `(priority ${c.priority.length}, blocked ${c.blocked.length})`,
   );
   console.log(`  +${toAdd.length} to add, -${toRemove.length} to remove`);
   if (toAdd.length) console.log(`  add: ${toAdd.slice(0, 10).join(", ")}${toAdd.length > 10 ? " …" : ""}`);
