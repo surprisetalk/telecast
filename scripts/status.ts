@@ -93,9 +93,10 @@ async function lastSuccessS(workflow: string): Promise<number | null> {
   const runs = json?.workflow_runs;
   if (!Array.isArray(runs)) throw new Error(`Expected {workflow_runs: [...]} from ${url}, received ${JSON.stringify(json).slice(0, 200)}`);
   if (runs.length === 0) return null;
-  const at = Date.parse(String(runs[0]?.created_at));
+  const createdAt = runs[0]?.created_at;
+  const at = typeof createdAt === "string" ? Date.parse(createdAt) : NaN;
   if (Number.isNaN(at)) {
-    throw new Error(`Expected an ISO created_at in the first run from ${url}, received ${JSON.stringify(runs[0]?.created_at)}`);
+    throw new Error(`Expected an ISO created_at in the first run from ${url}, received ${JSON.stringify(createdAt)}`);
   }
   const ageS = (Date.now() - at) / 1000;
   if (ageS < -SKEW_S) {
@@ -114,7 +115,13 @@ export async function dbStats(url: string) {
     // The URL holds a password, so the message must not echo it.
     throw new Error("DATABASE_URL is not a valid URL. Expected postgres://user:password@host/db. Fix it in .env.");
   }
-  const redact = (msg: string) => password ? msg.replaceAll(password, "***").replaceAll(decodeURIComponent(password), "***") : msg;
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(password);
+  } catch {
+    throw new Error("DATABASE_URL's password is not percent-encoded. Expected each % in it written as %25. Fix it in .env.");
+  }
+  const redact = (msg: string) => password ? msg.replaceAll(password, "***").replaceAll(decoded, "***") : msg;
   const sql = db(url, { max: 1, idle_timeout: 5, connect_timeout: 30, connection: { statement_timeout: DB_TIMEOUT_MS - 30_000 } });
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

@@ -42,3 +42,8 @@ Deno.test("dbStats: a malformed DATABASE_URL error never shows the password", as
   const err = await assertRejects(() => dbStats("postgres://user:S3CRETPW@@host:notaport/db"));
   assert(!(err as Error).message.includes("S3CRETPW"), (err as Error).message);
 });
+
+Deno.test("dbStats: a password with a bare % names the fix and hides the password", async () => {
+  const err = await assertRejects(() => dbStats("postgres://u:p%zzw@127.0.0.1:1/db"), Error, "written as %25");
+  assert(!(err as Error).message.includes("p%zzw"), (err as Error).message);
+});
