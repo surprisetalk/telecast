@@ -144,7 +144,7 @@ export async function gather(sources: [string, () => Promise<string[]>][]): Prom
     try {
       const found = await load();
       console.log(`  ${name}: ${found.length} links`);
-      if (found.length === 0) dead.push(`${name}: 0 links`);
+      if (found.length === 0) console.warn(`  WARNING: ${name} returned 0 links (schema drift, rate-limit, or block?)`);
       links.push(...found);
     } catch (e) {
       dead.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
@@ -152,8 +152,8 @@ export async function gather(sources: [string, () => Promise<string[]>][]): Prom
   }
   if (dead.length) {
     throw new Error(
-      `Seed sources failed: ${dead.join("; ")}. Expected every source to return links. ` +
-        `0 links means schema drift, a rate limit, or a block; fix the adapter in scripts/seed.ts, or rerun later.`,
+      `Seed sources failed: ${dead.join("; ")}. Expected every source to load. ` +
+        `Fix the adapter in scripts/seed.ts or scripts/lectures.json, or rerun later for a rate limit.`,
     );
   }
   return links;
@@ -187,6 +187,10 @@ async function main() {
   console.log(`\nDone: ${Object.entries(tally).map(([k, v]) => `${v} ${k}`).join(", ")}`);
   if (sql) await sql.end();
 
+  if (unique.length === 0) {
+    console.error("No channels discovered from any source (adapters all empty — schema drift, rate-limit, or network block?).");
+    Deno.exit(1);
+  }
   if (!dryRun && (tally["inserted"] ?? 0) + (tally["exists"] ?? 0) === 0) {
     console.error("Processed channels but none reached the DB (every insert failed — check DATABASE_URL / connectivity).");
     Deno.exit(1);

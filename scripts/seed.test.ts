@@ -74,14 +74,14 @@ Deno.test("linksFromLectures: keeps http(s) urls verbatim, drops junk", () => {
   assertEquals(linksFromLectures("nope"), []);
 });
 
-Deno.test("gather: a source that throws or returns 0 links fails the run, naming each", async () => {
+Deno.test("gather: a source that throws fails the run, naming each; 0 links only warns", async () => {
   const ok = () => Promise.resolve(["https://www.youtube.com/@a"]);
-  assertEquals(await gather([["hn", ok]]), ["https://www.youtube.com/@a"]);
+  assertEquals(await gather([["hn", ok], ["lectures", () => Promise.resolve([])]]), ["https://www.youtube.com/@a"]);
   const err = await assertRejects(() =>
-    gather([["hn", ok], ["reddit", () => Promise.reject(new Error("HTTP 429"))], ["lectures", () => Promise.resolve([])]])
+    gather([["hn", ok], ["reddit", () => Promise.reject(new Error("HTTP 429"))], ["lectures", () => Promise.reject(new Error("bad json"))]])
   );
   const msg = (err as Error).message;
-  for (const part of ["reddit: HTTP 429", "lectures: 0 links"]) assertEquals(msg.includes(part), true, `${part} missing from: ${msg}`);
+  for (const part of ["reddit: HTTP 429", "lectures: bad json"]) assertEquals(msg.includes(part), true, `${part} missing from: ${msg}`);
   const odd = await assertRejects(() => gather([["a", () => Promise.reject("str")], ["b", () => Promise.reject(null)]]));
   assertEquals((odd as Error).message.startsWith("Seed sources failed: a: str; b: null."), true, (odd as Error).message);
 });
