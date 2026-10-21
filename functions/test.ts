@@ -349,6 +349,7 @@ Deno.test("sanitizeText", () => {
   for (const { name, input, expected } of rows) assertEquals(sanitizeText(input), expected, name);
   assertThrows(() => sanitizeText("a &#99999999; b"), Error, "Numeric entity &#99999999; is out of range");
   assertThrows(() => sanitizeText("&#x110000;"), Error, "Numeric entity &#x110000; is out of range");
+  assertThrows(() => sanitizeText("&#12<b></b>3456789;"), Error, "Numeric entity &#123456789; is out of range");
 });
 
 Deno.test("parseDuration", () => {

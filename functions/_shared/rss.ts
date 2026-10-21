@@ -64,6 +64,7 @@ export function sanitizeText(text: any): string | null {
   // Ensure we have a string
   if (typeof text !== "string") text = String(text);
 
+  text = text.replace(/<[^>]*>/g, "");
   for (const m of text.matchAll(/&#(?:x([0-9a-f]+)|(\d+));/gi)) {
     const cp = m[1] ? parseInt(m[1], 16) : Number(m[2]);
     if (cp > 0x10ffff) {
@@ -74,7 +75,7 @@ export function sanitizeText(text: any): string | null {
       );
     }
   }
-  text = decodeHTMLStrict(text.replace(/<[^>]*>/g, ""));
+  text = decodeHTMLStrict(text);
 
   text = text.replace(/\s+/g, " ").trim();
 

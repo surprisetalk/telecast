@@ -82,4 +82,6 @@ Deno.test("gather: a source that throws or returns 0 links fails the run, naming
   );
   const msg = (err as Error).message;
   for (const part of ["reddit: HTTP 429", "lectures: 0 links"]) assertEquals(msg.includes(part), true, `${part} missing from: ${msg}`);
+  const odd = await assertRejects(() => gather([["a", () => Promise.reject("str")], ["b", () => Promise.reject(null)]]));
+  assertEquals((odd as Error).message.startsWith("Seed sources failed: a: str; b: null."), true, (odd as Error).message);
 });

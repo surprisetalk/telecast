@@ -147,7 +147,7 @@ export async function gather(sources: [string, () => Promise<string[]>][]): Prom
       if (found.length === 0) dead.push(`${name}: 0 links`);
       links.push(...found);
     } catch (e) {
-      dead.push(`${name}: ${(e as Error).message}`);
+      dead.push(`${name}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
   if (dead.length) {
