@@ -15,8 +15,11 @@ function reqStrArray(v: unknown, field: string): string[] {
   return v as string[];
 }
 
-async function loadCuration(): Promise<Curation> {
-  const raw = JSON.parse(await (await fetch(new URL("./curation.json", import.meta.url))).text());
+export function parseCuration(text: string): Curation {
+  const raw = JSON.parse(text);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`curation.json: expected an object {"priority": [...], "blocked": [...]}, got ${text}`);
+  }
   for (const k of Object.keys(raw)) {
     if (k !== "priority" && k !== "blocked") {
       throw new Error(`curation.json: unknown key "${k}"; expected only "priority" and "blocked". Remove it.`);
@@ -36,7 +39,7 @@ async function main() {
     Deno.exit(1);
   }
 
-  const c = await loadCuration();
+  const c = parseCuration(await Deno.readTextFile(new URL("./curation.json", import.meta.url)));
   const sql = db(databaseUrl, { idle_timeout: 20, connect_timeout: 30 });
 
   const rows: ChannelRow[] = (await sql`select channel_id, tags from channel`)

@@ -1,4 +1,4 @@
-import { decodeHTML } from "entities";
+import { decodeHTMLStrict } from "entities";
 import { XMLParser } from "fast-xml-parser";
 
 export interface Channel {
@@ -64,7 +64,7 @@ export function sanitizeText(text: any): string | null {
   // Ensure we have a string
   if (typeof text !== "string") text = String(text);
 
-  text = decodeHTML(text.replace(/<[^>]*>/g, ""));
+  text = decodeHTMLStrict(text.replace(/<[^>]*>/g, ""));
 
   text = text.replace(/\s+/g, " ").trim();
 

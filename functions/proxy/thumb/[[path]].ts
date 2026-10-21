@@ -44,6 +44,7 @@ export async function handleThumbProxy(
   }
   const fetchUrl = transformYouTubeThumb(thumbUrl);
   let fetchResponse: Response;
+  let body: Uint8Array<ArrayBuffer>;
   try {
     fetchResponse = await fetcher(fetchUrl, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -56,6 +57,7 @@ export async function handleThumbProxy(
         },
       },
     } as RequestInit);
+    body = new Uint8Array(await fetchResponse.arrayBuffer());
   } catch (err) {
     const msg = err instanceof DOMException && err.name === "TimeoutError"
       ? `Timed out after ${FETCH_TIMEOUT_MS} ms fetching ${fetchUrl}`
@@ -74,10 +76,10 @@ export async function handleThumbProxy(
     console.error(`thumb proxy: non-image content-type ${contentType ?? "(none)"} for ${fetchUrl}`);
     return serveFallback();
   }
-  await bucket.put(smallKey, fetchResponse.clone().body, {
+  await bucket.put(smallKey, body, {
     httpMetadata: { contentType },
   });
-  return new Response(fetchResponse.body, {
+  return new Response(body, {
     headers: {
       "content-type": contentType,
       "cache-control": "public, max-age=31536000, immutable",

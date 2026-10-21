@@ -337,6 +337,7 @@ Deno.test("sanitizeText", () => {
     { name: "curly quotes", input: "&lsquo;x&rsquo; &ldquo;y&rdquo;", expected: "‘x’ “y”" },
     { name: "symbols", input: "&hellip;&copy;&reg;&trade;", expected: "…©®™" },
     { name: "numeric and hex entities", input: "&#123;&#x41;", expected: "{A" },
+    { name: "names without semicolon stay literal", input: "?a=1&section=2&para=1&copy 2020", expected: "?a=1&section=2&para=1&copy 2020" },
     { name: "CDATA-shaped object", input: { "#text": "hello from CDATA" }, expected: "hello from CDATA" },
     { name: "first element of array", input: ["one", "two"], expected: "one" },
     { name: "collapses whitespace", input: "  a\t\tb\n\nc  ", expected: "a b c" },
@@ -816,6 +817,34 @@ Deno.test("handleRssProxy: expired cache + origin failure serves stale", async (
   assertEquals(await res.text(), oldXml);
 });
 
+const stalledBody = (headers: HeadersInit = {}) =>
+  new Response(
+    new ReadableStream({
+      start(c) {
+        c.error(new DOMException("signal timed out", "TimeoutError"));
+      },
+    }),
+    { headers },
+  );
+
+Deno.test("handleRssProxy: body timeout after headers serves stale, else 502 naming URL and timeout", async () => {
+  const url = "https://example.com/feed.xml";
+  const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
+  const bucket = mockR2Bucket();
+  bucket._storage.set(url, {
+    body: new TextEncoder().encode(oldXml),
+    httpMetadata: undefined,
+    uploaded: new Date(Date.now() - TWO_HOURS_MS),
+  });
+  const fetcher = mockFetch({ [url]: () => stalledBody() });
+  const stale = await handleRssProxy({ sql: mockSql() as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  assertEquals(stale.headers.get("x-telecast-stale"), "1");
+  assertEquals(await stale.text(), oldXml);
+  const res = await handleRssProxy({ sql: mockSql() as any, bucket: mockR2Bucket() as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  assertEquals(res.status, 502);
+  assertStringIncludes(await res.text(), `Timed out after 15000 ms fetching ${url}`);
+});
+
 Deno.test("handleRssProxy: error body shows both raw and resolved URL on non-feed response", async () => {
   const fetcher = resolveFetch(() => new Response("<html>youtube is down</html>"));
   const res = await handleRssProxy(
@@ -956,4 +985,17 @@ Deno.test("handleThumbProxy: fetch timeout → fallback SVG + logs URL and timeo
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, `Timed out after 10000 ms fetching ${thumbUrl}`);
+});
+
+Deno.test("handleThumbProxy: body timeout after headers → fallback SVG + logs URL and timeout in ms", async () => {
+  const bucket = mockR2Bucket();
+  const thumbUrl = "https://example.com/stall.jpg";
+  const fetcher = mockFetch({ [thumbUrl]: () => stalledBody({ "content-type": "image/jpeg" }) });
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
+  );
+  assertEquals(res.headers.get("content-type"), "image/svg+xml");
+  assertEquals(logs.length, 1);
+  assertStringIncludes(logs[0]!, `Timed out after 10000 ms fetching ${thumbUrl}`);
+  assertEquals(bucket._storage.size, 0);
 });

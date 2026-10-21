@@ -37,8 +37,10 @@ export async function handleRssProxy(
   }
   const stale = (): Response => new Response(cachedText!, { headers: { "content-type": "application/xml", "x-telecast-stale": "1" } });
   let fetchResponse: Response;
+  let text: string;
   try {
     fetchResponse = await fetcher(rssUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    text = await fetchResponse.text();
   } catch (err) {
     if (cachedText) return stale();
     const msg = err instanceof DOMException && err.name === "TimeoutError"
@@ -55,7 +57,6 @@ export async function handleRssProxy(
       { status: 502 },
     );
   }
-  const text = await fetchResponse.text();
   if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
     if (cachedText) return stale();
     const snippet = text.slice(0, 200).replace(/\s+/g, " ").trim();
