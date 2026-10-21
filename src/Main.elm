@@ -50,8 +50,6 @@ type
     = Loadable (Maybe (Result String a))
 
 
-{-| Extract the loaded value if present and successful.
--}
 isLoaded : Loadable a -> Maybe a
 isLoaded (Loadable m) =
     case m of
@@ -1444,8 +1442,6 @@ viewEpisodeCard maybeLib maybeRss episode =
         ]
 
 
-{-| Render just the thumbnail image (without wrapper div).
--}
 viewThumbInner : String -> Maybe Url -> Html msg
 viewThumbInner className maybeUrl =
     case maybeUrl of
@@ -1463,9 +1459,6 @@ viewThumbInner className maybeUrl =
             div [ class (className ++ " thumb-placeholder") ] []
 
 
-{-| Render layered channel thumbnail with blurred background and contained foreground.
-Returns a list of elements to be placed directly in the wrapper.
--}
 viewChannelThumbLayered : Maybe Url -> List (Html msg)
 viewChannelThumbLayered maybeUrl =
     case maybeUrl of
@@ -1524,20 +1517,7 @@ viewChannelCard maybeLib channel =
             channelThumbWithFallback channel.thumb libEpisodes
 
         displayCount =
-            case channel.episodeCount of
-                Just _ ->
-                    channel.episodeCount
-
-                Nothing ->
-                    let
-                        n =
-                            Dict.size libEpisodes
-                    in
-                    if n > 0 then
-                        Just n
-
-                    else
-                        Nothing
+            channelEpisodeCount channel.episodeCount libEpisodes
     in
     div [ class "channel-card" ]
         [ a [ href ("/" ++ Url.percentEncode rss) ]
@@ -1830,9 +1810,6 @@ normalizeFeedUrl raw =
             stripped
 
 
-{-| Get the best available thumbnail for an episode.
-Prefers 16:9 thumb, falls back to square coverArt.
--}
 episodeThumbnail : Episode -> Maybe Url
 episodeThumbnail episode =
     case episode.thumb of
@@ -1843,8 +1820,6 @@ episodeThumbnail episode =
             episode.coverArt
 
 
-{-| Format duration in seconds as "1:23:45" or "12:34".
--}
 formatDuration : Int -> String
 formatDuration seconds =
     let
@@ -1871,10 +1846,10 @@ formatDuration seconds =
         String.fromInt m ++ ":" ++ pad s
 
 
-{-| Check if an episode is a YouTube Short.
-Uses the definitive isShort field (from YouTube's link URL) when available,
-otherwise falls back to title/description heuristics.
--}
+
+-- The isShort field is definitive; the title/description heuristic is a fallback.
+
+
 isLikelyShort : Episode -> Bool
 isLikelyShort episode =
     if episode.isShort then
@@ -1909,8 +1884,6 @@ getLibrary model =
             Nothing
 
 
-{-| Enrich an episode with channel metadata (title and thumbnail).
--}
 enrichEpisodeWith : Channel -> Episode -> Episode
 enrichEpisodeWith channel ep =
     { ep
@@ -2140,8 +2113,6 @@ urlDecoder =
 -- ENCODERS
 
 
-{-| Encode a Maybe value, using null for Nothing.
--}
 encodeMaybe : (a -> E.Value) -> Maybe a -> E.Value
 encodeMaybe encode m =
     Maybe.map encode m |> Maybe.withDefault E.null
@@ -2228,8 +2199,8 @@ feedDecoder : X.Decoder Feed
 feedDecoder =
     X.oneOf
         [ youtubeFormatDecoder
-        , podcastRssDecoder
-        , standardRssDecoder
+        , rssDecoder "lastBuildDate" podcastItemDecoder
+        , rssDecoder "pubDate" standardItemDecoder
         ]
 
 
@@ -2297,18 +2268,18 @@ youtubeEntryDecoder =
         )
 
 
-podcastRssDecoder : X.Decoder Feed
-podcastRssDecoder =
+rssDecoder : String -> X.Decoder Episode -> X.Decoder Feed
+rssDecoder dateKey itemDecoder =
     X.map2 Feed
         (X.succeed mkChannel
             |> X.requiredPath [ "channel", "title" ] (X.single X.string)
             |> X.optionalPath [ "channel", "description" ] (X.single X.string) ""
             |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.requiredPath [ "channel", "link" ] (X.single (X.string |> X.andThen urlDecoder_))
-            |> X.optionalPath [ "channel", "lastBuildDate" ] (X.single X.string) ""
+            |> X.optionalPath [ "channel", dateKey ] (X.single X.string) ""
         )
         (X.path [ "channel", "item" ]
-            (X.list podcastItemDecoder)
+            (X.list itemDecoder)
             |> X.map makeEpisodeDict
         )
 
@@ -2326,24 +2297,6 @@ podcastItemDecoder =
         }
 
 
-standardRssDecoder : X.Decoder Feed
-standardRssDecoder =
-    X.map2 Feed
-        (X.succeed mkChannel
-            |> X.requiredPath [ "channel", "title" ] (X.single X.string)
-            |> X.optionalPath [ "channel", "description" ] (X.single X.string) ""
-            |> X.possiblePath [ "channel", "image", "url" ] (X.single (X.string |> X.andThen urlDecoder_))
-            |> X.requiredPath [ "channel", "link" ] (X.single (X.string |> X.andThen urlDecoder_))
-            |> X.optionalPath [ "channel", "pubDate" ] (X.single X.string) ""
-        )
-        (X.path [ "channel", "item" ]
-            (X.list standardItemDecoder)
-            |> X.map makeEpisodeDict
-        )
-
-
-{-| Helper for XML decoders: creates base Channel without extra fields.
--}
 mkChannel : String -> String -> Maybe Url -> Url -> String -> Channel
 mkChannel title description thumb rss updatedAt =
     { title = title
