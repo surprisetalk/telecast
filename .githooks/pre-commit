@@ -4,6 +4,11 @@ set -e
 npx elm-format --validate src/ tests/
 deno fmt --check functions/ scripts/
 npx elm make src/Main.elm --output=/dev/null
-npx elm-test
+# elm-test exits 0 when it crashes before running a test (e.g. listen EPERM on its socket), so check its summary line.
+summary=$(npx elm-test --report=json | tail -n 1)
+echo "$summary" | jq -e '.event == "runComplete" and .failed == "0" and (.passed | tonumber) > 0 and .autoFail == null' >/dev/null || {
+  echo "elm-test: expected a runComplete line with failed 0, passed > 0, autoFail null. Received: ${summary:-<no output>}. Run npx elm-test to see why." >&2
+  exit 1
+}
 deno check functions/ scripts/
 deno test functions/ scripts/
