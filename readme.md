@@ -32,7 +32,7 @@ deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys script
 # seed new channels from HN + Reddit links and scripts/lectures.json (weekly via CI)
 deno run --env-file=.env --allow-net --allow-env --allow-read scripts/seed.ts --dry-run
 
-# curate: auto-promote top channels per topic to tag:featured, honoring scripts/curation.json (daily via CI)
+# curate: sync tag:featured to scripts/curation.json priority minus blocked (daily via CI)
 deno run --env-file=.env --allow-net --allow-env --allow-read scripts/curate.ts --dry-run
 ```
 
