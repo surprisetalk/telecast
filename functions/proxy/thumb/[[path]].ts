@@ -43,8 +43,16 @@ export async function handleThumbProxy(
     });
   }
   const fetchUrl = transformYouTubeThumb(thumbUrl);
+  const fetchFailed = (err: unknown): Response => {
+    const msg = err instanceof DOMException && err.name === "TimeoutError"
+      ? `Timed out after ${FETCH_TIMEOUT_MS} ms fetching ${fetchUrl}`
+      : err instanceof Error
+      ? err.message
+      : String(err);
+    console.error(`thumb proxy: fetch rejected for ${fetchUrl}: ${msg}`);
+    return serveFallback();
+  };
   let fetchResponse: Response;
-  let body: Uint8Array<ArrayBuffer>;
   try {
     fetchResponse = await fetcher(fetchUrl, {
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
@@ -57,15 +65,8 @@ export async function handleThumbProxy(
         },
       },
     } as RequestInit);
-    body = new Uint8Array(await fetchResponse.arrayBuffer());
   } catch (err) {
-    const msg = err instanceof DOMException && err.name === "TimeoutError"
-      ? `Timed out after ${FETCH_TIMEOUT_MS} ms fetching ${fetchUrl}`
-      : err instanceof Error
-      ? err.message
-      : String(err);
-    console.error(`thumb proxy: fetch rejected for ${fetchUrl}: ${msg}`);
-    return serveFallback();
+    return fetchFailed(err);
   }
   if (!fetchResponse.ok) {
     console.error(`thumb proxy: upstream ${fetchResponse.status} ${fetchResponse.statusText} for ${fetchUrl}`);
@@ -75,6 +76,12 @@ export async function handleThumbProxy(
   if (!contentType?.startsWith("image/")) {
     console.error(`thumb proxy: non-image content-type ${contentType ?? "(none)"} for ${fetchUrl}`);
     return serveFallback();
+  }
+  let body: Uint8Array<ArrayBuffer>;
+  try {
+    body = new Uint8Array(await fetchResponse.arrayBuffer());
+  } catch (err) {
+    return fetchFailed(err);
   }
   await bucket.put(smallKey, body, {
     httpMetadata: { contentType },

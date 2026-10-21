@@ -347,6 +347,8 @@ Deno.test("sanitizeText", () => {
     { name: "blank string", input: "   ", expected: null },
   ];
   for (const { name, input, expected } of rows) assertEquals(sanitizeText(input), expected, name);
+  assertThrows(() => sanitizeText("a &#99999999; b"), Error, "Numeric entity &#99999999; is out of range");
+  assertThrows(() => sanitizeText("&#x110000;"), Error, "Numeric entity &#x110000; is out of range");
 });
 
 Deno.test("parseDuration", () => {
@@ -811,7 +813,10 @@ Deno.test("handleRssProxy: expired cache + origin failure serves stale", async (
     uploaded: new Date(Date.now() - TWO_HOURS_MS),
   });
   const fetcher = mockFetch({ [url]: new Response("nope", { status: 500 }) });
-  const res = await handleRssProxy({ sql: mockSql() as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleRssProxy({ sql: mockSql() as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url })
+  );
+  assertEquals(logs, [`rss proxy: serving stale ${url}: HTTP 500`]);
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("x-telecast-stale"), "1");
   assertEquals(await res.text(), oldXml);
@@ -843,6 +848,14 @@ Deno.test("handleRssProxy: body timeout after headers serves stale, else 502 nam
   const res = await handleRssProxy({ sql: mockSql() as any, bucket: mockR2Bucket() as unknown as R2Bucket, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   assertStringIncludes(await res.text(), `Timed out after 15000 ms fetching ${url}`);
+});
+
+Deno.test("handleRssProxy: non-ok upstream with an unreadable body still reports the HTTP status", async () => {
+  const url = "https://example.com/gone.xml";
+  const fetcher = mockFetch({ [url]: () => new Response(stalledBody().body, { status: 404, statusText: "Not Found" }) });
+  const res = await handleRssProxy({ sql: mockSql() as any, bucket: mockR2Bucket() as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  assertEquals(res.status, 502);
+  assertStringIncludes(await res.text(), "HTTP 404 Not Found");
 });
 
 Deno.test("handleRssProxy: error body shows both raw and resolved URL on non-feed response", async () => {
@@ -998,4 +1011,14 @@ Deno.test("handleThumbProxy: body timeout after headers → fallback SVG + logs 
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, `Timed out after 10000 ms fetching ${thumbUrl}`);
   assertEquals(bucket._storage.size, 0);
+});
+
+Deno.test("handleThumbProxy: non-ok upstream with an unreadable body logs the HTTP status", async () => {
+  const thumbUrl = "https://example.com/gone.jpg";
+  const fetcher = mockFetch({ [thumbUrl]: () => new Response(stalledBody().body, { status: 404, statusText: "Not Found" }) });
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ bucket: mockR2Bucket() as unknown as R2Bucket, fetcher }, { thumbUrl })
+  );
+  assertEquals(res.headers.get("content-type"), "image/svg+xml");
+  assertEquals(logs, [`thumb proxy: upstream 404 Not Found for ${thumbUrl}`]);
 });

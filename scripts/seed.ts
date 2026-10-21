@@ -137,22 +137,24 @@ function parseArgs(args: string[]): { dryRun: boolean } {
   return { dryRun };
 }
 
-async function gather(): Promise<string[]> {
-  const sources: [string, () => Promise<string[]>][] = [
-    ["hn", fromHackerNews],
-    ["reddit", fromReddit],
-    ["lectures", async () => linksFromLectures(JSON.parse(await Deno.readTextFile(new URL("./lectures.json", import.meta.url))))],
-  ];
+export async function gather(sources: [string, () => Promise<string[]>][]): Promise<string[]> {
   const links: string[] = [];
+  const dead: string[] = [];
   for (const [name, load] of sources) {
     try {
       const found = await load();
       console.log(`  ${name}: ${found.length} links`);
-      if (found.length === 0) console.warn(`  WARNING: ${name} returned 0 links (schema drift, rate-limit, or block?)`);
+      if (found.length === 0) dead.push(`${name}: 0 links`);
       links.push(...found);
     } catch (e) {
-      console.error(`  ${name}: FAILED — ${(e as Error).message}`);
+      dead.push(`${name}: ${(e as Error).message}`);
     }
+  }
+  if (dead.length) {
+    throw new Error(
+      `Seed sources failed: ${dead.join("; ")}. Expected every source to return links. ` +
+        `0 links means schema drift, a rate limit, or a block; fix the adapter in scripts/seed.ts, or rerun later.`,
+    );
   }
   return links;
 }
@@ -166,7 +168,11 @@ async function main() {
   }
 
   console.log(`Gathering links...`);
-  const all = await gather();
+  const all = await gather([
+    ["hn", fromHackerNews],
+    ["reddit", fromReddit],
+    ["lectures", async () => linksFromLectures(JSON.parse(await Deno.readTextFile(new URL("./lectures.json", import.meta.url))))],
+  ]);
   const unique = [...new Set(all)].slice(0, DEFAULT_LIMIT);
   console.log(`\n${all.length} raw → ${unique.length} unique channels (limit ${DEFAULT_LIMIT})\n`);
 
@@ -181,10 +187,6 @@ async function main() {
   console.log(`\nDone: ${Object.entries(tally).map(([k, v]) => `${v} ${k}`).join(", ")}`);
   if (sql) await sql.end();
 
-  if (unique.length === 0) {
-    console.error("No channels discovered from any source (adapters all empty — schema drift, rate-limit, or network block?).");
-    Deno.exit(1);
-  }
   if (!dryRun && (tally["inserted"] ?? 0) + (tally["exists"] ?? 0) === 0) {
     console.error("Processed channels but none reached the DB (every insert failed — check DATABASE_URL / connectivity).");
     Deno.exit(1);

@@ -35,30 +35,38 @@ export async function handleRssProxy(
   if (cachedText && cachedAge < CACHE_TTL_MS) {
     return new Response(cachedText, { headers: { "content-type": "application/xml" } });
   }
-  const stale = (): Response => new Response(cachedText!, { headers: { "content-type": "application/xml", "x-telecast-stale": "1" } });
-  let fetchResponse: Response;
-  let text: string;
-  try {
-    fetchResponse = await fetcher(rssUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
-    text = await fetchResponse.text();
-  } catch (err) {
-    if (cachedText) return stale();
+  const stale = (reason: string): Response => {
+    console.error(`rss proxy: serving stale ${rssUrl}: ${reason}`);
+    return new Response(cachedText!, { headers: { "content-type": "application/xml", "x-telecast-stale": "1" } });
+  };
+  const networkError = (err: unknown): Response => {
     const msg = err instanceof DOMException && err.name === "TimeoutError"
       ? `Timed out after ${FETCH_TIMEOUT_MS} ms fetching ${rssUrl}`
       : err instanceof Error
       ? err.message
       : String(err);
+    if (cachedText) return stale(msg);
     return new Response(`Network error fetching ${rssUrl} (raw input: ${rawUrl}): ${msg}`, { status: 502 });
+  };
+  let fetchResponse: Response;
+  try {
+    fetchResponse = await fetcher(rssUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+  } catch (err) {
+    return networkError(err);
   }
   if (!fetchResponse.ok) {
-    if (cachedText) return stale();
-    return new Response(
-      `Upstream feed fetch failed for ${rssUrl} (raw input: ${rawUrl}): HTTP ${fetchResponse.status} ${fetchResponse.statusText}`,
-      { status: 502 },
-    );
+    const status = `HTTP ${fetchResponse.status} ${fetchResponse.statusText}`.trim();
+    if (cachedText) return stale(status);
+    return new Response(`Upstream feed fetch failed for ${rssUrl} (raw input: ${rawUrl}): ${status}`, { status: 502 });
+  }
+  let text: string;
+  try {
+    text = await fetchResponse.text();
+  } catch (err) {
+    return networkError(err);
   }
   if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
-    if (cachedText) return stale();
+    if (cachedText) return stale("missing <rss>, <feed>, or <RDF> root element");
     const snippet = text.slice(0, 200).replace(/\s+/g, " ").trim();
     return new Response(
       `Not a valid feed at ${rssUrl} (raw input: ${rawUrl}): missing <rss>, <feed>, or <RDF> root element. First 200 chars: ${snippet}`,

@@ -64,6 +64,16 @@ export function sanitizeText(text: any): string | null {
   // Ensure we have a string
   if (typeof text !== "string") text = String(text);
 
+  for (const m of text.matchAll(/&#(?:x([0-9a-f]+)|(\d+));/gi)) {
+    const cp = m[1] ? parseInt(m[1], 16) : Number(m[2]);
+    if (cp > 0x10ffff) {
+      throw new Error(
+        `Numeric entity ${m[0]} is out of range. Expected a code point up to 0x10FFFF, received ${cp}, in text starting ${
+          JSON.stringify(text.slice(0, 80))
+        }. The feed is malformed: report it to the publisher or add it to blocked.`,
+      );
+    }
+  }
   text = decodeHTMLStrict(text.replace(/<[^>]*>/g, ""));
 
   text = text.replace(/\s+/g, " ").trim();

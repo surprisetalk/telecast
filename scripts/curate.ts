@@ -3,9 +3,17 @@ import db from "postgres";
 type Curation = { priority: string[]; blocked: string[] };
 type ChannelRow = { channel_id: string; tags: string[] | null };
 
-export function selectFeatured(c: Curation): string[] {
+export function selectFeatured(c: Curation, known: Set<string>): string[] {
   const blocked = new Set(c.blocked);
-  return [...new Set(c.priority.filter((id) => !blocked.has(id)))].sort();
+  const featured = [...new Set(c.priority.filter((id) => !blocked.has(id)))].sort();
+  for (const id of featured) {
+    if (!known.has(id)) {
+      throw new Error(
+        `curation.json: priority id ${id} matches no channel row. Expected every priority id to exist in the channel table. Remove it from priority, or seed the channel first.`,
+      );
+    }
+  }
+  return featured;
 }
 
 function reqStrArray(v: unknown, field: string): string[] {
@@ -45,7 +53,7 @@ async function main() {
   const rows: ChannelRow[] = (await sql`select channel_id, tags from channel`)
     .map((r: any) => ({ channel_id: r.channel_id, tags: r.tags }));
 
-  const target = new Set(selectFeatured(c));
+  const target = new Set(selectFeatured(c, new Set(rows.map((r) => r.channel_id))));
   const current = new Set(rows.filter((r) => (r.tags ?? []).includes("featured")).map((r) => r.channel_id));
   const toAdd = [...target].filter((id) => !current.has(id));
   const toRemove = [...current].filter((id) => !target.has(id));
@@ -80,7 +88,6 @@ async function main() {
     removed = r.length;
   }
 
-  if (added !== toAdd.length) console.warn(`  note: ${toAdd.length - added} priority id(s) matched no channel row (dead pick?)`);
   console.log(`\nDone: +${added} / -${removed}`);
   await sql.end();
 }

@@ -1,5 +1,5 @@
-import { assertEquals } from "jsr:@std/assert";
-import { extractYoutubeLinks, linksFromHnHits, linksFromLectures, linksFromRedditListing } from "./seed.ts";
+import { assertEquals, assertRejects } from "jsr:@std/assert";
+import { extractYoutubeLinks, gather, linksFromHnHits, linksFromLectures, linksFromRedditListing } from "./seed.ts";
 
 Deno.test("extractYoutubeLinks: pulls channel/handle/c/user forms, ignores videos", () => {
   const text = `
@@ -72,4 +72,14 @@ Deno.test("linksFromLectures: keeps http(s) urls verbatim, drops junk", () => {
     "https://example.edu/lectures/feed.xml",
   ]);
   assertEquals(linksFromLectures("nope"), []);
+});
+
+Deno.test("gather: a source that throws or returns 0 links fails the run, naming each", async () => {
+  const ok = () => Promise.resolve(["https://www.youtube.com/@a"]);
+  assertEquals(await gather([["hn", ok]]), ["https://www.youtube.com/@a"]);
+  const err = await assertRejects(() =>
+    gather([["hn", ok], ["reddit", () => Promise.reject(new Error("HTTP 429"))], ["lectures", () => Promise.resolve([])]])
+  );
+  const msg = (err as Error).message;
+  for (const part of ["reddit: HTTP 429", "lectures: 0 links"]) assertEquals(msg.includes(part), true, `${part} missing from: ${msg}`);
 });
