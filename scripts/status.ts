@@ -3,6 +3,10 @@ import db from "postgres";
 const SITE = "https://telecast.company";
 const REPO = "surprisetalk/telecast";
 const TIMEOUT_MS = 10_000;
+// Neon wakes from suspend in a few seconds, and the two counts scan every channel row. snitch kills a status command at 300 s.
+const DB_TIMEOUT_MS = 150_000;
+// A run or a refresh up to 5 min in the future is clock skew. Beyond that, the clock or the data is wrong.
+const SKEW_S = 300;
 const DAY_S = 86_400;
 const SEARCH_URL = `${SITE}/search?q=tag:featured`;
 const runsUrl = (workflow: string) => `https://api.github.com/repos/${REPO}/actions/workflows/${workflow}/runs?status=success&per_page=1`;
@@ -19,7 +23,7 @@ export type Measurements = {
 export function grade(m: Measurements): { name: string; score: number }[] {
   const db = "ok" in m.db ? m.db.ok : null;
   const age = (r: Measured<number | null>, limitS: number) => "ok" in r && r.ok !== null ? limitS / Math.max(r.ok, 1) : 0;
-  return [
+  const cs = [
     { name: "/search?q=tag:featured answers 200 within 2 s.", score: "ok" in m.search ? 2000 / Math.max(m.search.ok, 1) : 0 },
     { name: "A feed refreshed in the past 15 min.", score: db?.freshS != null ? 900 / Math.max(db.freshS, 1) : 0 },
     {
@@ -30,6 +34,16 @@ export function grade(m: Measurements): { name: string; score: number }[] {
     { name: "Seed succeeded in the past 8 days.", score: age(m.seed, 8 * DAY_S) },
     { name: "The database is smaller than 50 GB.", score: db ? 50e9 / db.bytes : 0 },
   ];
+  for (const c of cs) {
+    if (!Number.isFinite(c.score)) {
+      throw new Error(
+        `Expected a finite score for "${c.name}", received ${c.score}, from measurements ${
+          JSON.stringify(m)
+        }. A probe in scripts/status.ts let a non-finite or zero value through.`,
+      );
+    }
+  }
+  return cs;
 }
 
 async function measured<T>(what: string, f: () => Promise<T>): Promise<Measured<T>> {
@@ -49,19 +63,33 @@ async function searchMs(): Promise<number> {
   const url = SEARCH_URL;
   const t0 = performance.now();
   const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-  await res.body?.cancel();
+  const body = await res.text();
+  const ms = performance.now() - t0;
   if (res.status !== 200) throw new Error(`Expected HTTP 200 from ${url}, received ${res.status} ${res.statusText}.`);
-  return performance.now() - t0;
+  let rows: unknown;
+  try {
+    rows = JSON.parse(body);
+  } catch {
+    throw new Error(`Expected a JSON array of featured channels from ${url}, received: ${body.slice(0, 200)}`);
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    throw new Error(`Expected a non-empty JSON array of featured channels from ${url}, received: ${body.slice(0, 200)}`);
+  }
+  return ms;
 }
 
 // Unauthenticated GitHub API: 60 requests/h per IP. The repo is public.
 async function lastSuccessS(workflow: string): Promise<number | null> {
   const url = runsUrl(workflow);
   const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { accept: "application/vnd.github+json" } });
-  if (!res.ok) {
-    throw new Error(`Expected HTTP 200 from ${url}, received ${res.status} ${res.statusText}: ${(await res.text()).slice(0, 200)}`);
+  const body = await res.text();
+  if (res.status !== 200) throw new Error(`Expected HTTP 200 from ${url}, received ${res.status} ${res.statusText}: ${body.slice(0, 200)}`);
+  let json: { workflow_runs?: { created_at?: unknown }[] } | null;
+  try {
+    json = JSON.parse(body);
+  } catch {
+    throw new Error(`Expected JSON {workflow_runs: [...]} from ${url}, received: ${body.slice(0, 200)}`);
   }
-  const json: { workflow_runs?: { created_at?: unknown }[] } | null = await res.json();
   const runs = json?.workflow_runs;
   if (!Array.isArray(runs)) throw new Error(`Expected {workflow_runs: [...]} from ${url}, received ${JSON.stringify(json).slice(0, 200)}`);
   if (runs.length === 0) return null;
@@ -69,31 +97,57 @@ async function lastSuccessS(workflow: string): Promise<number | null> {
   if (Number.isNaN(at)) {
     throw new Error(`Expected an ISO created_at in the first run from ${url}, received ${JSON.stringify(runs[0]?.created_at)}`);
   }
-  return (Date.now() - at) / 1000;
+  const ageS = (Date.now() - at) / 1000;
+  if (ageS < -SKEW_S) {
+    throw new Error(
+      `Expected the last ${workflow} run in the past, received created_at ${new Date(at).toISOString()}. Check this host's clock.`,
+    );
+  }
+  return ageS;
 }
 
-async function dbStats(url: string) {
-  const sql = db(url, { max: 1, idle_timeout: 5, connect_timeout: 30, connection: { statement_timeout: 120_000 } });
+export async function dbStats(url: string) {
+  let password: string;
   try {
-    const [r] = await sql<{ fresh_s: unknown; refreshed: unknown; failed: unknown; bytes: unknown }[]>`
-      select
-        extract(epoch from now() - max(last_success_at))::float8 as fresh_s,
-        count(*) filter (where greatest(last_success_at, last_error_at) > now() - interval '24 hours')::int as refreshed,
-        count(*) filter (
-          where last_error_at > now() - interval '24 hours' and last_error_at > coalesce(last_success_at, '-infinity')
-        )::int as failed,
-        pg_database_size(current_database())::float8 as bytes
-      from channel
-    `;
+    password = new URL(url).password;
+  } catch {
+    // The URL holds a password, so the message must not echo it.
+    throw new Error("DATABASE_URL is not a valid URL. Expected postgres://user:password@host/db. Fix it in .env.");
+  }
+  const redact = (msg: string) => password ? msg.replaceAll(password, "***").replaceAll(decodeURIComponent(password), "***") : msg;
+  const sql = db(url, { max: 1, idle_timeout: 5, connect_timeout: 30, connection: { statement_timeout: DB_TIMEOUT_MS - 30_000 } });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const [r] = await Promise.race([
+      sql<{ fresh_s: unknown; refreshed: unknown; failed: unknown; bytes: unknown }[]>`
+        select
+          extract(epoch from now() - max(last_success_at))::float8 as fresh_s,
+          count(*) filter (where greatest(last_success_at, last_error_at) > now() - interval '24 hours')::int as refreshed,
+          count(*) filter (
+            where last_error_at > now() - interval '24 hours' and last_error_at > coalesce(last_success_at, '-infinity')
+          )::int as failed,
+          pg_database_size(current_database())::float8 as bytes
+        from channel
+      `,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out after ${DB_TIMEOUT_MS} ms querying the channel table`)), DB_TIMEOUT_MS);
+      }),
+    ]);
+    const finite = (v: unknown, min: number) => typeof v === "number" && Number.isFinite(v) && v >= min;
     if (
-      !r || !(r.fresh_s === null || typeof r.fresh_s === "number") || typeof r.refreshed !== "number" || typeof r.failed !== "number" ||
-      typeof r.bytes !== "number"
+      !r || !(r.fresh_s === null || finite(r.fresh_s, -SKEW_S)) || !finite(r.refreshed, 0) || !finite(r.failed, 0) ||
+      (r.failed as number) > (r.refreshed as number) || !finite(r.bytes, 1)
     ) {
-      throw new Error(`Expected one row {fresh_s, refreshed, failed, bytes} of numbers, received ${JSON.stringify(r)}`);
+      throw new Error(
+        `Expected one row {fresh_s >= -${SKEW_S} or null, 0 <= failed <= refreshed, bytes >= 1}, received ${JSON.stringify(r)}`,
+      );
     }
     return { freshS: r.fresh_s as number | null, refreshed: r.refreshed as number, failed: r.failed as number, bytes: r.bytes as number };
+  } catch (e) {
+    throw new Error(redact(e instanceof Error ? e.message : String(e)));
   } finally {
-    await sql.end();
+    clearTimeout(timer);
+    await sql.end({ timeout: 5 });
   }
 }
 
@@ -111,7 +165,10 @@ if (import.meta.main) {
     measured(`fetching ${runsUrl("seed.yml")}`, () => lastSuccessS("seed.yml")),
   ]);
   const m: Measurements = { search, db: stats, curate, seed };
-  for (const [name, r] of Object.entries(m)) if ("error" in r) console.log(`${name}: ${r.error}`);
+  // snitch parses from the first line that starts with "{", so a reason line stays on one line.
+  for (const [name, r] of Object.entries(m)) if ("error" in r) console.log(`${name}: ${r.error.replace(/\s+/g, " ")}`);
+  if ("ok" in stats && stats.ok.freshS === null) console.log("db: no channel has a last_success_at");
+  if ("ok" in stats && stats.ok.refreshed === 0) console.log("db: no channel was refreshed in the past 24h");
   for (const [name, r] of [["curate", curate], ["seed", seed]] as const) {
     if ("ok" in r && r.ok === null) console.log(`${name}: no successful run on GitHub Actions`);
   }

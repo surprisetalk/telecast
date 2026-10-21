@@ -1,5 +1,5 @@
-import { assertEquals } from "jsr:@std/assert";
-import { grade, Measurements } from "./status.ts";
+import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert";
+import { dbStats, grade, Measurements } from "./status.ts";
 
 const healthy: Measurements = {
   search: { ok: 400 },
@@ -31,4 +31,14 @@ Deno.test("grade: errors and empty data score 0", () => {
     [0, 0, 0, 0, 0, 0],
   );
   assertEquals(scores({ ...healthy, db: { ok: { freshS: null, refreshed: 0, failed: 0, bytes: 5e9 } } }), [5, 0, 0, 48, 2.67, 10]);
+});
+
+Deno.test("grade: a non-finite score throws instead of printing invalid JSON", () => {
+  assertThrows(() => grade({ ...healthy, db: { ok: { freshS: 300, refreshed: 1000, failed: 100, bytes: 0 } } }), Error, "Infinity");
+  assertThrows(() => grade({ ...healthy, search: { ok: NaN } }), Error, "NaN");
+});
+
+Deno.test("dbStats: a malformed DATABASE_URL error never shows the password", async () => {
+  const err = await assertRejects(() => dbStats("postgres://user:S3CRETPW@@host:notaport/db"));
+  assert(!(err as Error).message.includes("S3CRETPW"), (err as Error).message);
 });
