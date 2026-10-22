@@ -8,9 +8,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 deno task serve       # server.ts on 127.0.0.1:8047: public/, /search, and the proxies
 npm run dev-client    # Elm watch/compile with debug mode
 elm make src/Main.elm --output=public/elm.js  # Production build
-deno run -A scripts/refresh.ts  # Batch refresh feeds (runs via GitHub Actions every 5 min)
-deno run -A scripts/seed.ts --dry-run    # Discover new channels (weekly CI)
-deno run -A scripts/curate.ts --dry-run               # Assign tag:featured (daily CI)
+deno run -A scripts/refresh.ts  # Batch refresh feeds (pc timer, every 5 min)
+deno run -A scripts/seed.ts --dry-run    # Discover new channels (pc timer, weekly)
+deno run -A scripts/curate.ts --dry-run               # Assign tag:featured (pc timer, daily)
 deno task status                                      # Production status; snitch runs it hourly on pc
 ```
 
@@ -75,10 +75,12 @@ Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `tag:{tag_name}` 
   `scripts/lectures.json` (curated MOOC/lecture channels), resolves them via `functions/_shared/youtube.ts`, and inserts rows
   (`on conflict do nothing`). `refresh.ts` then fills in episodes/tags/quality.
 
-### Scripts & CI
+### Scripts & timers
 
-`scripts/refresh.ts` (feeds, every 5 min), `scripts/seed.ts` (discovery, weekly), `scripts/curate.ts` (featured, daily) — each has a GitHub
-Actions workflow in `.github/workflows/`. Shared helpers: `scripts/pool.ts` (concurrency), `functions/_shared/rss.ts` (parsing), `functions/_shared/body.ts` (capped body reads),
+`scripts/refresh.ts` (feeds, every 5 min), `scripts/seed.ts` (discovery, weekly), `scripts/curate.ts` (featured, daily) — each runs as a
+systemd timer on pc (`telecast-refresh`, `telecast-seed`, `telecast-curate`; config in `surprisetalk/pc`). On pc they reach
+Postgres on its socket, which Deno's permissions treat as a file: `--allow-read` and `--allow-write=/run/postgresql`. GitHub
+Actions runs only `ci.yml`, the checks. Shared helpers: `scripts/pool.ts` (concurrency), `functions/_shared/rss.ts` (parsing), `functions/_shared/body.ts` (capped body reads),
 `functions/_shared/youtube.ts` (channel-URL → feed-URL resolution, shared with the RSS proxy).
 
 ## Elm Frontend
