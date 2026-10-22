@@ -9,6 +9,11 @@ const DB_TIMEOUT_MS = 150_000;
 const SKEW_S = 300;
 const DAY_S = 86_400;
 const SEARCH_URL = `${SITE}/search?q=tag:featured`;
+// telecast-web on pc may not reach pc's own loopback or LAN. 8047 is its own port, so the target always listens.
+const FENCE_TARGET = "http://127.0.0.1:8047/";
+const FENCE_URL = `${SITE}/proxy/rss/${encodeURIComponent(FENCE_TARGET)}`;
+// The feed proxy waits 15 s on a dropped connection before it answers 502.
+const FENCE_TIMEOUT_MS = 30_000;
 const runsUrl = (workflow: string) => `https://api.github.com/repos/${REPO}/actions/workflows/${workflow}/runs?status=success&per_page=1`;
 
 type Measured<T> = { ok: T } | { error: string };
@@ -18,6 +23,7 @@ export type Measurements = {
   db: Measured<{ freshS: number | null; refreshed: number; failed: number; bytes: number }>;
   curate: Measured<number | null>;
   seed: Measured<number | null>;
+  fence: Measured<boolean>;
 };
 
 export function grade(m: Measurements): { name: string; score: number }[] {
@@ -33,6 +39,7 @@ export function grade(m: Measurements): { name: string; score: number }[] {
     { name: "Curate succeeded in the past 2 days.", score: age(m.curate, 2 * DAY_S) },
     { name: "Seed succeeded in the past 8 days.", score: age(m.seed, 8 * DAY_S) },
     { name: "The database is smaller than 50 GB.", score: db ? 50e9 / db.bytes : 0 },
+    { name: "The feed proxy cannot reach pc's loopback.", score: "ok" in m.fence && m.fence.ok ? 1 : 0 },
   ];
   for (const c of cs) {
     if (!Number.isFinite(c.score)) {
@@ -46,12 +53,12 @@ export function grade(m: Measurements): { name: string; score: number }[] {
   return cs;
 }
 
-async function measured<T>(what: string, f: () => Promise<T>): Promise<Measured<T>> {
+async function measured<T>(what: string, ms: number, f: () => Promise<T>): Promise<Measured<T>> {
   try {
     return { ok: await f() };
   } catch (e) {
     const msg = e instanceof DOMException && e.name === "TimeoutError"
-      ? `Timed out after ${TIMEOUT_MS} ms ${what}`
+      ? `Timed out after ${ms} ms ${what}`
       : e instanceof Error
       ? e.message
       : String(e);
@@ -76,6 +83,19 @@ async function searchMs(): Promise<number> {
     throw new Error(`Expected a non-empty JSON array of featured channels from ${url}, received: ${body.slice(0, 200)}`);
   }
   return ms;
+}
+
+export function fenceHolds(status: number, body: string): boolean {
+  if (status === 502 && body.startsWith("Network error fetching")) return true;
+  if (status === 400 || status === 502) return false;
+  throw new Error(
+    `Expected 502 or 400 from ${FENCE_URL}, received ${status}: ${body.slice(0, 200)}. Check the feed proxy in functions/proxy/rss.`,
+  );
+}
+
+async function fenceProbe(): Promise<boolean> {
+  const res = await fetch(FENCE_URL, { signal: AbortSignal.timeout(FENCE_TIMEOUT_MS) });
+  return fenceHolds(res.status, await res.text());
 }
 
 // Unauthenticated GitHub API: 60 requests/h per IP. The repo is public.
@@ -165,17 +185,21 @@ if (import.meta.main) {
       "DATABASE_URL is missing. Expected a postgres URL in .env. Received undefined. Copy it from the Neon console into .env.",
     );
   }
-  const [search, stats, curate, seed] = await Promise.all([
-    measured(`fetching ${SEARCH_URL}`, searchMs),
-    measured("querying the channel table", () => dbStats(url)),
-    measured(`fetching ${runsUrl("curate.yml")}`, () => lastSuccessS("curate.yml")),
-    measured(`fetching ${runsUrl("seed.yml")}`, () => lastSuccessS("seed.yml")),
+  const [search, stats, curate, seed, fence] = await Promise.all([
+    measured(`fetching ${SEARCH_URL}`, TIMEOUT_MS, searchMs),
+    measured("querying the channel table", DB_TIMEOUT_MS, () => dbStats(url)),
+    measured(`fetching ${runsUrl("curate.yml")}`, TIMEOUT_MS, () => lastSuccessS("curate.yml")),
+    measured(`fetching ${runsUrl("seed.yml")}`, TIMEOUT_MS, () => lastSuccessS("seed.yml")),
+    measured(`fetching ${FENCE_URL}`, FENCE_TIMEOUT_MS, fenceProbe),
   ]);
-  const m: Measurements = { search, db: stats, curate, seed };
+  const m: Measurements = { search, db: stats, curate, seed, fence };
   // snitch parses from the first line that starts with "{", so a reason line stays on one line.
   for (const [name, r] of Object.entries(m)) if ("error" in r) console.log(`${name}: ${r.error.replace(/\s+/g, " ")}`);
   if ("ok" in stats && stats.ok.freshS === null) console.log("db: no channel has a last_success_at");
   if ("ok" in stats && stats.ok.refreshed === 0) console.log("db: no channel was refreshed in the past 24h");
+  if ("ok" in fence && !fence.ok) {
+    console.log(`fence: ${FENCE_URL} answered without "Network error fetching", so the proxy may reach ${FENCE_TARGET}.`);
+  }
   for (const [name, r] of [["curate", curate], ["seed", seed]] as const) {
     if ("ok" in r && r.ok === null) console.log(`${name}: no successful run on GitHub Actions`);
   }

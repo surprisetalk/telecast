@@ -1,9 +1,11 @@
 import sharp from "sharp";
 import type { Cache } from "../../_shared/cache.ts";
+import { readCapped } from "../../_shared/body.ts";
 
 const SMALL_WIDTH = 256;
 const QUALITY = 80;
 const FETCH_TIMEOUT_MS = 10_000;
+const MAX_MB = 20;
 
 const FALLBACK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <g fill="#666" transform="translate(50,50)">
@@ -68,11 +70,15 @@ export async function handleThumbProxy(
     console.error(`thumb proxy: non-image content-type ${contentType ?? "(none)"} for ${fetchUrl}`);
     return serveFallback();
   }
-  let original: Uint8Array<ArrayBuffer>;
+  let original: Uint8Array<ArrayBuffer> | null;
   try {
-    original = new Uint8Array(await fetchResponse.arrayBuffer());
+    original = await readCapped(fetchResponse, MAX_MB * 1e6);
   } catch (err) {
     return fetchFailed(err);
+  }
+  if (!original) {
+    console.error(`thumb proxy: body from ${fetchUrl} is larger than ${MAX_MB} MB. Expected an image under ${MAX_MB} MB.`);
+    return serveFallback();
   }
   let body: Uint8Array<ArrayBuffer>;
   try {

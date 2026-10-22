@@ -48,6 +48,14 @@ Deno.test("server: serves the app, app routes, search, and a resized thumb", asy
     const css = await fetch(`${base}/style.css`);
     assertEquals([css.status, css.headers.get("content-type")], [200, "text/css; charset=UTF-8"]);
     await css.body?.cancel();
+    for (const path of ["/proxy/thumb/%E0%A4%A", "/proxy/rss/%E0%A4%A", "/%E0%A4%A", "/%00"]) {
+      const res = await fetch(base + path);
+      assertEquals([path, res.status, await res.text()], [
+        path,
+        400,
+        `Expected a percent-encoded path with no %00, received ${path}. Encode the URL with encodeURIComponent.`,
+      ]);
+    }
     const missing = await fetch(`${base}/missing.js`);
     assertEquals(missing.status, 404);
     await missing.body?.cancel();

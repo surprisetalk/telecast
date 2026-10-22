@@ -1,10 +1,12 @@
 import * as rss from "../../_shared/rss.ts";
 import type { Cache } from "../../_shared/cache.ts";
+import { readCapped } from "../../_shared/body.ts";
 import type { Sql } from "../../search.ts";
 import { resolveYoutubeFeedUrl } from "../../_shared/youtube.ts";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15_000;
+const MAX_MB = 50;
 
 export async function handleRssProxy(
   deps: { sql: Sql; cache: Cache; fetcher: typeof fetch },
@@ -58,12 +60,18 @@ export async function handleRssProxy(
     if (cachedText) return stale(status);
     return new Response(`Upstream feed fetch failed for ${rssUrl} (raw input: ${rawUrl}): ${status}`, { status: 502 });
   }
-  let text: string;
+  let bytes: Uint8Array | null;
   try {
-    text = await fetchResponse.text();
+    bytes = await readCapped(fetchResponse, MAX_MB * 1e6);
   } catch (err) {
     return networkError(err);
   }
+  if (!bytes) {
+    const tooBig = `Feed at ${rssUrl} is larger than ${MAX_MB} MB. Expected a feed under ${MAX_MB} MB.`;
+    if (cachedText) return stale(tooBig);
+    return new Response(tooBig, { status: 502 });
+  }
+  const text = new TextDecoder().decode(bytes);
   if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
     if (cachedText) return stale("missing <rss>, <feed>, or <RDF> root element");
     const snippet = text.slice(0, 200).replace(/\s+/g, " ").trim();

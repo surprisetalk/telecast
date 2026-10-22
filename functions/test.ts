@@ -874,6 +874,41 @@ Deno.test("handleThumbProxy: bytes sharp cannot read → fallback SVG + logs typ
   assertEquals(await Array.fromAsync(Deno.readDir(cache.dir)), []);
 });
 
+// A body of `mb` 1 MB chunks with no content-length, so only counting bytes can stop it.
+const bigBody = (mb: number, headers: HeadersInit) => {
+  const chunk = new Uint8Array(1 << 20);
+  let sent = 0;
+  return new Response(new ReadableStream({ pull: (c) => sent++ < mb ? c.enqueue(chunk) : c.close() }), { headers });
+};
+
+Deno.test("handleThumbProxy: a body over 20 MB → fallback SVG + logs URL and cap, caches nothing", async () => {
+  const thumbUrl = "https://example.com/huge.png";
+  for (
+    const upstream of [
+      () => bigBody(21, { "content-type": "image/png" }),
+      () => new Response("x", { headers: { "content-type": "image/png", "content-length": "21000000" } }),
+    ]
+  ) {
+    const cache = await tempCache();
+    const { result: res, logs } = await captureConsoleError(() =>
+      handleThumbProxy({ cache, fetcher: mockFetch({ [thumbUrl]: upstream }) }, { thumbUrl })
+    );
+    assertEquals(res.headers.get("content-type"), "image/svg+xml");
+    assertEquals(logs, [`thumb proxy: body from ${thumbUrl} is larger than 20 MB. Expected an image under 20 MB.`]);
+    assertEquals(await Array.fromAsync(Deno.readDir(cache.dir)), []);
+  }
+});
+
+Deno.test("handleRssProxy: a body over 50 MB returns 502 naming the URL and the cap", async () => {
+  const url = "https://example.com/huge.xml";
+  const res = await handleRssProxy(
+    { sql: mockSql() as any, cache: await tempCache(), fetcher: mockFetch({ [url]: () => bigBody(51, {}) }) },
+    { rssUrl: url },
+  );
+  assertEquals(res.status, 502);
+  assertStringIncludes(await res.text(), `Feed at ${url} is larger than 50 MB. Expected a feed under 50 MB.`);
+});
+
 Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG + logs status and URL", async () => {
   const cache = await tempCache();
   const thumbUrl = "https://example.com/broken.jpg";
