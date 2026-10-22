@@ -43,6 +43,7 @@ export async function sweep(dir: string, maxAgeMs: number): Promise<number> {
   let n = 0;
   for await (const e of Deno.readDir(dir)) {
     const p = `${dir}/${e.name}`;
+    if (e.isDirectory) throw new Error(`Expected only files in ${dir}, found ${p}. Remove it.`);
     let mtime: Date | null;
     try {
       mtime = (await Deno.stat(p)).mtime;

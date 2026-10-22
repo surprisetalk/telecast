@@ -109,24 +109,41 @@ async function fenceProbe(): Promise<boolean> {
 }
 
 // telecast-web writes cache/ in the repo, and deno task runs in the repo, so the relative paths match.
-async function cacheBytes(): Promise<number> {
+const CACHE_DIRS = ["cache/rss", "cache/thumb"];
+
+export async function cacheBytes(dirs: string[]): Promise<number> {
   let total = 0;
-  for (const dir of ["cache/rss", "cache/thumb"]) {
-    for await (const e of Deno.readDir(dir)) total += (await Deno.stat(`${dir}/${e.name}`)).size;
+  for (const dir of dirs) {
+    for await (const e of Deno.readDir(dir)) {
+      try {
+        total += (await Deno.stat(`${dir}/${e.name}`)).size;
+      } catch (err) {
+        // The server's put or sweep removed the file after readDir listed it.
+        if (err instanceof Deno.errors.NotFound) continue;
+        throw err;
+      }
+    }
   }
   return total;
 }
 
-async function diskFree(): Promise<{ availBytes: number; sizeBytes: number }> {
-  const out = await new Deno.Command("df", { args: ["-Pk", "cache"], signal: AbortSignal.timeout(TIMEOUT_MS) }).output();
-  const text = new TextDecoder().decode(out.stdout);
-  // POSIX df -P: a header line, then "filesystem 1024-blocks used available capacity mountpoint".
-  const [, blocks, , avail] = text.trim().split("\n")[1]?.trim().split(/\s+/) ?? [];
-  const sizeBytes = Number(blocks) * 1024, availBytes = Number(avail) * 1024;
-  if (!out.success || !(sizeBytes > 0) || !(availBytes >= 0)) {
-    throw new Error(`Expected df -Pk cache to print a size and free space in KiB, received exit ${out.code}: ${text.slice(0, 200)}`);
+// POSIX df -P: a header line, then "filesystem 1024-blocks used available capacity mountpoint". The file system name can hold
+// spaces (macOS "map auto_home"), so the columns count back from the capacity field, the one that ends in %.
+export function parseDf(text: string): { availBytes: number; sizeBytes: number } {
+  const fields = text.trim().split("\n")[1]?.trim().split(/\s+/) ?? [];
+  const cap = fields.findIndex((f) => /^\d+%$/.test(f));
+  const sizeBytes = Number(fields[cap - 3]) * 1024, availBytes = Number(fields[cap - 1]) * 1024;
+  if (cap < 3 || !(sizeBytes > 0) || !(availBytes >= 0)) {
+    throw new Error(`Expected df -Pk cache to print a size and free space in KiB, received: ${text.slice(0, 200)}`);
   }
   return { availBytes, sizeBytes };
+}
+
+async function diskFree(): Promise<{ availBytes: number; sizeBytes: number }> {
+  const out = await new Deno.Command("df", { args: ["-Pk", "cache"], signal: AbortSignal.timeout(TIMEOUT_MS) }).output();
+  const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
+  if (!out.success) throw new Error(`Expected df -Pk cache to exit 0, received exit ${out.code}: ${text.slice(0, 200)}`);
+  return parseDf(text);
 }
 
 // Unauthenticated GitHub API: 60 requests/h per IP. The repo is public.
@@ -222,7 +239,7 @@ if (import.meta.main) {
     measured(`fetching ${runsUrl("curate.yml")}`, TIMEOUT_MS, () => lastSuccessS("curate.yml")),
     measured(`fetching ${runsUrl("seed.yml")}`, TIMEOUT_MS, () => lastSuccessS("seed.yml")),
     measured(`fetching ${FENCE_URL}`, FENCE_TIMEOUT_MS, fenceProbe),
-    measured("summing cache/", TIMEOUT_MS, cacheBytes),
+    measured("summing cache/", TIMEOUT_MS, () => cacheBytes(CACHE_DIRS)),
     measured("running df -Pk cache", TIMEOUT_MS, diskFree),
   ]);
   const m: Measurements = { search, db: stats, curate, seed, fence, cache, disk };

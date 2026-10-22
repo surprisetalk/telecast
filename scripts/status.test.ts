@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert";
-import { dbStats, fenceHolds, grade, Measurements } from "./status.ts";
+import { cacheBytes, dbStats, fenceHolds, grade, Measurements, parseDf } from "./status.ts";
 
 const healthy: Measurements = {
   search: { ok: 400 },
@@ -68,4 +68,18 @@ Deno.test("fenceHolds: only a timeout from the feed proxy means pc's loopback is
   assertEquals(fenceHolds(400, "Not a valid feed at http://127.0.0.1:2/"), false);
   assertEquals(fenceHolds(502, "Upstream feed fetch failed for http://127.0.0.1:2/: HTTP 404"), false);
   assertThrows(() => fenceHolds(502, "error code: 502"), Error, "Check that telecast-web on pc serves the site.");
+});
+
+Deno.test("parseDf: reads size and free space even when the file system name has a space", () => {
+  const header = "Filesystem 1024-blocks Used Available Capacity Mounted on\n";
+  assertEquals(parseDf(header + "/dev/nvme0n1p2 1000 600 400 60% /\n"), { sizeBytes: 1024000, availBytes: 409600 });
+  assertEquals(parseDf(header + "map auto_home 1000 600 400 60% /System/Volumes/Data/home\n"), { sizeBytes: 1024000, availBytes: 409600 });
+  assertThrows(() => parseDf("df: cache: No such file or directory\n"), Error, "Expected df -Pk cache");
+});
+
+Deno.test("cacheBytes: sums files and skips an entry that vanished or dangles", async () => {
+  const dir = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${dir}/a`, "12345");
+  await Deno.symlink(`${dir}/gone`, `${dir}/dangling`);
+  assertEquals(await cacheBytes([dir]), 5);
 });

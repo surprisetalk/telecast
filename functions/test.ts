@@ -943,6 +943,12 @@ Deno.test("sweep: deletes cache files older than the limit and keeps newer ones"
   assertEquals([await cache.get("old"), new TextDecoder().decode((await cache.get("new"))!.bytes)], [null, "y"]);
 });
 
+Deno.test("sweep: a directory in a cache dir throws naming it", async () => {
+  const cache = await tempCache();
+  await Deno.mkdir(`${cache.dir}/stray`);
+  await assertRejects(() => sweep(cache.dir, 0), Error, `Expected only files in ${cache.dir}, found ${cache.dir}/stray. Remove it.`);
+});
+
 Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG + logs status and URL", async () => {
   const cache = await tempCache();
   const thumbUrl = "https://example.com/broken.jpg";

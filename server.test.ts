@@ -51,14 +51,19 @@ Deno.test("server: serves the app, app routes, search, and a resized thumb", asy
     const css = await fetch(`${base}/style.css`);
     assertEquals([css.status, css.headers.get("content-type")], [200, "text/css; charset=UTF-8"]);
     await css.body?.cancel();
-    for (const path of ["/proxy/thumb/%E0%A4%A", "/proxy/rss/%E0%A4%A", "/%E0%A4%A", "/%00"]) {
+    for (const path of ["/proxy/thumb/%E0%A4%A", "/proxy/rss/%E0%A4%A", "/%E0%A4%A"]) {
       const res = await fetch(base + path);
       assertEquals([path, res.status, await res.text()], [
         path,
         400,
-        `Expected a percent-encoded path with no %00, received ${path}. Encode the URL with encodeURIComponent.`,
+        `Expected a valid percent-encoded path, received ${path}. Encode the URL with encodeURIComponent.`,
       ]);
     }
+    const nul = await fetch(`${base}/%00`);
+    assertEquals([nul.status, await nul.text()], [400, "Expected a path with no %00, received /%00."]);
+    // A segment over the file system's 255-byte name limit made Deno's stat throw, and serveDir answered 500.
+    const long = await fetch(`${base}/${"a".repeat(300)}.js`);
+    assertEquals([long.status, await long.text()], [404, "Not Found"]);
     const missing = await fetch(`${base}/missing.js`);
     assertEquals(missing.status, 404);
     await missing.body?.cancel();
