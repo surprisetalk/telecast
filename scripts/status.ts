@@ -9,8 +9,9 @@ const DB_TIMEOUT_MS = 150_000;
 const SKEW_S = 300;
 const DAY_S = 86_400;
 const SEARCH_URL = `${SITE}/search?q=tag:featured`;
-// telecast-web on pc may not reach pc's own loopback or LAN. 8047 is its own port, so the target always listens.
-const FENCE_TARGET = "http://127.0.0.1:8047/";
+// telecast-web on pc may not reach pc's own loopback or LAN. The systemd fence drops the packets, so a fenced fetch
+// times out. Nothing listens on port 1, so an unfenced fetch is refused at once.
+const FENCE_TARGET = "http://127.0.0.1:1/";
 const FENCE_URL = `${SITE}/proxy/rss/${encodeURIComponent(FENCE_TARGET)}`;
 // The feed proxy waits 15 s on a dropped connection before it answers 502.
 const FENCE_TIMEOUT_MS = 30_000;
@@ -86,7 +87,7 @@ async function searchMs(): Promise<number> {
 }
 
 export function fenceHolds(status: number, body: string): boolean {
-  if (status === 502 && body.startsWith("Network error fetching")) return true;
+  if (status === 502 && body.startsWith("Network error fetching") && body.includes("Timed out after")) return true;
   if (status === 400 || status === 502) return false;
   throw new Error(
     `Expected 502 or 400 from ${FENCE_URL}, received ${status}: ${body.slice(0, 200)}. Check the feed proxy in functions/proxy/rss.`,
@@ -198,7 +199,7 @@ if (import.meta.main) {
   if ("ok" in stats && stats.ok.freshS === null) console.log("db: no channel has a last_success_at");
   if ("ok" in stats && stats.ok.refreshed === 0) console.log("db: no channel was refreshed in the past 24h");
   if ("ok" in fence && !fence.ok) {
-    console.log(`fence: ${FENCE_URL} answered without "Network error fetching", so the proxy may reach ${FENCE_TARGET}.`);
+    console.log(`fence: ${FENCE_URL} answered without a timeout, so the proxy may reach ${FENCE_TARGET}.`);
   }
   for (const [name, r] of [["curate", curate], ["seed", seed]] as const) {
     if ("ok" in r && r.ok === null) console.log(`${name}: no successful run on GitHub Actions`);

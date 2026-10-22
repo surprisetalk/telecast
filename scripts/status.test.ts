@@ -56,9 +56,10 @@ Deno.test("dbStats: a password with a bare % names the fix and hides the passwor
   assert(!(err as Error).message.includes("p%zzw"), (err as Error).message);
 });
 
-Deno.test("fenceHolds: only a network error from the feed proxy means pc's loopback is unreachable", () => {
-  assertEquals(fenceHolds(502, "Network error fetching http://127.0.0.1:8047/ (raw input: x): Timed out after 15000 ms"), true);
-  assertEquals(fenceHolds(400, "Not a valid feed at http://127.0.0.1:8047/"), false);
-  assertEquals(fenceHolds(502, "Upstream feed fetch failed for http://127.0.0.1:8047/: HTTP 404"), false);
+Deno.test("fenceHolds: only a timeout from the feed proxy means pc's loopback is unreachable", () => {
+  assertEquals(fenceHolds(502, "Network error fetching http://127.0.0.1:1/ (raw input: x): Timed out after 15000 ms fetching x"), true);
+  assertEquals(fenceHolds(502, "Network error fetching http://127.0.0.1:1/ (raw input: x): Connection refused (os error 111)"), false);
+  assertEquals(fenceHolds(400, "Not a valid feed at http://127.0.0.1:1/"), false);
+  assertEquals(fenceHolds(502, "Upstream feed fetch failed for http://127.0.0.1:1/: HTTP 404"), false);
   assertThrows(() => fenceHolds(500, "Internal Server Error"), Error, "Expected 502 or 400");
 });

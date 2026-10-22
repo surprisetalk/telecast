@@ -7,7 +7,9 @@ import { handleThumbProxy } from "./functions/proxy/thumb/[[path]].ts";
 
 const url = Deno.env.get("DATABASE_URL");
 if (!url) {
-  throw new Error("DATABASE_URL is missing. Expected postgres://telecast:<password>@127.0.0.1:5432/telecast in .env. Received undefined.");
+  throw new Error(
+    "DATABASE_URL is missing. Expected postgres://telecast:<password>@%2Frun%2Fpostgresql/telecast in .env. Received undefined.",
+  );
 }
 const sql = db(url);
 const rssCache = await diskCache("cache/rss");
