@@ -20,7 +20,7 @@ import {
 import { handleSearch } from "./search.ts";
 import { handleRssProxy } from "./proxy/rss/[[path]].ts";
 import { handleThumbProxy, transformYouTubeThumb } from "./proxy/thumb/[[path]].ts";
-import { type Cache, diskCache } from "./_shared/cache.ts";
+import { type Cache, diskCache, sweep } from "./_shared/cache.ts";
 import sharp from "sharp";
 
 // ==================================================================
@@ -919,6 +919,28 @@ Deno.test("proxies: a scheme other than http or https returns 400 before any fet
     assertEquals([thumb.status, await thumb.text()], [400, expected]);
     assertEquals(fetcher.calls, []);
   }
+});
+
+Deno.test("handleThumbProxy: an image over 25 megapixels → fallback SVG + logs the pixel limit", async () => {
+  const thumbUrl = "https://example.com/bomb.png";
+  const png = await sharp({ create: { width: 6000, height: 5000, channels: 3, background: "#000" } }).png().toBuffer();
+  const fetcher = mockFetch({ [thumbUrl]: () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }) });
+  const { result: res, logs } = await captureConsoleError(async () =>
+    handleThumbProxy({ cache: await tempCache(), fetcher }, { thumbUrl })
+  );
+  assertEquals(res.headers.get("content-type"), "image/svg+xml");
+  assertEquals(logs.length, 1);
+  assertStringIncludes(logs[0]!, `sharp could not resize image/png from ${thumbUrl}`);
+  assertStringIncludes(logs[0]!, "pixel limit");
+});
+
+Deno.test("sweep: deletes cache files older than the limit and keeps newer ones", async () => {
+  const cache = await tempCache();
+  await cache.put("old", "x");
+  await age(cache.dir, 8 * 86_400_000);
+  await cache.put("new", "y");
+  assertEquals(await sweep(cache.dir, 7 * 86_400_000), 1);
+  assertEquals([await cache.get("old"), new TextDecoder().decode((await cache.get("new"))!.bytes)], [null, "y"]);
 });
 
 Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG + logs status and URL", async () => {

@@ -6,6 +6,8 @@ const SMALL_WIDTH = 256;
 const QUALITY = 80;
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_MB = 20;
+// A small compressed image can decode to gigabytes. 25 MP is 5000x5000, above any podcast artwork.
+const MAX_PIXELS = 25e6;
 
 const FALLBACK_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <g fill="#666" transform="translate(50,50)">
@@ -87,7 +89,9 @@ export async function handleThumbProxy(
   let body: Uint8Array<ArrayBuffer>;
   try {
     body = new Uint8Array(
-      await sharp(original).resize({ width: SMALL_WIDTH, withoutEnlargement: true }).webp({ quality: QUALITY }).toBuffer(),
+      await sharp(original, { limitInputPixels: MAX_PIXELS }).resize({ width: SMALL_WIDTH, withoutEnlargement: true }).webp({
+        quality: QUALITY,
+      }).toBuffer(),
     );
   } catch (err) {
     console.error(`thumb proxy: sharp could not resize ${contentType} from ${fetchUrl}: ${err instanceof Error ? err.message : err}`);

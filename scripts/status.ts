@@ -25,10 +25,13 @@ export type Measurements = {
   curate: Measured<number | null>;
   seed: Measured<number | null>;
   fence: Measured<boolean>;
+  cache: Measured<number>;
+  disk: Measured<{ availBytes: number; sizeBytes: number }>;
 };
 
 export function grade(m: Measurements): { name: string; score: number }[] {
   const db = "ok" in m.db ? m.db.ok : null;
+  const disk = "ok" in m.disk ? m.disk.ok : null;
   const age = (r: Measured<number | null>, limitS: number) => "ok" in r && r.ok !== null ? limitS / Math.max(r.ok, 1) : 0;
   const cs = [
     { name: "/search?q=tag:featured answers 200 within 2 s.", score: "ok" in m.search ? 2000 / Math.max(m.search.ok, 1) : 0 },
@@ -41,6 +44,8 @@ export function grade(m: Measurements): { name: string; score: number }[] {
     { name: "Seed succeeded in the past 8 days.", score: age(m.seed, 8 * DAY_S) },
     { name: "The database is smaller than 50 GB.", score: db ? 50e9 / db.bytes : 0 },
     { name: "The feed proxy cannot reach pc's loopback.", score: "ok" in m.fence && m.fence.ok ? 1 : 0 },
+    { name: "cache/ holds less than 5 GB.", score: "ok" in m.cache ? 5e9 / Math.max(m.cache.ok, 1) : 0 },
+    { name: "The disk that holds cache/ has 10% free.", score: disk ? disk.availBytes / disk.sizeBytes / 0.1 : 0 },
   ];
   for (const c of cs) {
     if (!Number.isFinite(c.score)) {
@@ -87,16 +92,41 @@ async function searchMs(): Promise<number> {
 }
 
 export function fenceHolds(status: number, body: string): boolean {
-  if (status === 502 && body.startsWith("Network error fetching") && body.includes("Timed out after")) return true;
-  if (status === 400 || status === 502) return false;
+  if (status === 502 && body.startsWith("Network error fetching")) return body.includes("Timed out after");
+  if ((status === 400 && body.startsWith("Not a valid feed")) || (status === 502 && body.startsWith("Upstream feed fetch failed"))) {
+    return false;
+  }
   throw new Error(
-    `Expected 502 or 400 from ${FENCE_URL}, received ${status}: ${body.slice(0, 200)}. Check the feed proxy in functions/proxy/rss.`,
+    `Expected a 502 "Network error fetching ..." from the feed proxy at ${FENCE_URL}, received ${status}: ${
+      body.slice(0, 200)
+    }. Check that telecast-web on pc serves the site.`,
   );
 }
 
 async function fenceProbe(): Promise<boolean> {
   const res = await fetch(FENCE_URL, { signal: AbortSignal.timeout(FENCE_TIMEOUT_MS) });
   return fenceHolds(res.status, await res.text());
+}
+
+// telecast-web writes cache/ in the repo, and deno task runs in the repo, so the relative paths match.
+async function cacheBytes(): Promise<number> {
+  let total = 0;
+  for (const dir of ["cache/rss", "cache/thumb"]) {
+    for await (const e of Deno.readDir(dir)) total += (await Deno.stat(`${dir}/${e.name}`)).size;
+  }
+  return total;
+}
+
+async function diskFree(): Promise<{ availBytes: number; sizeBytes: number }> {
+  const out = await new Deno.Command("df", { args: ["-Pk", "cache"], signal: AbortSignal.timeout(TIMEOUT_MS) }).output();
+  const text = new TextDecoder().decode(out.stdout);
+  // POSIX df -P: a header line, then "filesystem 1024-blocks used available capacity mountpoint".
+  const [, blocks, , avail] = text.trim().split("\n")[1]?.trim().split(/\s+/) ?? [];
+  const sizeBytes = Number(blocks) * 1024, availBytes = Number(avail) * 1024;
+  if (!out.success || !(sizeBytes > 0) || !(availBytes >= 0)) {
+    throw new Error(`Expected df -Pk cache to print a size and free space in KiB, received exit ${out.code}: ${text.slice(0, 200)}`);
+  }
+  return { availBytes, sizeBytes };
 }
 
 // Unauthenticated GitHub API: 60 requests/h per IP. The repo is public.
@@ -186,14 +216,16 @@ if (import.meta.main) {
       "DATABASE_URL is missing. Expected a postgres URL in .env. Received undefined. Copy it from the Neon console into .env.",
     );
   }
-  const [search, stats, curate, seed, fence] = await Promise.all([
+  const [search, stats, curate, seed, fence, cache, disk] = await Promise.all([
     measured(`fetching ${SEARCH_URL}`, TIMEOUT_MS, searchMs),
     measured("querying the channel table", DB_TIMEOUT_MS, () => dbStats(url)),
     measured(`fetching ${runsUrl("curate.yml")}`, TIMEOUT_MS, () => lastSuccessS("curate.yml")),
     measured(`fetching ${runsUrl("seed.yml")}`, TIMEOUT_MS, () => lastSuccessS("seed.yml")),
     measured(`fetching ${FENCE_URL}`, FENCE_TIMEOUT_MS, fenceProbe),
+    measured("summing cache/", TIMEOUT_MS, cacheBytes),
+    measured("running df -Pk cache", TIMEOUT_MS, diskFree),
   ]);
-  const m: Measurements = { search, db: stats, curate, seed, fence };
+  const m: Measurements = { search, db: stats, curate, seed, fence, cache, disk };
   // snitch parses from the first line that starts with "{", so a reason line stays on one line.
   for (const [name, r] of Object.entries(m)) if ("error" in r) console.log(`${name}: ${r.error.replace(/\s+/g, " ")}`);
   if ("ok" in stats && stats.ok.freshS === null) console.log("db: no channel has a last_success_at");

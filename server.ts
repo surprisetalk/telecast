@@ -1,6 +1,6 @@
 import db from "postgres";
 import { serveDir, serveFile } from "jsr:@std/http@1/file-server";
-import { diskCache } from "./functions/_shared/cache.ts";
+import { diskCache, sweep } from "./functions/_shared/cache.ts";
 import { handleSearch } from "./functions/search.ts";
 import { handleRssProxy } from "./functions/proxy/rss/[[path]].ts";
 import { handleThumbProxy } from "./functions/proxy/thumb/[[path]].ts";
@@ -14,6 +14,13 @@ if (!url) {
 const sql = db(url);
 const rssCache = await diskCache("cache/rss");
 const thumbCache = await diskCache("cache/thumb");
+// Visitors choose the cached URLs, so old files go, and status watches the total size and free disk.
+const CACHE_MAX_AGE_MS = 7 * 86_400_000;
+const sweepCaches = () => Promise.all(["cache/rss", "cache/thumb"].map((d) => sweep(d, CACHE_MAX_AGE_MS)));
+await sweepCaches();
+// A rejected sweep is unhandled, so the server crashes and systemd restarts it. unrefTimer lets SIGTERM's graceful shutdown
+// finish: deno serve waits for the event loop to drain, and a ref'd interval never drains.
+Deno.unrefTimer(setInterval(sweepCaches, 3_600_000));
 const PUBLIC = `${import.meta.dirname}/public`;
 
 export default {

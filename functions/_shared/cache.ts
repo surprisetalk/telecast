@@ -37,3 +37,25 @@ export async function diskCache(dir: string): Promise<Cache> {
     },
   };
 }
+
+// Deletes files written more than maxAgeMs ago, including temp files that a crash left. Returns the count.
+export async function sweep(dir: string, maxAgeMs: number): Promise<number> {
+  let n = 0;
+  for await (const e of Deno.readDir(dir)) {
+    const p = `${dir}/${e.name}`;
+    let mtime: Date | null;
+    try {
+      mtime = (await Deno.stat(p)).mtime;
+    } catch (err) {
+      // A put renamed its temp file between readDir and stat.
+      if (err instanceof Deno.errors.NotFound) continue;
+      throw err;
+    }
+    if (!mtime) throw new Error(`Expected an mtime for ${p}, received null. The filesystem does not record modification times.`);
+    if (Date.now() - mtime.getTime() > maxAgeMs) {
+      await Deno.remove(p);
+      n++;
+    }
+  }
+  return n;
+}

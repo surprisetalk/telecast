@@ -1,16 +1,18 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import sharp from "sharp";
 
-const SERVER = `${import.meta.dirname}/server.ts`;
+const ROOT = import.meta.dirname!;
 const START_TIMEOUT_MS = 20_000;
 // Port 1 refuses connections, so /search reaches postgres.js and fails without a database.
 const NO_DB = "postgres://telecast:x@127.0.0.1:1/telecast";
 
+// Starts the server with the flags of `deno task serve`, minus .env and on a free port, so the suite checks its permissions.
 function serve(env: Record<string, string>) {
+  const task: string = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`)).tasks.serve;
+  const args = task.split(" ").slice(1).filter((a) => a !== "--env-file=.env").map((a) => a === "--port=8047" ? "--port=0" : a);
   return new Deno.Command(Deno.execPath(), {
-    // The cwd is a temp dir for cache/, so --config points Deno at the repo for package.json imports.
-    args: ["serve", "-A", `--config=${import.meta.dirname}/deno.json`, "--host=127.0.0.1", "--port=0", SERVER],
-    cwd: Deno.makeTempDirSync(),
+    args,
+    cwd: ROOT,
     clearEnv: true,
     env: { HOME: Deno.env.get("HOME")!, PATH: Deno.env.get("PATH")!, ...env },
     stdout: "null",
@@ -40,7 +42,7 @@ Deno.test("server: serves the app, app routes, search, and a resized thumb", asy
       base = log.match(/Listening on (http:\/\/127\.0\.0\.1:\d+)/)?.[1];
       await new Promise((r) => setTimeout(r, 50));
     }
-    const index = await Deno.readTextFile(`${import.meta.dirname}/public/index.html`);
+    const index = await Deno.readTextFile(`${ROOT}/public/index.html`);
     for (const path of ["/", "/episode/x"]) {
       const res = await fetch(base + path);
       assertEquals([path, res.status, await res.text()], [path, 200, index]);

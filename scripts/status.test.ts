@@ -7,11 +7,13 @@ const healthy: Measurements = {
   curate: { ok: 3600 },
   seed: { ok: 3 * 86_400 },
   fence: { ok: true },
+  cache: { ok: 1e9 },
+  disk: { ok: { availBytes: 400e9, sizeBytes: 1e12 } },
 };
 const scores = (m: Measurements) => grade(m).map((c) => Math.round(c.score * 100) / 100);
 
 Deno.test("grade: healthy production passes every condition", () => {
-  assertEquals(scores(healthy), [5, 3, 1.13, 48, 2.67, 10, 1]);
+  assertEquals(scores(healthy), [5, 3, 1.13, 48, 2.67, 10, 1, 5, 4]);
 });
 
 Deno.test("grade: each failure mode scores below 1.0", () => {
@@ -22,8 +24,10 @@ Deno.test("grade: each failure mode scores below 1.0", () => {
       curate: { ok: null },
       seed: { ok: 16 * 86_400 },
       fence: { ok: false },
+      cache: { ok: 10e9 },
+      disk: { ok: { availBytes: 50e9, sizeBytes: 1e12 } },
     }),
-    [0.5, 0, 0.63, 0, 0.5, 0.5, 0],
+    [0.5, 0, 0.63, 0, 0.5, 0.5, 0, 0.5, 0.5],
   );
 });
 
@@ -35,10 +39,12 @@ Deno.test("grade: errors and empty data score 0", () => {
       curate: { error: "HTTP 403" },
       seed: { ok: null },
       fence: { error: "HTTP 500" },
+      cache: { error: "EACCES" },
+      disk: { error: "df exited 1" },
     }),
-    [0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0],
   );
-  assertEquals(scores({ ...healthy, db: { ok: { freshS: null, refreshed: 0, failed: 0, bytes: 5e9 } } }), [5, 0, 0, 48, 2.67, 10, 1]);
+  assertEquals(scores({ ...healthy, db: { ok: { freshS: null, refreshed: 0, failed: 0, bytes: 5e9 } } }), [5, 0, 0, 48, 2.67, 10, 1, 5, 4]);
 });
 
 Deno.test("grade: a non-finite score throws instead of printing invalid JSON", () => {
@@ -61,5 +67,5 @@ Deno.test("fenceHolds: only a timeout from the feed proxy means pc's loopback is
   assertEquals(fenceHolds(502, "Network error fetching http://127.0.0.1:2/ (raw input: x): Connection refused (os error 111)"), false);
   assertEquals(fenceHolds(400, "Not a valid feed at http://127.0.0.1:2/"), false);
   assertEquals(fenceHolds(502, "Upstream feed fetch failed for http://127.0.0.1:2/: HTTP 404"), false);
-  assertThrows(() => fenceHolds(500, "Internal Server Error"), Error, "Expected 502 or 400");
+  assertThrows(() => fenceHolds(502, "error code: 502"), Error, "Check that telecast-web on pc serves the site.");
 });

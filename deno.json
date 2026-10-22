@@ -7,6 +7,6 @@
   },
   "tasks": {
     "status": "deno run -A --env-file=.env scripts/status.ts",
-    "serve": "deno serve -A --env-file=.env --host=127.0.0.1 --port=8047 server.ts"
+    "serve": "deno serve --allow-net --allow-env --allow-ffi --allow-sys --allow-read=public,cache,node_modules,/run/telecast-web --allow-write=cache,/run/telecast-web --env-file=.env --host=127.0.0.1 --port=8047 server.ts"
   }
 }
