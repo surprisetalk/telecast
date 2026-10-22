@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert";
-import { extractYoutubeLinks, gather, linksFromHnHits, linksFromLectures, linksFromRedditListing } from "./seed.ts";
+import { extractYoutubeLinks, fromReddit, gather, linksFromHnHits, linksFromLectures, linksFromRedditListing } from "./seed.ts";
 
 Deno.test("extractYoutubeLinks: pulls channel/handle/c/user forms, ignores videos", () => {
   const text = `
@@ -84,4 +84,54 @@ Deno.test("gather: a source that throws fails the run, naming each; 0 links only
   for (const part of ["reddit: HTTP 429", "lectures: bad json"]) assertEquals(msg.includes(part), true, `${part} missing from: ${msg}`);
   const odd = await assertRejects(() => gather([["a", () => Promise.reject("str")], ["b", () => Promise.reject(null)]]));
   assertEquals((odd as Error).message.startsWith("Seed sources failed: a: str; b: null."), true, (odd as Error).message);
+});
+
+Deno.test("fromReddit: missing credentials throw naming both variables and never their values", async () => {
+  const env = (k: string) => k === "REDDIT_CLIENT_SECRET" ? "s3cret" : undefined;
+  const err = await assertRejects(() => fromReddit(env, () => Promise.reject(new Error("no fetch expected"))));
+  assertEquals(
+    (err as Error).message,
+    "Reddit credentials are missing. Expected REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env, from https://www.reddit.com/prefs/apps (type: script). Received: REDDIT_CLIENT_ID missing, REDDIT_CLIENT_SECRET set.",
+  );
+});
+
+Deno.test("fromReddit: gets an app token with Basic auth, then searches with the bearer token", async () => {
+  const env = (k: string) => ({ REDDIT_CLIENT_ID: "id1", REDDIT_CLIENT_SECRET: "sec2" })[k];
+  const calls: { url: string; init: RequestInit }[] = [];
+  const fetcher = (url: string | URL | Request, init: RequestInit = {}) => {
+    calls.push({ url: String(url), init });
+    if (String(url).endsWith("/api/v1/access_token")) {
+      return Promise.resolve(Response.json({ access_token: "tok", token_type: "bearer", expires_in: 86400 }));
+    }
+    return Promise.resolve(
+      Response.json({ data: { children: [{ data: { url: "https://www.youtube.com/@ok", title: "", selftext: "" } }] } }),
+    );
+  };
+  assertEquals(await fromReddit(env, fetcher as typeof fetch), [
+    "https://www.youtube.com/@ok",
+    "https://www.youtube.com/@ok",
+    "https://www.youtube.com/@ok",
+  ]);
+  const [token, ...searches] = calls;
+  const h = (c: { init: RequestInit }) => new Headers(c.init.headers);
+  assertEquals([token!.init.method, h(token!).get("authorization"), String(token!.init.body)], [
+    "POST",
+    `Basic ${btoa("id1:sec2")}`,
+    "grant_type=client_credentials",
+  ]);
+  assertEquals(
+    searches.map((c) => [new URL(c.url).origin, h(c).get("authorization")]),
+    Array(3).fill(["https://oauth.reddit.com", "bearer tok"]),
+  );
+  assertEquals(h(token!).get("user-agent"), "deno:telecast-seeder:1.1 (by telecast.company)");
+});
+
+Deno.test("fromReddit: a refused token names the status and the fix", async () => {
+  const env = (k: string) => ({ REDDIT_CLIENT_ID: "id1", REDDIT_CLIENT_SECRET: "sec2" })[k];
+  const fetcher = () => Promise.resolve(Response.json({ message: "Unauthorized" }, { status: 401 }));
+  await assertRejects(
+    () => fromReddit(env, fetcher as typeof fetch),
+    Error,
+    `Reddit token: expected HTTP 200 with a bearer access_token, received 401: {"message":"Unauthorized"}. Check the app's id and secret.`,
+  );
 });

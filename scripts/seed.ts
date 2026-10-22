@@ -63,12 +63,49 @@ async function fromHackerNews(): Promise<string[]> {
   return linksFromHnHits(data.hits);
 }
 
-async function fromReddit(): Promise<string[]> {
+// Reddit asks for this User-Agent form: <platform>:<app id>:<version> (by <contact>).
+const REDDIT_UA = "deno:telecast-seeder:1.1 (by telecast.company)";
+
+// Reddit closed unauthenticated search.json, so seed takes an app-only token (OAuth client credentials) from a "script" app.
+export async function fromReddit(env: (k: string) => string | undefined, fetcher: typeof fetch): Promise<string[]> {
+  const id = env("REDDIT_CLIENT_ID"), secret = env("REDDIT_CLIENT_SECRET");
+  if (!id || !secret) {
+    throw new Error(
+      `Reddit credentials are missing. Expected REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env, from https://www.reddit.com/prefs/apps (type: script). Received: REDDIT_CLIENT_ID ${
+        id ? "set" : "missing"
+      }, REDDIT_CLIENT_SECRET ${secret ? "set" : "missing"}.`,
+    );
+  }
+  const tokenRes = await fetcher("https://www.reddit.com/api/v1/access_token", {
+    method: "POST",
+    headers: {
+      authorization: `Basic ${btoa(`${id}:${secret}`)}`,
+      "user-agent": REDDIT_UA,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: "grant_type=client_credentials",
+    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+  });
+  const tokenBody = await tokenRes.text();
+  let token: { access_token?: unknown; token_type?: unknown } = {};
+  try {
+    token = JSON.parse(tokenBody);
+  } catch { /* the check below reports the body */ }
+  if (tokenRes.status !== 200 || typeof token.access_token !== "string" || token.token_type !== "bearer") {
+    throw new Error(
+      `Reddit token: expected HTTP 200 with a bearer access_token, received ${tokenRes.status}: ${
+        tokenBody.slice(0, 200)
+      }. Check the app's id and secret.`,
+    );
+  }
   const queries = ["youtube.com/channel", "youtube.com/@", "youtube channel"];
   const out: string[] = [];
   for (const q of queries) {
-    const url = `https://www.reddit.com/search.json?q=${encodeURIComponent(q)}&limit=100&type=link`;
-    const res = await fetch(url, { headers: { "user-agent": "telecast-seeder/1.0" }, signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+    const url = `https://oauth.reddit.com/search?q=${encodeURIComponent(q)}&limit=100&type=link`;
+    const res = await fetcher(url, {
+      headers: { authorization: `bearer ${token.access_token}`, "user-agent": REDDIT_UA },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`Reddit HTTP ${res.status} for "${q}"`);
     out.push(...linksFromRedditListing(await res.json()));
   }
@@ -167,10 +204,13 @@ async function main() {
     Deno.exit(1);
   }
 
+  if (!Deno.env.get("REDDIT_CLIENT_ID") || !Deno.env.get("REDDIT_CLIENT_SECRET")) {
+    console.warn("WARNING: REDDIT_CLIENT_ID or REDDIT_CLIENT_SECRET is missing, so the reddit source will fail this run.");
+  }
   console.log(`Gathering links...`);
   const all = await gather([
     ["hn", fromHackerNews],
-    ["reddit", fromReddit],
+    ["reddit", () => fromReddit((k) => Deno.env.get(k), fetch)],
     ["lectures", async () => linksFromLectures(JSON.parse(await Deno.readTextFile(new URL("./lectures.json", import.meta.url))))],
   ]);
   const unique = [...new Set(all)].slice(0, DEFAULT_LIMIT);
