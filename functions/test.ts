@@ -909,6 +909,18 @@ Deno.test("handleRssProxy: a body over 50 MB returns 502 naming the URL and the 
   assertStringIncludes(await res.text(), `Feed at ${url} is larger than 50 MB. Expected a feed under 50 MB.`);
 });
 
+Deno.test("proxies: a scheme other than http or https returns 400 before any fetch or cache read", async () => {
+  for (const url of ["file:///etc/hostname", "resolved2:https://example.com/feed.xml", "data:text/xml,<rss>"]) {
+    const fetcher = mockFetch({});
+    const expected = `Expected an http or https URL, received ${url}. Encode the URL with encodeURIComponent.`;
+    const rss = await handleRssProxy({ sql: mockSql() as any, cache: await tempCache(), fetcher }, { rssUrl: url });
+    assertEquals([rss.status, await rss.text()], [400, expected]);
+    const thumb = await handleThumbProxy({ cache: await tempCache(), fetcher }, { thumbUrl: url });
+    assertEquals([thumb.status, await thumb.text()], [400, expected]);
+    assertEquals(fetcher.calls, []);
+  }
+});
+
 Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG + logs status and URL", async () => {
   const cache = await tempCache();
   const thumbUrl = "https://example.com/broken.jpg";

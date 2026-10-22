@@ -34,6 +34,10 @@ export async function handleThumbProxy(
   const { cache, fetcher } = deps;
   const { thumbUrl } = input;
   if (!thumbUrl) return serveFallback();
+  // Deno's fetch reads file: and data: URLs, so anything but http and https could leak local files.
+  if (!/^https?:$/.test(URL.parse(thumbUrl)?.protocol ?? "")) {
+    return new Response(`Expected an http or https URL, received ${thumbUrl}. Encode the URL with encodeURIComponent.`, { status: 400 });
+  }
 
   const smallKey = `small/${thumbUrl}`;
   const cached = await cache.get(smallKey);

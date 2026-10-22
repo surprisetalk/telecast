@@ -14,6 +14,10 @@ export async function handleRssProxy(
 ): Promise<Response> {
   const { sql, cache, fetcher } = deps;
   const rawUrl = input.rssUrl;
+  // Deno's fetch reads file: and data: URLs, so anything but http and https could leak local files.
+  if (!/^https?:$/.test(URL.parse(rawUrl)?.protocol ?? "")) {
+    return new Response(`Expected an http or https URL, received ${rawUrl}. Encode the URL with encodeURIComponent.`, { status: 400 });
+  }
   const resolvedKey = `resolved2:${rawUrl}`;
   const cachedResolved = await cache.get(resolvedKey);
   let rssUrl: string;
