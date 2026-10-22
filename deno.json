@@ -6,6 +6,7 @@
     "useTabs": false
   },
   "tasks": {
-    "status": "deno run -A --env-file=.env scripts/status.ts"
+    "status": "deno run -A --env-file=.env scripts/status.ts",
+    "serve": "deno serve -A --env-file=.env --host=127.0.0.1 --port=8047 server.ts"
   }
 }

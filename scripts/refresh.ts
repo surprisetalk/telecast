@@ -1,5 +1,5 @@
 import db from "postgres";
-import { Channel, Episode, parse, parseEpisodes } from "../functions/_shared/rss";
+import { Channel, Episode, parse, parseEpisodes } from "../functions/_shared/rss.ts";
 import { preferUulfFeedUrl } from "../functions/_shared/youtube.ts";
 import { pool } from "./pool.ts";
 

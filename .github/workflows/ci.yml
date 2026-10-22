@@ -16,9 +16,9 @@ jobs:
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
-      - run: deno fmt --check functions/ scripts/
-      - run: deno test functions/ scripts/
-      - run: deno check functions/ scripts/
+      - run: deno fmt --check server.ts server.test.ts functions/ scripts/
+      - run: deno test -A server.test.ts functions/ scripts/
+      - run: deno check server.ts server.test.ts functions/ scripts/
 
   elm-test:
     runs-on: ubuntu-latest

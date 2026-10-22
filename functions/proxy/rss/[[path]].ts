@@ -1,23 +1,22 @@
-import * as rss from "../../_shared/rss";
-import db from "postgres";
-import type { Env } from "../../env";
-import type { Sql } from "../../search";
-import { resolveYoutubeFeedUrl } from "../../_shared/youtube";
+import * as rss from "../../_shared/rss.ts";
+import type { Cache } from "../../_shared/cache.ts";
+import type { Sql } from "../../search.ts";
+import { resolveYoutubeFeedUrl } from "../../_shared/youtube.ts";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15_000;
 
 export async function handleRssProxy(
-  deps: { sql: Sql; bucket: R2Bucket; fetcher: typeof fetch },
+  deps: { sql: Sql; cache: Cache; fetcher: typeof fetch },
   input: { rssUrl: string },
 ): Promise<Response> {
-  const { sql, bucket, fetcher } = deps;
+  const { sql, cache, fetcher } = deps;
   const rawUrl = input.rssUrl;
   const resolvedKey = `resolved2:${rawUrl}`;
-  const cachedResolved = await bucket.get(resolvedKey);
+  const cachedResolved = await cache.get(resolvedKey);
   let rssUrl: string;
   if (cachedResolved) {
-    rssUrl = await cachedResolved.text();
+    rssUrl = new TextDecoder().decode(cachedResolved.bytes);
   } else {
     let resolved: { url: string } | { error: string };
     try {
@@ -29,9 +28,9 @@ export async function handleRssProxy(
     if ("error" in resolved) return new Response(resolved.error, { status: 400 });
     rssUrl = resolved.url;
   }
-  const cached = await bucket.get(rssUrl);
-  const cachedText = cached ? await cached.text() : null;
-  const cachedAge = cached?.uploaded ? Date.now() - cached.uploaded.getTime() : Infinity;
+  const cached = await cache.get(rssUrl);
+  const cachedText = cached ? new TextDecoder().decode(cached.bytes) : null;
+  const cachedAge = cached ? Date.now() - cached.at.getTime() : Infinity;
   if (cachedText && cachedAge < CACHE_TTL_MS) {
     return new Response(cachedText, { headers: { "content-type": "application/xml" } });
   }
@@ -87,15 +86,9 @@ export async function handleRssProxy(
         ELSE channel.tags
       END
   `;
-  await bucket.put(rssUrl, text);
-  if (rssUrl !== rawUrl) await bucket.put(resolvedKey, rssUrl);
+  await cache.put(rssUrl, text);
+  if (rssUrl !== rawUrl) await cache.put(resolvedKey, rssUrl);
   return new Response(text, {
     headers: { "content-type": "application/xml" },
   });
-}
-
-export async function onRequest({ request, env }: { request: Request; env: Env }) {
-  const url = new URL(request.url);
-  const rssUrl = decodeURIComponent(url.pathname.slice("/proxy/rss/".length));
-  return handleRssProxy({ sql: db(env.DATABASE_URL!), bucket: env.BUCKET_RSS, fetcher: fetch }, { rssUrl });
 }

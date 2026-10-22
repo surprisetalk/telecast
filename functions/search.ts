@@ -1,5 +1,4 @@
 import db from "postgres";
-import type { Env } from "./env";
 
 const QUALITY_THRESHOLD = 10;
 
@@ -96,10 +95,4 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
     console.error(`Search query failed for q="${query}": ${message}`);
     return new Response(`Search failed: ${message}`, { status: 502 });
   }
-}
-
-export async function onRequest({ request, env }: { request: Request; env: Env }) {
-  const sql = db(env.DATABASE_URL!);
-  const url = new URL(request.url);
-  return handleSearch({ sql }, { query: url.searchParams.get("q") });
 }

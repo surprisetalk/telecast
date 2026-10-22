@@ -1,4 +1,5 @@
-import type { Env } from "../../env";
+import sharp from "sharp";
+import type { Cache } from "../../_shared/cache.ts";
 
 const SMALL_WIDTH = 256;
 const QUALITY = 80;
@@ -25,19 +26,19 @@ export function transformYouTubeThumb(url: string): string {
 }
 
 export async function handleThumbProxy(
-  deps: { bucket: R2Bucket; fetcher: typeof fetch },
+  deps: { cache: Cache; fetcher: typeof fetch },
   input: { thumbUrl: string },
 ): Promise<Response> {
-  const { bucket, fetcher } = deps;
+  const { cache, fetcher } = deps;
   const { thumbUrl } = input;
   if (!thumbUrl) return serveFallback();
 
   const smallKey = `small/${thumbUrl}`;
-  const cached = await bucket.get(smallKey);
+  const cached = await cache.get(smallKey);
   if (cached) {
-    return new Response(cached.body, {
+    return new Response(cached.bytes, {
       headers: {
-        "content-type": cached.httpMetadata?.contentType || "image/webp",
+        "content-type": "image/webp",
         "cache-control": "public, max-age=31536000, immutable",
       },
     });
@@ -54,17 +55,7 @@ export async function handleThumbProxy(
   };
   let fetchResponse: Response;
   try {
-    fetchResponse = await fetcher(fetchUrl, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      cf: {
-        image: {
-          width: SMALL_WIDTH,
-          fit: "scale-down",
-          format: "webp",
-          quality: QUALITY,
-        },
-      },
-    } as RequestInit);
+    fetchResponse = await fetcher(fetchUrl, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   } catch (err) {
     return fetchFailed(err);
   }
@@ -77,25 +68,26 @@ export async function handleThumbProxy(
     console.error(`thumb proxy: non-image content-type ${contentType ?? "(none)"} for ${fetchUrl}`);
     return serveFallback();
   }
-  let body: Uint8Array<ArrayBuffer>;
+  let original: Uint8Array<ArrayBuffer>;
   try {
-    body = new Uint8Array(await fetchResponse.arrayBuffer());
+    original = new Uint8Array(await fetchResponse.arrayBuffer());
   } catch (err) {
     return fetchFailed(err);
   }
-  await bucket.put(smallKey, body, {
-    httpMetadata: { contentType },
-  });
+  let body: Uint8Array<ArrayBuffer>;
+  try {
+    body = new Uint8Array(
+      await sharp(original).resize({ width: SMALL_WIDTH, withoutEnlargement: true }).webp({ quality: QUALITY }).toBuffer(),
+    );
+  } catch (err) {
+    console.error(`thumb proxy: sharp could not resize ${contentType} from ${fetchUrl}: ${err instanceof Error ? err.message : err}`);
+    return serveFallback();
+  }
+  await cache.put(smallKey, body);
   return new Response(body, {
     headers: {
-      "content-type": contentType,
+      "content-type": "image/webp",
       "cache-control": "public, max-age=31536000, immutable",
     },
   });
-}
-
-export async function onRequest({ request, env }: { request: Request; env: Env }) {
-  const url = new URL(request.url);
-  const thumbUrl = decodeURIComponent(url.pathname.slice("/proxy/thumb/".length));
-  return handleThumbProxy({ bucket: env.BUCKET_THUMB, fetcher: fetch }, { thumbUrl });
 }

@@ -1,8 +1,7 @@
 // Integration tests for Telecast backend (parser + worker handlers).
 // Run: deno test functions/test.ts
 //
-// Includes local mocks for R2 buckets, postgres.js tagged templates, and
-// the global fetch so handlers can be exercised without live infrastructure.
+// Includes local mocks for postgres.js tagged templates and the global fetch. Caches are real temp dirs.
 
 import { assert, assertEquals, assertExists, assertMatch, assertRejects, assertStringIncludes, assertThrows } from "jsr:@std/assert@1";
 
@@ -21,6 +20,8 @@ import {
 import { handleSearch } from "./search.ts";
 import { handleRssProxy } from "./proxy/rss/[[path]].ts";
 import { handleThumbProxy, transformYouTubeThumb } from "./proxy/thumb/[[path]].ts";
+import { type Cache, diskCache } from "./_shared/cache.ts";
+import sharp from "sharp";
 
 // ==================================================================
 // Mocks
@@ -64,76 +65,15 @@ function mockSql(responses: unknown[] = []): MockSql {
   return fn;
 }
 
-interface MockR2Object {
-  body: ReadableStream<Uint8Array>;
-  httpMetadata: { contentType?: string } | undefined;
-  uploaded: Date;
-  text(): Promise<string>;
+async function tempCache(): Promise<Cache & { dir: string }> {
+  const dir = await Deno.makeTempDir();
+  return { ...(await diskCache(dir)), dir };
 }
 
-interface R2Entry {
-  body: Uint8Array;
-  httpMetadata: { contentType?: string } | undefined;
-  uploaded?: Date;
-}
-
-interface MockR2Bucket {
-  get(key: string): Promise<MockR2Object | null>;
-  put(key: string, body: unknown, opts?: { httpMetadata?: { contentType?: string } }): Promise<void>;
-  _storage: Map<string, R2Entry>;
-}
-
-async function drainStream(stream: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  const reader = stream.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-    total += value.length;
-  }
-  const out = new Uint8Array(total);
-  let offset = 0;
-  for (const chunk of chunks) {
-    out.set(chunk, offset);
-    offset += chunk.length;
-  }
-  return out;
-}
-
-function mockR2Bucket(): MockR2Bucket {
-  const storage = new Map<string, R2Entry>();
-  return {
-    _storage: storage,
-    get(key: string): Promise<MockR2Object | null> {
-      const entry = storage.get(key);
-      if (!entry) return Promise.resolve(null);
-      const bytes = entry.body;
-      const meta = entry.httpMetadata;
-      return Promise.resolve({
-        body: new Blob([bytes as BlobPart]).stream(),
-        httpMetadata: meta,
-        uploaded: entry.uploaded ?? new Date(),
-        text: () => Promise.resolve(new TextDecoder().decode(bytes)),
-      });
-    },
-    async put(key: string, body: unknown, opts?: { httpMetadata?: { contentType?: string } }): Promise<void> {
-      let bytes: Uint8Array;
-      if (typeof body === "string") {
-        bytes = new TextEncoder().encode(body);
-      } else if (body instanceof Uint8Array) {
-        bytes = body;
-      } else if (body instanceof ReadableStream) {
-        bytes = await drainStream(body);
-      } else if (body === null) {
-        throw new Error("mockR2Bucket.put: body is null");
-      } else {
-        throw new Error(`mockR2Bucket.put: unsupported body type ${typeof body}`);
-      }
-      storage.set(key, { body: bytes, httpMetadata: opts?.httpMetadata });
-    },
-  };
+// Back-dates every cached file, so the handler sees it as written `ms` ago.
+async function age(dir: string, ms: number) {
+  const t = new Date(Date.now() - ms);
+  for await (const e of Deno.readDir(dir)) await Deno.utime(`${dir}/${e.name}`, t, t);
 }
 
 async function captureConsoleError<T>(fn: () => Promise<T>): Promise<{ result: T; logs: string[] }> {
@@ -645,12 +585,12 @@ function xmlResponse(body: string, status = 200): Response {
 }
 
 Deno.test("handleRssProxy: cache hit returns cached body without fetch or sql", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const url = "https://cached.example.com/feed.xml";
-  bucket._storage.set(url, { body: new TextEncoder().encode(PODCAST_ITUNES_XML), httpMetadata: undefined });
+  await cache.put(url, PODCAST_ITUNES_XML);
   const sql = mockSql();
   const fetcher = mockFetch({});
-  const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("content-type"), "application/xml");
   assertStringIncludes(await res.text(), "Test Podcast");
@@ -659,11 +599,11 @@ Deno.test("handleRssProxy: cache hit returns cached body without fetch or sql", 
 });
 
 Deno.test("handleRssProxy: cache miss fetches, parses, upserts, caches", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const url = "https://miss.example.com/feed.xml";
   const sql = mockSql([null]); // one template insert, returns null (ignored)
   const fetcher = mockFetch({ [url]: xmlResponse(PODCAST_ITUNES_XML) });
-  const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 200);
   assertEquals(fetcher.calls, [url]);
   // sql was invoked both as direct (sql(channel)) and as template (insert ... ${...})
@@ -680,26 +620,26 @@ Deno.test("handleRssProxy: cache miss fetches, parses, upserts, caches", async (
   assertStringIncludes(outerSql, "insert into channel");
   assertStringIncludes(outerSql, "on conflict");
   // Body now cached
-  assertExists(bucket._storage.get(url));
+  assertExists(await cache.get(url));
 });
 
 Deno.test("handleRssProxy: YouTube feed results in youtube.com/channel/... channel_id", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCtestchannelid12345";
   const sql = mockSql([null]);
   const fetcher = mockFetch({ [url]: xmlResponse(YOUTUBE_XML) });
-  await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
   const inserted = sql.calls.find((c) => c.kind === "direct")!.direct as { channel_id: string; tags: string[] };
   assertEquals(inserted.channel_id, "youtube.com/channel/UCtestchannelid12345");
   assertEquals(inserted.tags, ["youtube"]);
 });
 
 Deno.test("handleRssProxy: upstream non-2xx returns 502 with URL and status in message", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const url = "https://dead.example.com/feed.xml";
   const sql = mockSql();
   const fetcher = mockFetch({ [url]: new Response("not found", { status: 404, statusText: "Not Found" }) });
-  const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   const body = await res.text();
   assertStringIncludes(body, url);
@@ -707,7 +647,7 @@ Deno.test("handleRssProxy: upstream non-2xx returns 502 with URL and status in m
 });
 
 Deno.test("handleRssProxy: fetch rejection returns 502 with URL and cause", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const url = "https://broken.example.com/feed.xml";
   const sql = mockSql();
   const fetcher = mockFetch({
@@ -715,7 +655,7 @@ Deno.test("handleRssProxy: fetch rejection returns 502 with URL and cause", asyn
       throw new TypeError("DNS lookup failed");
     },
   });
-  const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   const body = await res.text();
   assertStringIncludes(body, url);
@@ -723,7 +663,7 @@ Deno.test("handleRssProxy: fetch rejection returns 502 with URL and cause", asyn
 });
 
 Deno.test("handleRssProxy: origin timeout returns 502 naming the URL and the timeout in ms", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const url = "https://slow.example.com/feed.xml";
   const sql = mockSql();
   const fetcher = mockFetch({
@@ -731,17 +671,17 @@ Deno.test("handleRssProxy: origin timeout returns 502 naming the URL and the tim
       throw new DOMException("signal timed out", "TimeoutError");
     },
   });
-  const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   assertStringIncludes(await res.text(), `Timed out after 15000 ms fetching ${url}`);
 });
 
 Deno.test("handleRssProxy: HTML body returns 400 with URL and missing-root-element hint", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const url = "https://html.example.com/page.html";
   const sql = mockSql();
   const fetcher = mockFetch({ [url]: new Response(HTML_NOT_A_FEED, { status: 200 }) });
-  const res = await handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 400);
   const body = await res.text();
   assertStringIncludes(body, url);
@@ -751,7 +691,7 @@ Deno.test("handleRssProxy: HTML body returns 400 with URL and missing-root-eleme
 });
 
 Deno.test("handleRssProxy: gibberish XML bytes → parse throws (let it crash)", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const url = "https://gibberish.example.com/feed.xml";
   const sql = mockSql();
   const fetcher = mockFetch({
@@ -759,7 +699,7 @@ Deno.test("handleRssProxy: gibberish XML bytes → parse throws (let it crash)",
   });
   // Expect the handler to raise rather than silently swallow.
   await assertRejects(
-    () => handleRssProxy({ sql: sql as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url }),
+    () => handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url }),
     Error,
   );
 });
@@ -780,7 +720,7 @@ Deno.test("handleRssProxy: @handle → scrape → UULF feed XML", async () => {
     `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015"><yt:playlistId>UULFreal</yt:playlistId><title>ok</title><entry><id>x</id><title>t</title><link href="https://y"/><published>2026-01-01T00:00:00Z</published><yt:channelId>UCreal</yt:channelId></entry></feed>`;
   const fetcher = resolveFetch((url) => url.includes("playlist_id=UULFreal") ? new Response(xml) : undefined);
   const res = await handleRssProxy(
-    { sql: mockSql() as any, bucket: mockR2Bucket() as unknown as R2Bucket, fetcher },
+    { sql: mockSql() as any, cache: await tempCache(), fetcher },
     { rssUrl: "https://www.youtube.com/@AtriocClips" },
   );
   assertEquals(res.status, 200);
@@ -791,14 +731,11 @@ Deno.test("handleRssProxy: expired cache triggers refetch", async () => {
   const url = "https://example.com/feed.xml";
   const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
   const newXml = `<?xml version="1.0"?><rss><channel><title>new</title></channel></rss>`;
-  const bucket = mockR2Bucket();
-  bucket._storage.set(url, {
-    body: new TextEncoder().encode(oldXml),
-    httpMetadata: undefined,
-    uploaded: new Date(Date.now() - TWO_HOURS_MS),
-  });
+  const cache = await tempCache();
+  await cache.put(url, oldXml);
+  await age(cache.dir, TWO_HOURS_MS);
   const fetcher = mockFetch({ [url]: xmlResponse(newXml) });
-  const res = await handleRssProxy({ sql: mockSql() as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: mockSql() as any, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("x-telecast-stale"), null);
   assertEquals(await res.text(), newXml);
@@ -807,16 +744,11 @@ Deno.test("handleRssProxy: expired cache triggers refetch", async () => {
 Deno.test("handleRssProxy: expired cache + origin failure serves stale", async () => {
   const url = "https://example.com/feed.xml";
   const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
-  const bucket = mockR2Bucket();
-  bucket._storage.set(url, {
-    body: new TextEncoder().encode(oldXml),
-    httpMetadata: undefined,
-    uploaded: new Date(Date.now() - TWO_HOURS_MS),
-  });
+  const cache = await tempCache();
+  await cache.put(url, oldXml);
+  await age(cache.dir, TWO_HOURS_MS);
   const fetcher = mockFetch({ [url]: new Response("nope", { status: 500 }) });
-  const { result: res, logs } = await captureConsoleError(() =>
-    handleRssProxy({ sql: mockSql() as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url })
-  );
+  const { result: res, logs } = await captureConsoleError(() => handleRssProxy({ sql: mockSql() as any, cache, fetcher }, { rssUrl: url }));
   assertEquals(logs, [`rss proxy: serving stale ${url}: HTTP 500`]);
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("x-telecast-stale"), "1");
@@ -836,17 +768,14 @@ const stalledBody = (headers: HeadersInit = {}) =>
 Deno.test("handleRssProxy: body timeout after headers serves stale, else 502 naming URL and timeout", async () => {
   const url = "https://example.com/feed.xml";
   const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
-  const bucket = mockR2Bucket();
-  bucket._storage.set(url, {
-    body: new TextEncoder().encode(oldXml),
-    httpMetadata: undefined,
-    uploaded: new Date(Date.now() - TWO_HOURS_MS),
-  });
+  const cache = await tempCache();
+  await cache.put(url, oldXml);
+  await age(cache.dir, TWO_HOURS_MS);
   const fetcher = mockFetch({ [url]: () => stalledBody() });
-  const stale = await handleRssProxy({ sql: mockSql() as any, bucket: bucket as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const stale = await handleRssProxy({ sql: mockSql() as any, cache, fetcher }, { rssUrl: url });
   assertEquals(stale.headers.get("x-telecast-stale"), "1");
   assertEquals(await stale.text(), oldXml);
-  const res = await handleRssProxy({ sql: mockSql() as any, bucket: mockR2Bucket() as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: mockSql() as any, cache: await tempCache(), fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   assertStringIncludes(await res.text(), `Timed out after 15000 ms fetching ${url}`);
 });
@@ -854,7 +783,7 @@ Deno.test("handleRssProxy: body timeout after headers serves stale, else 502 nam
 Deno.test("handleRssProxy: non-ok upstream with an unreadable body still reports the HTTP status", async () => {
   const url = "https://example.com/gone.xml";
   const fetcher = mockFetch({ [url]: () => new Response(stalledBody().body, { status: 404, statusText: "Not Found" }) });
-  const res = await handleRssProxy({ sql: mockSql() as any, bucket: mockR2Bucket() as unknown as R2Bucket, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: mockSql() as any, cache: await tempCache(), fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   assertStringIncludes(await res.text(), "HTTP 404 Not Found");
 });
@@ -862,7 +791,7 @@ Deno.test("handleRssProxy: non-ok upstream with an unreadable body still reports
 Deno.test("handleRssProxy: error body shows both raw and resolved URL on non-feed response", async () => {
   const fetcher = resolveFetch(() => new Response("<html>youtube is down</html>"));
   const res = await handleRssProxy(
-    { sql: mockSql() as any, bucket: mockR2Bucket() as unknown as R2Bucket, fetcher },
+    { sql: mockSql() as any, cache: await tempCache(), fetcher },
     { rssUrl: "https://www.youtube.com/@AtriocClips" },
   );
   assertEquals(res.status, 400);
@@ -898,55 +827,58 @@ Deno.test("transformYouTubeThumb: non-YouTube URL passes through", () => {
 });
 
 Deno.test("handleThumbProxy: empty thumb URL → fallback SVG", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const fetcher = mockFetch({});
-  const res = await handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl: "" });
+  const res = await handleThumbProxy({ cache, fetcher }, { thumbUrl: "" });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(fetcher.calls.length, 0);
 });
 
 Deno.test("handleThumbProxy: cache hit returns cached body with immutable header", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const thumbUrl = "https://example.com/img.jpg";
-  bucket._storage.set(`small/${thumbUrl}`, {
-    body: new TextEncoder().encode("fake-webp-bytes"),
-    httpMetadata: { contentType: "image/webp" },
-  });
+  await cache.put(`small/${thumbUrl}`, "fake-webp-bytes");
   const fetcher = mockFetch({});
-  const res = await handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl });
+  const res = await handleThumbProxy({ cache, fetcher }, { thumbUrl });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("content-type"), "image/webp");
   assertStringIncludes(res.headers.get("cache-control") || "", "immutable");
   assertEquals(fetcher.calls.length, 0);
 });
 
-Deno.test("handleThumbProxy: cache miss → fetch → store, applies YouTube transform", async () => {
-  const bucket = mockR2Bucket();
+Deno.test("handleThumbProxy: cache miss → fetch → resize to 256 px webp → store, applies YouTube transform", async () => {
+  const cache = await tempCache();
   const thumbUrl = "https://i.ytimg.com/vi/abc123/hqdefault.jpg";
   const transformed = "https://i.ytimg.com/vi/abc123/mqdefault.jpg";
-  const fetcher = mockFetch({
-    [transformed]: new Response("fake-image", {
-      status: 200,
-      headers: { "content-type": "image/webp" },
-    }),
-  });
-  const res = await handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl });
+  const png = await sharp({ create: { width: 600, height: 400, channels: 3, background: "#f00" } }).png().toBuffer();
+  const fetcher = mockFetch({ [transformed]: () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }) });
+  const res = await handleThumbProxy({ cache, fetcher }, { thumbUrl });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("content-type"), "image/webp");
   assertStringIncludes(res.headers.get("cache-control") || "", "immutable");
   assertEquals(fetcher.calls, [transformed]);
-  // Now cached
-  assertExists(bucket._storage.get(`small/${thumbUrl}`));
+  const meta = await sharp(new Uint8Array(await res.arrayBuffer())).metadata();
+  assertEquals([meta.format, meta.width], ["webp", 256]);
+  assertExists(await cache.get(`small/${thumbUrl}`));
+});
+
+Deno.test("handleThumbProxy: bytes sharp cannot read → fallback SVG + logs type and URL, caches nothing", async () => {
+  const cache = await tempCache();
+  const thumbUrl = "https://example.com/corrupt.jpg";
+  const fetcher = mockFetch({ [thumbUrl]: new Response("fake-image", { headers: { "content-type": "image/jpeg" } }) });
+  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
+  assertEquals(res.headers.get("content-type"), "image/svg+xml");
+  assertEquals(logs.length, 1);
+  assertStringIncludes(logs[0]!, `sharp could not resize image/jpeg from ${thumbUrl}`);
+  assertEquals(await Array.fromAsync(Deno.readDir(cache.dir)), []);
 });
 
 Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG + logs status and URL", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const thumbUrl = "https://example.com/broken.jpg";
   const fetcher = mockFetch({ [thumbUrl]: new Response("", { status: 503, statusText: "Service Unavailable" }) });
-  const { result: res, logs } = await captureConsoleError(() =>
-    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
-  );
+  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, thumbUrl);
@@ -954,14 +886,12 @@ Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG + logs status and
 });
 
 Deno.test("handleThumbProxy: non-image content-type → fallback SVG + logs type and URL", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const thumbUrl = "https://example.com/lies.html";
   const fetcher = mockFetch({
     [thumbUrl]: new Response("<html/>", { status: 200, headers: { "content-type": "text/html" } }),
   });
-  const { result: res, logs } = await captureConsoleError(() =>
-    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
-  );
+  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, thumbUrl);
@@ -969,16 +899,14 @@ Deno.test("handleThumbProxy: non-image content-type → fallback SVG + logs type
 });
 
 Deno.test("handleThumbProxy: fetch rejection → fallback SVG + logs cause and URL", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const thumbUrl = "https://example.com/nope.jpg";
   const fetcher = mockFetch({
     [thumbUrl]: () => {
       throw new TypeError("DNS lookup failed");
     },
   });
-  const { result: res, logs } = await captureConsoleError(() =>
-    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
-  );
+  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, thumbUrl);
@@ -986,40 +914,35 @@ Deno.test("handleThumbProxy: fetch rejection → fallback SVG + logs cause and U
 });
 
 Deno.test("handleThumbProxy: fetch timeout → fallback SVG + logs URL and timeout in ms", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const thumbUrl = "https://example.com/slow.jpg";
   const fetcher = mockFetch({
     [thumbUrl]: () => {
       throw new DOMException("signal timed out", "TimeoutError");
     },
   });
-  const { result: res, logs } = await captureConsoleError(() =>
-    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
-  );
+  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, `Timed out after 10000 ms fetching ${thumbUrl}`);
 });
 
 Deno.test("handleThumbProxy: body timeout after headers → fallback SVG + logs URL and timeout in ms", async () => {
-  const bucket = mockR2Bucket();
+  const cache = await tempCache();
   const thumbUrl = "https://example.com/stall.jpg";
   const fetcher = mockFetch({ [thumbUrl]: () => stalledBody({ "content-type": "image/jpeg" }) });
-  const { result: res, logs } = await captureConsoleError(() =>
-    handleThumbProxy({ bucket: bucket as unknown as R2Bucket, fetcher }, { thumbUrl })
-  );
+  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, `Timed out after 10000 ms fetching ${thumbUrl}`);
-  assertEquals(bucket._storage.size, 0);
+  assertEquals(await Array.fromAsync(Deno.readDir(cache.dir)), []);
 });
 
 Deno.test("handleThumbProxy: non-ok upstream with an unreadable body logs the HTTP status", async () => {
   const thumbUrl = "https://example.com/gone.jpg";
   const fetcher = mockFetch({ [thumbUrl]: () => new Response(stalledBody().body, { status: 404, statusText: "Not Found" }) });
-  const { result: res, logs } = await captureConsoleError(() =>
-    handleThumbProxy({ bucket: mockR2Bucket() as unknown as R2Bucket, fetcher }, { thumbUrl })
-  );
+  const cache = await tempCache();
+  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs, [`thumb proxy: upstream 404 Not Found for ${thumbUrl}`]);
 });

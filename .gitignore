@@ -8,3 +8,4 @@ public/elm.js
 .env
 .env.*
 !.env.example
+/cache
