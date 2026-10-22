@@ -3,8 +3,9 @@ import sharp from "sharp";
 
 const ROOT = import.meta.dirname!;
 const START_TIMEOUT_MS = 20_000;
-// Port 1 refuses connections, so /search reaches postgres.js and fails without a database.
-const NO_DB = "postgres://telecast:x@127.0.0.1:1/telecast";
+// pc's socket form. /run/postgresql/.s.PGSQL.5432 is missing here, so /search reaches postgres.js, which fails without a
+// database, and Deno's permissions for the socket path get checked as on pc.
+const NO_DB = { DATABASE_URL: "postgres:///telecast", PGHOST: "/run/postgresql", PGUSER: "telecast", PGPASSWORD: "x" };
 
 // Starts the server with the flags of `deno task serve`, minus .env and on a free port, so the suite checks its permissions.
 function serve(env: Record<string, string>) {
@@ -26,7 +27,7 @@ Deno.test("server: serves the app, app routes, search, and a resized thumb", asy
     { hostname: "127.0.0.1", port: 0, onListen() {} },
     () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }),
   );
-  const child = serve({ DATABASE_URL: NO_DB });
+  const child = serve(NO_DB);
   let log = "";
   const reading = (async () => {
     for await (const chunk of child.stderr.pipeThrough(new TextDecoderStream())) log += chunk;
