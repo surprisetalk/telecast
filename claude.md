@@ -1,11 +1,11 @@
-# CLAUDE.md
+# claude.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Development
 
 ```bash
-npm run dev-server    # Wrangler Pages dev server (localhost:8788)
+deno task serve       # server.ts on 127.0.0.1:8047: public/, /search, and the proxies
 npm run dev-client    # Elm watch/compile with debug mode
 elm make src/Main.elm --output=public/elm.js  # Production build
 deno run -A scripts/refresh.ts  # Batch refresh feeds (runs via GitHub Actions every 5 min)
@@ -14,16 +14,18 @@ deno run -A scripts/curate.ts --dry-run               # Assign tag:featured (dai
 deno task status                                      # Production status; snitch runs it hourly on the mac
 ```
 
-Requires `.env` with `DATABASE_URL` (Neon PostgreSQL connection string). Deno scripts (`scripts/*.ts`, `functions/`) are
-checked/tested/formatted with `deno check|test|fmt`.
+Requires `.env` with `DATABASE_URL`, a postgres URL. postgres.js reads a unix socket only from `PGHOST`, so the socket form is
+`DATABASE_URL=postgres:///telecast` plus `PGHOST`, `PGUSER`, and `PGPASSWORD`. Deno code (`server.ts`, `functions/`, `scripts/`) is
+checked/tested/formatted with `deno check|test|fmt`. Tests run with `-A`; `server.test.ts` starts the server with the flags of
+`deno task serve`, so a missing permission fails the suite.
 
 ## Architecture
 
 Telecasts is a podcast/video feed aggregator with:
 
 - **Frontend** (`src/Main.elm`): Elm 0.19.1 SPA with localStorage ports for library persistence
-- **Backend** (`functions/`): Cloudflare Workers (TypeScript) with R2 caching
-- **Database**: Neon PostgreSQL (schema in `db.sql`)
+- **Backend** (`server.ts`, handlers in `functions/`): `deno serve`, with feed and thumb caches on disk in `cache/`
+- **Database**: PostgreSQL (schema in `db.sql`)
 
 ### Endpoints
 
@@ -31,7 +33,7 @@ Telecasts is a podcast/video feed aggregator with:
 | ----------------------- | ----------------------------------- | -------------------------------------------- |
 | `/search`               | `functions/search.ts`               | Full-text search via PostgreSQL `to_tsquery` |
 | `/proxy/rss/[[path]]`   | `functions/proxy/rss/[[path]].ts`   | RSS/Atom/RDF fetch, parse, cache             |
-| `/proxy/thumb/[[path]]` | `functions/proxy/thumb/[[path]].ts` | Image proxy with R2 cache                    |
+| `/proxy/thumb/[[path]]` | `functions/proxy/thumb/[[path]].ts` | Image proxy: sharp resize to 256 px webp     |
 
 ### Feed Formats
 
@@ -43,12 +45,18 @@ Supports RSS 2.0, Atom, RDF, and YouTube channel feeds. Feed parsing logic in `f
 2. Frontend requests `/proxy/rss/{url}` → Worker fetches/caches feed, upserts to PostgreSQL
 3. Episodes render in middle column → playback tracked client-side
 
-### R2 Buckets
+### Caches and limits
 
-Workers use two R2 bindings (see `wrangler.toml`):
+`functions/_shared/cache.ts` keeps one file per key in `cache/rss` and `cache/thumb`: the name is the key's sha256, and the mtime is
+the write time. The server deletes files older than 7 days at startup and each hour. Visitors choose the URLs, so every limit is a
+constant in the handler: only http and https, 50 MB per feed, 20 MB and 25 megapixels per image.
 
-- `BUCKET_RSS` - cached feed XML
-- `BUCKET_THUMB` - cached channel/episode images
+### Production
+
+The home server pc runs `deno task serve` as the systemd unit `telecast-web` (config: `surprisetalk/pc`, `/etc/nixos/flake.nix`).
+cloudflared serves `telecast.company` from the unit's unix socket. systemd drops the unit's packets to loopback, LAN, and tailnet,
+because the proxies fetch any URL. `deno task status` checks that fence and fails when it stops dropping. A pull of this repo on pc
+rebuilds `public/elm.js` and restarts the unit.
 
 ### Search
 
@@ -70,7 +78,7 @@ Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `tag:{tag_name}` 
 ### Scripts & CI
 
 `scripts/refresh.ts` (feeds, every 5 min), `scripts/seed.ts` (discovery, weekly), `scripts/curate.ts` (featured, daily) — each has a GitHub
-Actions workflow in `.github/workflows/`. Shared helpers: `scripts/pool.ts` (concurrency), `functions/_shared/rss.ts` (parsing),
+Actions workflow in `.github/workflows/`. Shared helpers: `scripts/pool.ts` (concurrency), `functions/_shared/rss.ts` (parsing), `functions/_shared/body.ts` (capped body reads),
 `functions/_shared/youtube.ts` (channel-URL → feed-URL resolution, shared with the RSS proxy).
 
 ## Elm Frontend

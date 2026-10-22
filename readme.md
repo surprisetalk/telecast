@@ -12,13 +12,15 @@ GET /proxy/thumb/*         # cache thumbnails
 
 ## local dev
 
-prereqs: `postgresql`, `postgresql-client`, `postgresql-contrib`, & neon [console](https://console.neon.tech/)
+prereqs: `postgresql`, `postgresql-client`, `postgresql-contrib`, `deno`, `node`
 
 `.env`: `.env.example`
 
 ```bash
+git config core.hooksPath .githooks
+npm ci
 psql $DATABASE_URL -f db.sql
-npm run dev-server
+deno task serve      # http://127.0.0.1:8047
 npm run dev-client
 deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys scripts/refresh.ts
 ```
