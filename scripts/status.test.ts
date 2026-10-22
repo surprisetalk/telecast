@@ -1,5 +1,5 @@
 import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert";
-import { cacheBytes, dbStats, fenceHolds, grade, Measurements, parseDf } from "./status.ts";
+import { cacheBytes, dbStats, fenceHolds, grade, lastFinishAgeS, Measurements, parseDf } from "./status.ts";
 
 const healthy: Measurements = {
   search: { ok: 400 },
@@ -82,4 +82,17 @@ Deno.test("cacheBytes: sums files and skips an entry that vanished or dangles", 
   await Deno.writeTextFile(`${dir}/a`, "12345");
   await Deno.symlink(`${dir}/gone`, `${dir}/dangling`);
   assertEquals(await cacheBytes([dir]), 5);
+});
+
+Deno.test("lastFinishAgeS: reads the age of a unit's last finished job from journalctl JSON", () => {
+  const now = 1_792_675_600_000;
+  const line = JSON.stringify({ UNIT: "telecast-curate.service", __REALTIME_TIMESTAMP: "1792675500548570" });
+  assertEquals(Math.round(lastFinishAgeS("telecast-curate.service", line + "\n", now)!), 99);
+  assertEquals(lastFinishAgeS("telecast-curate.service", "", now), null);
+  assertThrows(() => lastFinishAgeS("telecast-curate.service", "-- No entries --", now), Error, "Expected journalctl JSON");
+  assertThrows(
+    () => lastFinishAgeS("telecast-curate.service", JSON.stringify({ __REALTIME_TIMESTAMP: "1892675500548570" }), now),
+    Error,
+    "clock",
+  );
 });

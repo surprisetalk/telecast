@@ -1,9 +1,8 @@
 import db from "postgres";
 
 const SITE = "https://telecast.company";
-const REPO = "surprisetalk/telecast";
 const TIMEOUT_MS = 10_000;
-// Neon wakes from suspend in a few seconds, and the two counts scan every channel row. snitch kills a status command at 300 s.
+// The two counts scan every channel row. snitch kills a status command at 300 s.
 const DB_TIMEOUT_MS = 150_000;
 // A run or a refresh up to 5 min in the future is clock skew. Beyond that, the clock or the data is wrong.
 const SKEW_S = 300;
@@ -15,7 +14,8 @@ const FENCE_TARGET = "http://127.0.0.1:2/";
 const FENCE_URL = `${SITE}/proxy/rss/${encodeURIComponent(FENCE_TARGET)}`;
 // The feed proxy waits 15 s on a dropped connection before it answers 502.
 const FENCE_TIMEOUT_MS = 30_000;
-const runsUrl = (workflow: string) => `https://api.github.com/repos/${REPO}/actions/workflows/${workflow}/runs?status=success&per_page=1`;
+// systemd logs this MESSAGE_ID with JOB_RESULT=done when a unit's start job succeeds: for a oneshot, a run that exited 0.
+const JOB_DONE_ID = "39f53479d3a045ac8e11786248231fbf";
 
 type Measured<T> = { ok: T } | { error: string };
 
@@ -146,33 +146,33 @@ async function diskFree(): Promise<{ availBytes: number; sizeBytes: number }> {
   return parseDf(text);
 }
 
-// Unauthenticated GitHub API: 60 requests/h per IP. The repo is public.
-async function lastSuccessS(workflow: string): Promise<number | null> {
-  const url = runsUrl(workflow);
-  const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS), headers: { accept: "application/vnd.github+json" } });
-  const body = await res.text();
-  if (res.status !== 200) throw new Error(`Expected HTTP 200 from ${url}, received ${res.status} ${res.statusText}: ${body.slice(0, 200)}`);
-  let json: { workflow_runs?: { created_at?: unknown }[] } | null;
+export function lastFinishAgeS(unit: string, stdout: string, nowMs: number): number | null {
+  const last = stdout.trim().split("\n").at(-1);
+  if (!last) return null;
+  let us: unknown;
   try {
-    json = JSON.parse(body);
+    us = JSON.parse(last).__REALTIME_TIMESTAMP;
   } catch {
-    throw new Error(`Expected JSON {workflow_runs: [...]} from ${url}, received: ${body.slice(0, 200)}`);
+    throw new Error(`Expected journalctl JSON lines for ${unit}, received: ${last.slice(0, 200)}`);
   }
-  const runs = json?.workflow_runs;
-  if (!Array.isArray(runs)) throw new Error(`Expected {workflow_runs: [...]} from ${url}, received ${JSON.stringify(json).slice(0, 200)}`);
-  if (runs.length === 0) return null;
-  const createdAt = runs[0]?.created_at;
-  const at = typeof createdAt === "string" ? Date.parse(createdAt) : NaN;
-  if (Number.isNaN(at)) {
-    throw new Error(`Expected an ISO created_at in the first run from ${url}, received ${JSON.stringify(createdAt)}`);
-  }
-  const ageS = (Date.now() - at) / 1000;
+  const at = Number(us) / 1000;
+  if (!(at > 0)) throw new Error(`Expected __REALTIME_TIMESTAMP in microseconds for ${unit}, received ${JSON.stringify(us)}`);
+  const ageS = (nowMs - at) / 1000;
   if (ageS < -SKEW_S) {
-    throw new Error(
-      `Expected the last ${workflow} run in the past, received created_at ${new Date(at).toISOString()}. Check this host's clock.`,
-    );
+    throw new Error(`Expected the last ${unit} run in the past, received ${new Date(at).toISOString()}. Check this host's clock.`);
   }
   return ageS;
+}
+
+// The journal outlives a reboot, so a weekly job keeps its last success across one.
+async function lastSuccessS(unit: string): Promise<number | null> {
+  const out = await new Deno.Command("journalctl", {
+    args: [`--unit=${unit}`, `MESSAGE_ID=${JOB_DONE_ID}`, "JOB_RESULT=done", "--lines=1", "--output=json", "--no-pager"],
+    signal: AbortSignal.timeout(TIMEOUT_MS),
+  }).output();
+  const stderr = new TextDecoder().decode(out.stderr);
+  if (!out.success) throw new Error(`Expected journalctl to exit 0 for ${unit}, received exit ${out.code}: ${stderr.slice(0, 200)}`);
+  return lastFinishAgeS(unit, new TextDecoder().decode(out.stdout), Date.now());
 }
 
 export async function dbStats(url: string) {
@@ -236,8 +236,8 @@ if (import.meta.main) {
   const [search, stats, curate, seed, fence, cache, disk] = await Promise.all([
     measured(`fetching ${SEARCH_URL}`, TIMEOUT_MS, searchMs),
     measured("querying the channel table", DB_TIMEOUT_MS, () => dbStats(url)),
-    measured(`fetching ${runsUrl("curate.yml")}`, TIMEOUT_MS, () => lastSuccessS("curate.yml")),
-    measured(`fetching ${runsUrl("seed.yml")}`, TIMEOUT_MS, () => lastSuccessS("seed.yml")),
+    measured("reading the journal for telecast-curate.service", TIMEOUT_MS, () => lastSuccessS("telecast-curate.service")),
+    measured("reading the journal for telecast-seed.service", TIMEOUT_MS, () => lastSuccessS("telecast-seed.service")),
     measured(`fetching ${FENCE_URL}`, FENCE_TIMEOUT_MS, fenceProbe),
     measured("summing cache/", TIMEOUT_MS, () => cacheBytes(CACHE_DIRS)),
     measured("running df -Pk cache", TIMEOUT_MS, diskFree),
@@ -251,7 +251,7 @@ if (import.meta.main) {
     console.log(`fence: ${FENCE_URL} answered without a timeout, so the proxy may reach ${FENCE_TARGET}.`);
   }
   for (const [name, r] of [["curate", curate], ["seed", seed]] as const) {
-    if ("ok" in r && r.ok === null) console.log(`${name}: no successful run on GitHub Actions`);
+    if ("ok" in r && r.ok === null) console.log(`${name}: no successful run of telecast-${name}.service in the journal`);
   }
   const cs = grade(m);
   console.log(
