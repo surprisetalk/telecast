@@ -10,8 +10,8 @@ const SKEW_S = 300;
 const DAY_S = 86_400;
 const SEARCH_URL = `${SITE}/search?q=tag:featured`;
 // telecast-web on pc may not reach pc's own loopback or LAN. The systemd fence drops the packets, so a fenced fetch
-// times out. Nothing listens on port 1, so an unfenced fetch is refused at once.
-const FENCE_TARGET = "http://127.0.0.1:1/";
+// times out. Nothing listens on port 2, so an unfenced fetch is refused at once. fetch itself refuses port 1.
+const FENCE_TARGET = "http://127.0.0.1:2/";
 const FENCE_URL = `${SITE}/proxy/rss/${encodeURIComponent(FENCE_TARGET)}`;
 // The feed proxy waits 15 s on a dropped connection before it answers 502.
 const FENCE_TIMEOUT_MS = 30_000;
