@@ -15,7 +15,8 @@ function serve(env: Record<string, string>) {
     args,
     cwd: ROOT,
     clearEnv: true,
-    env: { HOME: Deno.env.get("HOME")!, PATH: Deno.env.get("PATH")!, ...env },
+    // telecast-web on pc sets LD_LIBRARY_PATH, so sharp's addon finds libstdc++ on NixOS.
+    env: { HOME: Deno.env.get("HOME")!, PATH: Deno.env.get("PATH")!, LD_LIBRARY_PATH: Deno.env.get("LD_LIBRARY_PATH") ?? "", ...env },
     stdout: "null",
     stderr: "piped",
   }).spawn();
