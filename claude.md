@@ -19,6 +19,10 @@ Requires `.env` with `DATABASE_URL`, a postgres URL. postgres.js reads a unix so
 checked/tested/formatted with `deno check|test|fmt`. Tests run with `-A`; `server.test.ts` starts the server with the flags of
 `deno task serve`, so a missing permission fails the suite.
 
+Install with `npm ci`. package.json pins `elm` and `elm-test` exactly. A range like `^0.19.1-6` admits `0.19.1`, because semver
+ranks a release above its prereleases. `elm@0.19.1` gets its binary from a postinstall script. An install that skips the script,
+like `deno install`, which also ignores package-lock.json, leaves `bin/elm` as a wrapper that spawns itself without end.
+
 ## Architecture
 
 Telecasts is a podcast/video feed aggregator with:
