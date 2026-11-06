@@ -20,13 +20,21 @@ import (
 
 const baseURL = "https://telecast.company"
 
-type channel struct {
+// channel and episode are checked records. Only decodeChannel and decodeEpisode build them.
+type channel struct{ Title, RSS string }
+
+type episode struct{ Title, Src string }
+
+type rawChannel struct {
 	Title string `json:"title"`
 	RSS   string `json:"rss"`
 }
 
-type episode struct {
-	Title string `xml:"title"`
+type rawEpisode struct {
+	Titles []struct {
+		XMLName xml.Name
+		Text    string `xml:",chardata"`
+	} `xml:"title"`
 	Links []struct {
 		Rel  string `xml:"rel,attr"`
 		Href string `xml:"href,attr"` // Atom (YouTube)
@@ -37,8 +45,18 @@ type episode struct {
 	} `xml:"enclosure"`
 }
 
+// Go matches "title" in any namespace, so <itunes:title> would overwrite <title>. Only RSS and Atom titles count.
+func (e rawEpisode) title() string {
+	for _, t := range e.Titles {
+		if t.XMLName.Space == "" || t.XMLName.Space == "http://www.w3.org/2005/Atom" {
+			return t.Text
+		}
+	}
+	return ""
+}
+
 // REVIEW: Play the enclosure URL, else the page link (mpv hands YouTube links to yt-dlp). Alternative: skip episodes without an enclosure. It hides every YouTube channel.
-func (e episode) src() string {
+func (e rawEpisode) src() string {
 	if u := strings.TrimSpace(e.Encl.URL); u != "" {
 		return u
 	}
@@ -47,23 +65,41 @@ func (e episode) src() string {
 		if l.Rel != "" && l.Rel != "alternate" {
 			continue
 		}
-		if u := strings.TrimSpace(l.Href + l.Text); u != "" {
+		if u := strings.TrimSpace(l.Href); u != "" {
+			return u
+		}
+		if u := strings.TrimSpace(l.Text); u != "" {
 			return u
 		}
 	}
 	return ""
 }
 
-// Feeds are untrusted. mpv opens local paths and exotic protocols, so only http(s) plays.
-func playable(src string) error {
-	u, err := url.Parse(src)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return fmt.Errorf("expected an http(s) URL to play, received %q. Fix the feed's enclosure or link", clean(src))
-	}
-	return nil
+// Feeds are untrusted. mpv opens local paths and exotic protocols, so only http(s) passes.
+func isHTTP(s string) bool {
+	u, err := url.Parse(s)
+	return err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Hostname() != ""
 }
 
-// Escape sequences in feed text would run on the terminal. Replace every control character.
+// Escape sequences in feed text would run on the terminal, so a title with a control character fails.
+func cleanTitle(s string) (string, bool) {
+	s = strings.TrimSpace(s)
+	return s, s != "" && strings.IndexFunc(s, unicode.IsControl) < 0
+}
+
+// REVIEW: An item that fails is dropped and counted under the list. Alternative: show it with the bad characters replaced. It hides which feeds are broken.
+func decodeEpisode(r rawEpisode) (episode, bool) {
+	t, ok := cleanTitle(r.title())
+	src := r.src()
+	return episode{t, src}, ok && isHTTP(src)
+}
+
+func decodeChannel(r rawChannel) (channel, bool) {
+	t, ok := cleanTitle(r.Title)
+	return channel{t, r.RSS}, ok && isHTTP(r.RSS)
+}
+
+// Replace every control character. Errors may quote feed or server text.
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
@@ -87,18 +123,24 @@ type model struct {
 	exec     func(*exec.Cmd, tea.ExecCallback) tea.Cmd
 	channels []channel
 	episodes []episode
+	badChs   int      // channels that failed to decode
+	badEps   int      // episodes of the picked channel that failed to decode
 	picked   *channel // nil while the channel list shows
 	cursor   int
 	err      error
 	height   int // 0 until the terminal reports its size
 }
 
-type channelsMsg []channel
+type channelsMsg struct {
+	channels []channel
+	bad      int
+}
 
 // rss names the feed asked for, so a late answer or error for a channel the user left is dropped.
 type episodesMsg struct {
 	rss string
 	eps []episode
+	bad int
 	err error
 }
 type errMsg struct{ error }
@@ -127,11 +169,19 @@ func (m model) fetchChannels() tea.Msg {
 	if err != nil {
 		return errMsg{err}
 	}
-	var cs []channel
-	if err := json.Unmarshal(body, &cs); err != nil {
+	var raw []rawChannel
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return errMsg{fmt.Errorf("expected a JSON array of channels from /search, received %w", err)}
 	}
-	return channelsMsg(cs)
+	var msg channelsMsg
+	for _, r := range raw {
+		if c, ok := decodeChannel(r); ok {
+			msg.channels = append(msg.channels, c)
+		} else {
+			msg.bad++
+		}
+	}
+	return msg
 }
 
 func (m model) fetchEpisodes(c channel) tea.Cmd {
@@ -143,19 +193,34 @@ func (m model) fetchEpisodes(c channel) tea.Cmd {
 		}
 		// Atom (YouTube) wraps items in <entry>, RSS in <item>. Decode both.
 		var feed struct {
-			Items   []episode `xml:"channel>item"`
-			Entries []episode `xml:"entry"`
+			Items   []rawEpisode `xml:"channel>item"`
+			Entries []rawEpisode `xml:"entry"`
 		}
 		dec := xml.NewDecoder(bytes.NewReader(body))
 		dec.CharsetReader = charsetReader
 		if err := dec.Decode(&feed); err != nil {
 			return episodesMsg{rss: c.RSS, err: fmt.Errorf("expected feed XML for %s, received %w", c.RSS, err)}
 		}
-		return episodesMsg{rss: c.RSS, eps: append(feed.Items, feed.Entries...)}
+		msg := episodesMsg{rss: c.RSS}
+		for _, r := range append(feed.Items, feed.Entries...) {
+			if e, ok := decodeEpisode(r); ok {
+				msg.eps = append(msg.eps, e)
+			} else {
+				msg.bad++
+			}
+		}
+		return msg
 	}
 }
 
 func (m model) Init() tea.Cmd { return m.fetchChannels }
+
+func (m model) bad() int {
+	if m.picked == nil {
+		return m.badChs
+	}
+	return m.badEps
+}
 
 func (m model) rows() int {
 	if m.picked == nil {
@@ -169,10 +234,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.height = msg.Height
 	case channelsMsg:
-		m.channels = msg
+		m.channels, m.badChs = msg.channels, msg.bad
 	case episodesMsg:
 		if m.picked != nil && m.picked.RSS == msg.rss {
-			m.episodes, m.err = msg.eps, msg.err
+			m.episodes, m.badEps, m.err = msg.eps, msg.bad, msg.err
 		}
 	case errMsg:
 		m.err = msg
@@ -193,7 +258,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 		case "esc", "left", "h":
-			m.picked, m.episodes, m.cursor, m.err = nil, nil, 0, nil
+			m.picked, m.episodes, m.badEps, m.cursor, m.err = nil, nil, 0, 0, nil
 		case "enter", "right", "l":
 			if m.rows() == 0 {
 				return m, nil
@@ -203,15 +268,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.picked, m.cursor = &c, 0
 				return m, m.fetchEpisodes(c)
 			}
-			src := m.episodes[m.cursor].src()
-			if src == "" {
-				m.err = fmt.Errorf("expected an enclosure or link on %q, received neither", m.episodes[m.cursor].Title)
-				return m, nil
-			}
-			if err := playable(src); err != nil {
-				m.err = err
-				return m, nil
-			}
+			src := m.episodes[m.cursor].Src
 			return m, m.exec(exec.Command("mpv", "--", src), func(err error) tea.Msg {
 				if err != nil {
 					err = fmt.Errorf("%s: %w", src, err)
@@ -232,25 +289,31 @@ func (m model) View() string {
 			titles = append(titles, c.Title)
 		}
 	} else {
-		b.WriteString(clean(m.picked.Title) + "\n\n")
+		b.WriteString(m.picked.Title + "\n\n")
 		for _, e := range m.episodes {
 			titles = append(titles, e.Title)
 		}
 	}
-	// 6 lines of header, error and footer stay; the rest scrolls with the cursor.
+	// 6 lines of header, error and footer stay, plus 2 for the failure count; the rest scrolls with the cursor.
+	reserved := 6
+	if m.bad() > 0 {
+		reserved += 2
+	}
 	lo, hi := 0, len(titles)
-	if h := m.height - 6; m.height > 0 && h < hi {
+	if h := m.height - reserved; m.height > 0 && h < hi && hi > 0 {
 		h = max(h, 1)
 		lo = min(max(m.cursor-h/2, 0), len(titles)-h)
 		hi = lo + h
 	}
 	for i := lo; i < hi; i++ {
-		t := clean(titles[i])
 		cur := "  "
 		if i == m.cursor {
 			cur = "> "
 		}
-		b.WriteString(cur + t + "\n")
+		b.WriteString(cur + titles[i] + "\n")
+	}
+	if bad := m.bad(); bad > 0 {
+		fmt.Fprintf(&b, "\n%d items failed to decode (bad title or non-http(s) URL)\n", bad)
 	}
 	if m.err != nil {
 		b.WriteString("\nerror: " + clean(m.err.Error()) + "\n")

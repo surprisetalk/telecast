@@ -36,12 +36,15 @@
 - [ ] The GitHub seed source reads a licensed dataset.
   - `chen-zhitao/Youtube-Channels-Dataset` has no license. Seed reads only its channel IDs, which are facts, and stores no descriptions.
   1. Search again for a channel-ID dataset under an open license (CC0, CC-BY, ODbL), and swap `GITHUB_URL` when one turns up.
-- [ ] The TUI decodes each feed item once, at the boundary, into a checked record.
-  - Cause: three break rounds each found raw feed data in use: Atom hrefs, option-like and `file:` srcs, terminal escapes in titles, Latin-1
-    charsets, and extra links.
-  1. In `tui/main.go`, decode each item into `{title, src}`: a title without control characters, and an http or https src. Show the count of
-     items that fail, under the list.
-  2. View and play read only that record. Delete the call sites of `clean` and `playable` that the record makes redundant.
+- [ ] The TUI reads episodes that `functions/_shared/rss.ts` parsed, not raw feed XML.
+  - Example: `GET /episodes/https%3A%2F%2Fexample.com%2Ffeed.xml` answers `[{"title":"Ep 1","src":"https://example.com/1.mp3"}]`.
+  - Cause: three break rounds of the TUI's Go feed decoder each found a feed quirk that rss.ts already handles: XML namespaces, Atom
+    hrefs, Latin-1 charsets, and extra links.
+  - Decision: `/proxy/rss/` keeps its XML for the Elm app, and `/episodes/` answers the rows of rss.ts `parseEpisodes` as JSON.
+    Alternative: keep the Go parser. It costs one fix per feed quirk, in a second parser.
+  1. Add `/episodes/` to `server.ts`, through the same memory budget and cache as `/proxy/rss/`, with a test in `server.test.ts`.
+  2. In `tui/main.go`, read `/episodes/` and decode its JSON into the checked `{title, src}` record. Delete the XML structs, the charset
+     reader, and their tests.
 - [ ] The remix player receives only a src that the remix decoder checked.
   - Cause: three break rounds each found a gap between the text the decoder checked and the value the player used: a query parameter
     that `Url.Parser` dropped, a `youtube` substring match, a float that `String.fromFloat` printed as `1e-7`, and a `..` path.

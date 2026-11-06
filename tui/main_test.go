@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/xml"
 	"errors"
 	"fmt"
 	"net/http"
@@ -9,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -88,56 +88,73 @@ func TestBrowseAndPlay(t *testing.T) {
 	}
 }
 
-func TestAtomLinkAndStaleFeed(t *testing.T) {
-	m := model{base: "x"}
-	var tm tea.Model = m
-	tm, _ = tm.Update(channelsMsg{{Title: "A", RSS: "a"}, {Title: "B", RSS: "b"}})
-	tm, _ = tm.Update(key("enter")) // open A
+func chs(titles ...string) channelsMsg {
+	var m channelsMsg
+	for _, t := range titles {
+		m.channels = append(m.channels, channel{t, t})
+	}
+	return m
+}
+
+func TestStaleFeed(t *testing.T) {
+	var tm tea.Model = model{base: "x"}
+	tm, _ = tm.Update(chs("a", "b"))
+	tm, _ = tm.Update(key("enter")) // open a
 	tm, _ = tm.Update(key("esc"))
 	tm, _ = tm.Update(key("j"))
-	tm, _ = tm.Update(key("enter")) // open B
-	// A's late answer must not replace B's list.
-	tm, _ = tm.Update(episodesMsg{rss: "a", eps: []episode{{Title: "from A"}}})
+	tm, _ = tm.Update(key("enter")) // open b
+	// a's late answer must not replace b's list.
+	tm, _ = tm.Update(episodesMsg{rss: "a", eps: []episode{{"from a", "https://a.test/x"}}})
 	if got := len(tm.(model).episodes); got != 0 {
-		t.Fatalf("expected no episodes from stale feed A while B loads, received %d", got)
-	}
-
-	var feed struct {
-		Entries []episode `xml:"entry"`
-	}
-	atom := `<feed><entry><title>V</title><link rel="alternate" href="https://youtube.com/watch?v=1"/></entry></feed>`
-	if err := xml.Unmarshal([]byte(atom), &feed); err != nil {
-		t.Fatal(err)
-	}
-	if got := feed.Entries[0].src(); got != "https://youtube.com/watch?v=1" {
-		t.Fatalf("expected Atom href as src, received %q", got)
+		t.Fatalf("expected no episodes from stale feed a while b loads, received %d", got)
 	}
 }
 
-// A feed may carry src="--script=x"; mpv reads that as an option. playable rejects it, and "--" still precedes any src.
-func TestHostileSrcIsNotAnOption(t *testing.T) {
-	var got *exec.Cmd
-	var tm tea.Model = model{base: "x", exec: func(c *exec.Cmd, cb tea.ExecCallback) tea.Cmd { got = c; return nil }}
-	tm, _ = tm.Update(channelsMsg{{Title: "A", RSS: "a"}})
-	tm, _ = tm.Update(key("enter"))
-	e := episode{Title: "E"}
-	e.Encl.URL = "--script=/tmp/x.lua"
-	tm, _ = tm.Update(episodesMsg{rss: "a", eps: []episode{e}})
-	tm.Update(key("enter"))
-	if got != nil {
-		t.Fatalf("expected no mpv for an option-like src, received %v", got.Args)
+// Raw feed data reaches the model only through the decoder. A bad title or src is counted, never shown or played.
+func TestDecodeEpisodes(t *testing.T) {
+	msg := feedFrom(t, `<?xml version="1.0" encoding="ISO-8859-1"?><rss xmlns:atom="http://www.w3.org/2005/Atom"><channel>
+<item><title>Caf`+"\xe9"+`</title><enclosure url="https://cdn.test/a.mp3"/></item>
+<item><title>page link</title><link>https://a.test/ep</link><atom:link rel="replies" href="https://a.test/comments"/></item>
+<item><title>option</title><enclosure url="--script=/tmp/x.lua"/></item>
+<item><title>file</title><enclosure url="file:///etc/passwd"/></item>
+<item><title>path</title><enclosure url="/etc/passwd"/></item>
+<item><title>ytdl</title><enclosure url="ytdl://x"/></item>
+<item><title>blank</title><enclosure url="  "/></item>
+<item><title>C1&#133;CSI</title><enclosure url="https://cdn.test/b.mp3"/></item>
+</channel></rss>`).(episodesMsg)
+	want := []episode{{"Café", "https://cdn.test/a.mp3"}, {"page link", "https://a.test/ep"}}
+	if msg.err != nil || !reflect.DeepEqual(msg.eps, want) || msg.bad != 6 {
+		t.Fatalf("expected episodes %v and 6 failures, received %+v", want, msg)
+	}
+	atom := feedFrom(t, `<feed><entry><title>V</title><link rel="alternate" href="https://youtube.com/watch?v=1"/><link rel="replies" href="https://y.test/c"/></entry></feed>`).(episodesMsg)
+	if want := []episode{{"V", "https://youtube.com/watch?v=1"}}; !reflect.DeepEqual(atom.eps, want) || atom.bad != 0 {
+		t.Fatalf("expected %v, received %+v", want, atom)
+	}
+}
+
+// Channels from /search get the same check, and the count shows under the list.
+func TestDecodeChannels(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"title":"ok","rss":"https://a.test/f"},{"title":"a\u001b[2Jb","rss":"https://a.test/g"},{"title":"file","rss":"file:///x"},{"title":"","rss":"https://a.test/h"}]`))
+	}))
+	defer site.Close()
+	m := model{base: site.URL}
+	tm := run(t, m, m.Init()())
+	v := tm.View()
+	if got := tm.(model).channels; !reflect.DeepEqual(got, []channel{{"ok", "https://a.test/f"}}) || !strings.Contains(v, "3 items failed to decode") || strings.Contains(v, "\x1b") {
+		t.Fatalf("expected one channel and a 3-failure line, received %+v\n%q", got, v)
 	}
 }
 
 // A failed fetch for a feed the user left must not show an error on the screen they are on.
 func TestStaleFeedErrorDropped(t *testing.T) {
 	var tm tea.Model = model{base: "x"}
-	tm, _ = tm.Update(channelsMsg{{Title: "A", RSS: "a"}})
+	tm, _ = tm.Update(chs("a"))
 	tm, _ = tm.Update(key("enter"))
 	tm, _ = tm.Update(key("esc"))
 	tm, _ = tm.Update(episodesMsg{rss: "a", err: errors.New("boom")})
 	if got := tm.(model).err; got != nil {
-		t.Fatalf("expected no error after leaving feed A, received %v", got)
+		t.Fatalf("expected no error after leaving feed a, received %v", got)
 	}
 }
 
@@ -147,57 +164,21 @@ func feedFrom(t *testing.T, body string) tea.Msg {
 	return model{base: site.URL}.fetchEpisodes(channel{RSS: "r"})()
 }
 
-// RSS feeds often declare ISO-8859-1; Go's decoder rejects that label unless given a CharsetReader.
-func TestLatin1Feed(t *testing.T) {
-	msg := feedFrom(t, "<?xml version=\"1.0\" encoding=\"ISO-8859-1\"?><rss><channel><item><title>Caf\xe9</title></item></channel></rss>").(episodesMsg)
-	if msg.err != nil || len(msg.eps) != 1 || msg.eps[0].Title != "Café" {
-		t.Fatalf("expected one episode titled Café, received %+v", msg)
-	}
-}
-
-// A secondary <link> (Atom rel=replies, RSS atom:link) must not replace the page link.
-func TestSrcIgnoresNonAlternateLinks(t *testing.T) {
-	rss := feedFrom(t, `<rss xmlns:atom="http://www.w3.org/2005/Atom"><channel><item><title>x</title><link>https://a.test/ep</link><atom:link rel="replies" href="https://a.test/comments"/></item></channel></rss>`).(episodesMsg)
-	atom := feedFrom(t, `<feed><entry><title>x</title><link rel="alternate" href="https://a.test/ep"/><link rel="replies" href="https://a.test/c"/></entry></feed>`).(episodesMsg)
-	for _, msg := range []episodesMsg{rss, atom} {
-		if got := msg.eps[0].src(); got != "https://a.test/ep" {
-			t.Fatalf("expected https://a.test/ep, received %q", got)
-		}
-	}
-}
-
-// A feed src like file:///etc/passwd or a local path makes mpv open local files; only http(s) plays.
-func TestNonHTTPSrcNotPlayed(t *testing.T) {
-	for _, src := range []string{"file:///etc/passwd", "/etc/passwd", "ytdl://x", "  "} {
-		ran := false
-		var tm tea.Model = model{base: "x", exec: func(c *exec.Cmd, cb tea.ExecCallback) tea.Cmd { ran = true; return nil }}
-		tm, _ = tm.Update(channelsMsg{{Title: "A", RSS: "a"}})
-		tm, _ = tm.Update(key("enter"))
-		e := episode{Title: "E"}
-		e.Encl.URL = src
-		tm, _ = tm.Update(episodesMsg{rss: "a", eps: []episode{e}})
-		tm, _ = tm.Update(key("enter"))
-		if ran || tm.(model).err == nil {
-			t.Fatalf("expected an error and no mpv for src %q, received ran=%v err=%v", src, ran, tm.(model).err)
-		}
-	}
-}
-
-// Feed text is untrusted: an escape sequence in a title must not reach the terminal.
-func TestViewStripsControlChars(t *testing.T) {
-	m := model{channels: []channel{{Title: "a\x1b]0;pwned\x07b\nc"}}, err: errors.New("bad\x1b[2J")}
-	if v := m.View(); strings.ContainsAny(v, "\x1b\x07") || strings.Count(v, "\n") != strings.Count(model{channels: []channel{{Title: "x"}}, err: errors.New("y")}.View(), "\n") {
+// Errors may quote server text: an escape sequence in one must not reach the terminal.
+func TestViewStripsControlCharsInErrors(t *testing.T) {
+	v := model{channels: []channel{{"x", "https://x.test"}}, err: errors.New("bad\x1b[2J")}.View()
+	if strings.ContainsAny(v, "\x1b\x07") {
 		t.Fatalf("expected no control characters in View, received %q", v)
 	}
 }
 
 // A list taller than the terminal must keep the cursor row on screen.
 func TestViewScrollsToCursor(t *testing.T) {
-	var cs []channel
+	var titles []string
 	for i := 0; i < 50; i++ {
-		cs = append(cs, channel{Title: fmt.Sprintf("ch%d", i)})
+		titles = append(titles, fmt.Sprintf("ch%d", i))
 	}
-	var tm tea.Model = model{channels: cs}
+	var tm tea.Model = model{channels: chs(titles...).channels}
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 8})
 	for i := 0; i < 30; i++ {
 		tm, _ = tm.Update(key("j"))
@@ -213,13 +194,57 @@ func TestPlayErrorHasContext(t *testing.T) {
 	var tm tea.Model = model{base: "x", exec: func(c *exec.Cmd, cb tea.ExecCallback) tea.Cmd {
 		return func() tea.Msg { return cb(errors.New("exit status 2")) }
 	}}
-	tm, _ = tm.Update(channelsMsg{{Title: "A", RSS: "a"}})
+	tm, _ = tm.Update(chs("a"))
 	tm, _ = tm.Update(key("enter"))
-	e := episode{Title: "E"}
-	e.Encl.URL = "https://x.test/a.mp3"
-	tm, _ = tm.Update(episodesMsg{rss: "a", eps: []episode{e}})
+	tm, _ = tm.Update(episodesMsg{rss: "a", eps: []episode{{"E", "https://x.test/a.mp3"}}})
 	tm = run(t, tm, key("enter"))
 	if got := tm.(model).err; got == nil || !strings.Contains(got.Error(), "https://x.test/a.mp3") {
 		t.Fatalf("expected an error naming the src, received %v", got)
+	}
+}
+
+// "https://:80/x" has a Host but no hostname, and a link with both href and text must not glue them together.
+func TestDecodeRejectsEmptyHostnameAndGluedLinks(t *testing.T) {
+	msg := feedFrom(t, `<rss><channel>
+<item><title>nohost</title><enclosure url="http://:80/x"/></item>
+<item><title>glue</title><link href="https://a.test/1">https://b.test/2</link></item>
+</channel></rss>`).(episodesMsg)
+	want := []episode{{"glue", "https://a.test/1"}}
+	if !reflect.DeepEqual(msg.eps, want) || msg.bad != 1 {
+		t.Fatalf("expected %v and 1 failure, received %+v", want, msg)
+	}
+}
+
+// The failure count takes two lines. With it and an error showing, the list must still fit the terminal.
+func TestViewFitsWithFailureCountAndError(t *testing.T) {
+	var titles []string
+	for i := 0; i < 50; i++ {
+		titles = append(titles, fmt.Sprintf("ch%d", i))
+	}
+	var tm tea.Model = model{channels: chs(titles...).channels, badChs: 3, err: errors.New("boom")}
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 12})
+	for i := 0; i < 30; i++ {
+		tm, _ = tm.Update(key("j"))
+	}
+	v := tm.View()
+	if n := strings.Count(v, "\n"); n > 12 || !strings.Contains(v, "> ch30\n") {
+		t.Fatalf("expected at most 12 lines with cursor row ch30, received %d lines:\n%s", n, v)
+	}
+}
+
+func TestViewEmptyListSmallTerminal(t *testing.T) {
+	var tm tea.Model = model{}
+	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 5})
+	tm.View()
+}
+
+func TestDecodeIgnoresNamespacedTitle(t *testing.T) {
+	msg := feedFrom(t, `<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>
+<item><title>Real</title><itunes:title>Other</itunes:title><enclosure url="https://c.test/a.mp3"/></item>
+<item><title>Kept</title><itunes:title></itunes:title><enclosure url="https://c.test/b.mp3"/></item>
+</channel></rss>`).(episodesMsg)
+	want := []episode{{"Real", "https://c.test/a.mp3"}, {"Kept", "https://c.test/b.mp3"}}
+	if !reflect.DeepEqual(msg.eps, want) || msg.bad != 0 {
+		t.Fatalf("expected %v, received %+v", want, msg)
 	}
 }
