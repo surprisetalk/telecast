@@ -1685,7 +1685,8 @@ viewError retryMsg err =
 
 discoverTags : List ( String, String )
 discoverTags =
-    [ ( "conferences", "Conferences" )
+    [ ( "lectures", "Lectures" )
+    , ( "conferences", "Conferences" )
     , ( "systems", "Systems" )
     , ( "creative-coding", "Creative Coding" )
     , ( "math", "Math" )

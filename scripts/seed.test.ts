@@ -1,5 +1,20 @@
 import { assertEquals, assertRejects } from "jsr:@std/assert";
-import { extractYoutubeLinks, fromReddit, gather, linksFromHnHits, linksFromLectures, linksFromRedditListing } from "./seed.ts";
+import { pgtemp } from "jsr:@surprisetalk/pgtemp@0.2.7";
+import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
+import db from "postgres";
+import { parse, parseEpisodes } from "../functions/_shared/rss.ts";
+import {
+  archiveFeedUrls,
+  extractYoutubeLinks,
+  fromGithub,
+  gather,
+  GITHUB_MAX_BYTES,
+  GITHUB_PER_RUN,
+  linksFromGithubCsv,
+  linksFromHnHits,
+  linksFromLectures,
+  seedChannel,
+} from "./seed.ts";
 
 Deno.test("extractYoutubeLinks: pulls channel/handle/c/user forms, ignores videos", () => {
   const text = `
@@ -42,23 +57,6 @@ Deno.test("linksFromHnHits: reads url/title/story_text/comment_text, tolerates n
   assertEquals(linksFromHnHits(null), []);
 });
 
-Deno.test("linksFromRedditListing: reads children url/title/selftext", () => {
-  const json = {
-    data: {
-      children: [
-        { data: { url: "https://www.youtube.com/@redditFind", title: "great channel", selftext: "" } },
-        { data: { url: "https://reddit.com/r/x", selftext: "also https://www.youtube.com/c/Custom" } },
-        { data: {} },
-      ],
-    },
-  };
-  assertEquals(linksFromRedditListing(json), [
-    "https://www.youtube.com/@redditFind",
-    "https://www.youtube.com/c/Custom",
-  ]);
-  assertEquals(linksFromRedditListing({}), []);
-});
-
 Deno.test("linksFromLectures: keeps http(s) urls verbatim, drops junk", () => {
   const json = [
     "https://www.youtube.com/@mitocw",
@@ -78,60 +76,71 @@ Deno.test("gather: a source that throws fails the run, naming each; 0 links only
   const ok = () => Promise.resolve(["https://www.youtube.com/@a"]);
   assertEquals(await gather([["hn", ok], ["lectures", () => Promise.resolve([])]]), ["https://www.youtube.com/@a"]);
   const err = await assertRejects(() =>
-    gather([["hn", ok], ["reddit", () => Promise.reject(new Error("HTTP 429"))], ["lectures", () => Promise.reject(new Error("bad json"))]])
+    gather([["hn", ok], ["github", () => Promise.reject(new Error("HTTP 429"))], ["lectures", () => Promise.reject(new Error("bad json"))]])
   );
   const msg = (err as Error).message;
-  for (const part of ["reddit: HTTP 429", "lectures: bad json"]) assertEquals(msg.includes(part), true, `${part} missing from: ${msg}`);
+  for (const part of ["github: HTTP 429", "lectures: bad json"]) assertEquals(msg.includes(part), true, `${part} missing from: ${msg}`);
   const odd = await assertRejects(() => gather([["a", () => Promise.reject("str")], ["b", () => Promise.reject(null)]]));
   assertEquals((odd as Error).message.startsWith("Seed sources failed: a: str; b: null."), true, (odd as Error).message);
 });
 
-Deno.test("fromReddit: missing credentials throw naming both variables and never their values", async () => {
-  const env = (k: string) => k === "REDDIT_CLIENT_SECRET" ? "s3cret" : undefined;
-  const err = await assertRejects(() => fromReddit(env, () => Promise.reject(new Error("no fetch expected"))));
-  assertEquals(
-    (err as Error).message,
-    "Reddit credentials are missing. Expected REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in .env, from https://www.reddit.com/prefs/apps (type: script). Received: REDDIT_CLIENT_ID missing, REDDIT_CLIENT_SECRET set.",
-  );
+const fixture = (name: string) => Deno.readTextFile(new URL(`./fixtures/${name}`, import.meta.url));
+
+Deno.test("linksFromGithubCsv: reads ids from a recorded dataset excerpt, ignores descriptions", async () => {
+  assertEquals(linksFromGithubCsv(await fixture("github-channels.csv")), [
+    "https://www.youtube.com/channel/UCMdRkWIe9mdpsw4-8EID4rw",
+    "https://www.youtube.com/channel/UCUsTSbCLD96-pcWi2Kqaitg",
+    "https://www.youtube.com/channel/UCyCyTe_1bT2aIPwG_gxbyeg",
+  ]);
+  assertEquals(linksFromGithubCsv("id,url,description\n"), []);
 });
 
-Deno.test("fromReddit: gets an app token with Basic auth, then searches with the bearer token", async () => {
-  const env = (k: string) => ({ REDDIT_CLIENT_ID: "id1", REDDIT_CLIENT_SECRET: "sec2" })[k];
-  const calls: { url: string; init: RequestInit }[] = [];
-  const fetcher = (url: string | URL | Request, init: RequestInit = {}) => {
-    calls.push({ url: String(url), init });
-    if (String(url).endsWith("/api/v1/access_token")) {
-      return Promise.resolve(Response.json({ access_token: "tok", token_type: "bearer", expires_in: 86400 }));
+Deno.test("fromGithub: samples at most GITHUB_PER_RUN channels, and refuses a body over the cap", async () => {
+  const big = "id,url,description\n" +
+    Array.from({ length: 500 }, (_, i) => {
+      const id = "UC" + String(i).padStart(22, "0");
+      return `${id},https://www.youtube.com/channel/${id},d`;
+    }).join("\n");
+  const got = await fromGithub(() => Promise.resolve(new Response(big)));
+  assertEquals(got.length, GITHUB_PER_RUN);
+  assertEquals(new Set(got).size, GITHUB_PER_RUN);
+  await assertRejects(() => fromGithub(() => Promise.resolve(new Response("x".repeat(GITHUB_MAX_BYTES + 1)))), Error, "bytes");
+  await assertRejects(() => fromGithub(() => Promise.resolve(new Response("nope", { status: 404 }))), Error, "HTTP 404");
+});
+
+Deno.test("archive feeds: recorded collection RSS parses to episodes with playable https enclosures", async () => {
+  assertEquals(archiveFeedUrls().every((u) => /^https:\/\/archive\.org\/services\/collection-rss\.php\?collection=[\w-]+$/.test(u)), true);
+  for (const name of ["archive-oldtimeradio.xml", "archive-prelinger.xml"]) {
+    const xml = await fixture(name);
+    const channel = parse(xml, "https://archive.org/services/collection-rss.php?collection=x");
+    const eps = parseEpisodes(xml, channel.channel_id);
+    assertEquals(eps.length, 3);
+    for (const e of eps) {
+      assertEquals(/^https:\/\/archive\.org\/download\//.test(e.src ?? ""), true, `${name}: ${e.src}`);
+      assertEquals(/^(audio|video)\//.test(e.src_type ?? ""), true);
     }
-    return Promise.resolve(
-      Response.json({ data: { children: [{ data: { url: "https://www.youtube.com/@ok", title: "", selftext: "" } }] } }),
-    );
-  };
-  assertEquals(await fromReddit(env, fetcher as typeof fetch), [
-    "https://www.youtube.com/@ok",
-    "https://www.youtube.com/@ok",
-    "https://www.youtube.com/@ok",
-  ]);
-  const [token, ...searches] = calls;
-  const h = (c: { init: RequestInit }) => new Headers(c.init.headers);
-  assertEquals([token!.init.method, h(token!).get("authorization"), String(token!.init.body)], [
-    "POST",
-    `Basic ${btoa("id1:sec2")}`,
-    "grant_type=client_credentials",
-  ]);
-  assertEquals(
-    searches.map((c) => [new URL(c.url).origin, h(c).get("authorization")]),
-    Array(3).fill(["https://oauth.reddit.com", "bearer tok"]),
-  );
-  assertEquals(h(token!).get("user-agent"), "deno:telecast-seeder:1.1 (by telecast.company)");
+  }
 });
 
-Deno.test("fromReddit: a refused token names the status and the fix", async () => {
-  const env = (k: string) => ({ REDDIT_CLIENT_ID: "id1", REDDIT_CLIENT_SECRET: "sec2" })[k];
-  const fetcher = () => Promise.resolve(Response.json({ message: "Unauthorized" }, { status: 401 }));
-  await assertRejects(
-    () => fromReddit(env, fetcher as typeof fetch),
-    Error,
-    `Reddit token: expected HTTP 200 with a bearer access_token, received 401: {"message":"Unauthorized"}. Check the app's id and secret.`,
-  );
+Deno.test("seedChannel: inserts the feed url as rss, tags it, and adds tags to a channel seeded earlier", async () => {
+  await using pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(new URL("../db.sql", import.meta.url)) });
+  const feed = "https://archive.org/services/collection-rss.php?collection=oldtimeradio";
+  const xml = await fixture("archive-oldtimeradio.xml");
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = () => Promise.resolve(new Response(xml));
+  const sql = db(pg.url, { prepare: false, onnotice: () => {} });
+  try {
+    const row = () => sql`select rss, tags from channel`;
+    assertEquals((await seedChannel(sql, feed, false, [])).status, "inserted");
+    assertEquals((await row())[0]!.tags, null);
+    assertEquals((await row())[0]!.rss, feed);
+    // Same channel again with a tag: the old row gains it.
+    assertEquals((await seedChannel(sql, feed, false, ["lectures"])).status, "exists");
+    assertEquals((await row())[0]!.tags, ["lectures"]);
+    assertEquals((await seedChannel(sql, feed, false, ["lectures"])).status, "exists");
+    assertEquals((await row())[0]!.tags, ["lectures"]);
+  } finally {
+    globalThis.fetch = realFetch;
+    await sql.end();
+  }
 });

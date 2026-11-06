@@ -55,7 +55,7 @@ deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys script
 # refresh feeds: fetch episodes, infer tags, recompute quality (every 5 min on pc: telecast-refresh.timer)
 deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys scripts/refresh.ts
 
-# seed new channels from HN + Reddit links and scripts/lectures.json (Mondays 05:00 UTC on pc: telecast-seed.timer)
+# seed new channels from HN, GitHub, archive.org, and scripts/lectures.json (Mondays 05:00 UTC on pc: telecast-seed.timer)
 deno run --env-file=.env --allow-net --allow-env --allow-read scripts/seed.ts --dry-run
 
 # curate: sync tag:featured to scripts/curation.json priority minus blocked (06:00 UTC on pc: telecast-curate.timer)

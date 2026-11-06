@@ -75,9 +75,10 @@ Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `tag:{tag_name}` 
   `featured` tag to `scripts/curation.json` `priority` minus `blocked`. The pass is idempotent and
   self-syncing, so hand-picks must live in `priority` to survive.
   `search.ts` also shows `tag:featured` by recent content (not gated/ordered by the broken `quality` score, unlike other tag pages).
-- **Seeding** new channels: `scripts/seed.ts` mines YouTube channel links from Hacker News (Algolia API) + Reddit and reads
-  `scripts/lectures.json` (curated MOOC/lecture channels), resolves them via `functions/_shared/youtube.ts`, and inserts rows
-  (`on conflict do nothing`). `refresh.ts` then fills in episodes/tags/quality.
+- **Seeding** new channels: `scripts/seed.ts` mines YouTube channel links from Hacker News (Algolia API), samples a pinned GitHub
+  dataset of channel ids, indexes three archive.org collection feeds, and reads `scripts/lectures.json` (curated lecture channels, tagged
+  `lectures`). It resolves YouTube links via `functions/_shared/youtube.ts` and inserts rows; a row that exists only gains tags.
+  `refresh.ts` then fills in episodes/tags/quality.
 
 ### Scripts & timers
 

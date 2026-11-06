@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:creativeCommons="http://backend.userland.com/creativeCommonsRssModule" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <link>https://archive.org/details/prelinger</link>
+    <title>Internet Archive - Collection: prelinger</title>
+    <description>The most recent additions to the Internet Archive collections.  This RSS feed is generated dynamically</description>
+    <webMaster>info@archive.org (Info Box)</webMaster>
+    <pubDate>Fri, 06 Nov 2026 19:35:52 GMT</pubDate>
+    <image>
+      <url>https://archive.org/images/glogo.png</url>
+      <title>Internet Archive - Collection: prelinger</title>
+      <link>https://archive.org/details/prelinger</link>
+    </image>
+    <item>
+      <title>Home Movie: 012058</title>
+      <media:title>Home Movie: 012058</media:title>
+      <description>&lt;img width="160" style="padding-right:3px;float:left;" src="https://archive.org/services/get-item-image.php?identifier=204403_Home_Movie_012058&amp;mediatype=movies&amp;collection=prelinger"/&gt;&lt;p&gt;Brought to New York by a special event, a Black family from Detroit takes in the Guggenheim and Central Park and the look and feel of the architecture and signage of the city in the early 1960s. They film themselves enjoying cafes and restaurants, then attend an award event and banquet where members....&lt;/p&gt;&lt;p&gt;This item belongs to: movies/prelinger.&lt;/p&gt;&lt;p&gt;This item has files of the following types: Archive BitTorrent, Item Tile, Metadata, QuickTime, Thumbnail, h.264&lt;/p&gt;</description>
+      <link>https://archive.org/details/204403_Home_Movie_012058</link>
+      <guid>https://archive.org/details/204403_Home_Movie_012058</guid>
+      <pubDate>Thu, 06 Aug 2026 16:36:05 GMT</pubDate>
+      <category>movies/prelinger</category>
+      <media:thumbnail url="https://archive.org/download/204403_Home_Movie_012058/format=Thumbnail"/>
+      <media:content url="https://archive.org/download/204403_Home_Movie_012058/format=h.264" type="video/h264" medium="video" expression="full" isDefault="true" bitrate="700"/>
+      <enclosure url="https://archive.org/download/204403_Home_Movie_012058/format=h.264" type="video/h264" length="111111"/>
+      <media:keywords>1960s, People of African origin or descent, Cities, Black history and culture, Tourism, Road trips</media:keywords>
+    </item>
+    <item>
+      <title>[Frank Putnam Flint Memorial Fountain Interviews]</title>
+      <media:title>[Frank Putnam Flint Memorial Fountain Interviews]</media:title>
+      <description>&lt;img width="160" style="padding-right:3px;float:left;" src="https://archive.org/services/get-item-image.php?identifier=206134_Frank_Putnam_Flint_Memorial_Interviews&amp;mediatype=movies&amp;collection=prelinger"/&gt;&lt;p&gt;Content advisory: Racist remarks. Across several sequences, a television news journalist interviews passersby for their views about whether the Frank Putnam Flint Memorial fountain in Los Angeles should be torn down, primarily focusing on its maintenance needs, and also with reference to an incident....&lt;/p&gt;&lt;p&gt;This item belongs to: movies/prelinger.&lt;/p&gt;&lt;p&gt;This item has files of the following types: Archive BitTorrent, Intermediate ASR JSON, Item Tile, MP3, Metadata, PNG, Parakeet ASR JSON, QuickTime, SubRip, Thumbnail, Web Video Text Tracks, h.264&lt;/p&gt;</description>
+      <link>https://archive.org/details/206134_Frank_Putnam_Flint_Memorial_Interviews</link>
+      <guid>https://archive.org/details/206134_Frank_Putnam_Flint_Memorial_Interviews</guid>
+      <pubDate>Wed, 05 Aug 2026 23:38:28 GMT</pubDate>
+      <category>movies/prelinger</category>
+      <media:thumbnail url="https://archive.org/download/206134_Frank_Putnam_Flint_Memorial_Interviews/format=Thumbnail"/>
+      <media:content url="https://archive.org/download/206134_Frank_Putnam_Flint_Memorial_Interviews/format=h.264" type="video/h264" medium="video" expression="full" isDefault="true" bitrate="700"/>
+      <enclosure url="https://archive.org/download/206134_Frank_Putnam_Flint_Memorial_Interviews/format=h.264" type="video/h264" length="111111"/>
+      <media:keywords>1960s, Parks and monuments, Cities, Racism</media:keywords>
+    </item>
+    <item>
+      <title>Home Movie: 099848</title>
+      <media:title>Home Movie: 099848</media:title>
+      <description>&lt;img width="160" style="padding-right:3px;float:left;" src="https://archive.org/services/get-item-image.php?identifier=206125_Home_Movie_099848&amp;mediatype=movies&amp;collection=prelinger"/&gt;&lt;p&gt;In the late 1930s, women with cars and cameras took off to explore the Mojave desert's landscape and native plant communities, following sections of Route 66 and documenting a mountain mining community before turning northwest to the great Central Valley where they documented the noted superbloom of....&lt;/p&gt;&lt;p&gt;This item belongs to: movies/prelinger.&lt;/p&gt;&lt;p&gt;This item has files of the following types: Archive BitTorrent, Item Tile, Metadata, QuickTime, Thumbnail, h.264&lt;/p&gt;</description>
+      <link>https://archive.org/details/206125_Home_Movie_099848</link>
+      <guid>https://archive.org/details/206125_Home_Movie_099848</guid>
+      <pubDate>Wed, 05 Aug 2026 23:37:45 GMT</pubDate>
+      <category>movies/prelinger</category>
+      <media:thumbnail url="https://archive.org/download/206125_Home_Movie_099848/format=Thumbnail"/>
+      <media:content url="https://archive.org/download/206125_Home_Movie_099848/format=h.264" type="video/h264" medium="video" expression="full" isDefault="true" bitrate="700"/>
+      <enclosure url="https://archive.org/download/206125_Home_Movie_099848/format=h.264" type="video/h264" length="111111"/>
+      <media:keywords>1930s, Nature, Extractive industries, Road trips, Tourism, Parks and monuments, Plants, Environmental issues</media:keywords>
+    </item>
+    </channel>
+</rss>

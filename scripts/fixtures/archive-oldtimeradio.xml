@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:creativeCommons="http://backend.userland.com/creativeCommonsRssModule" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <link>https://archive.org/details/oldtimeradio</link>
+    <title>Internet Archive - Collection: oldtimeradio</title>
+    <description>The most recent additions to the Internet Archive collections.  This RSS feed is generated dynamically</description>
+    <webMaster>info@archive.org (Info Box)</webMaster>
+    <pubDate>Fri, 06 Nov 2026 19:38:18 GMT</pubDate>
+    <image>
+      <url>https://archive.org/images/glogo.png</url>
+      <title>Internet Archive - Collection: oldtimeradio</title>
+      <link>https://archive.org/details/oldtimeradio</link>
+    </image>
+    <item>
+      <title>CBS World News Today 1940-08-06 CBS European War Report</title>
+      <media:title>CBS World News Today 1940-08-06 CBS European War Report</media:title>
+      <description>&lt;img width="160" style="padding-right:3px;float:left;" src="https://archive.org/services/get-item-image.php?identifier=053acf89-4555-4305-ac04-ba59d0c4cf07&amp;mediatype=audio&amp;collection=oldtimeradio"/&gt;&lt;p&gt;No description available.&lt;/p&gt;&lt;p&gt;This item belongs to: audio/oldtimeradio.&lt;/p&gt;&lt;p&gt;This item has files of the following types: Archive BitTorrent, Derivation Rules, Item Tile, Metadata, PNG, Spectrogram, VBR MP3&lt;/p&gt;</description>
+      <link>https://archive.org/details/053acf89-4555-4305-ac04-ba59d0c4cf07</link>
+      <guid>https://archive.org/details/053acf89-4555-4305-ac04-ba59d0c4cf07</guid>
+      <pubDate>Sat, 31 Oct 2026 11:08:49 GMT</pubDate>
+      <category>audio/oldtimeradio</category>
+      <media:content url="https://archive.org/download/053acf89-4555-4305-ac04-ba59d0c4cf07/format=VBR+MP3&amp;ignore=x.mp3" type="audio/mpeg" medium="audio" expression="full" isDefault="true" bitrate="128"/>
+      <enclosure url="https://archive.org/download/053acf89-4555-4305-ac04-ba59d0c4cf07/format=VBR+MP3&amp;ignore=x.mp3" type="audio/mpeg" length="111111"/>
+    </item>
+    <item>
+      <title>You Bet Your Life 1951-03-14 Secret Word: Tree</title>
+      <media:title>You Bet Your Life 1951-03-14 Secret Word: Tree</media:title>
+      <description>&lt;img width="160" style="padding-right:3px;float:left;" src="https://archive.org/services/get-item-image.php?identifier=0e823f1b-d4a7-4588-8ac8-14b527bf6280&amp;mediatype=audio&amp;collection=oldtimeradio"/&gt;&lt;p&gt;No description available.&lt;/p&gt;&lt;p&gt;This item belongs to: audio/oldtimeradio.&lt;/p&gt;&lt;p&gt;This item has files of the following types: Archive BitTorrent, Derivation Rules, Metadata, VBR MP3&lt;/p&gt;</description>
+      <link>https://archive.org/details/0e823f1b-d4a7-4588-8ac8-14b527bf6280</link>
+      <guid>https://archive.org/details/0e823f1b-d4a7-4588-8ac8-14b527bf6280</guid>
+      <pubDate>Sat, 31 Oct 2026 11:07:31 GMT</pubDate>
+      <category>audio/oldtimeradio</category>
+      <media:content url="https://archive.org/download/0e823f1b-d4a7-4588-8ac8-14b527bf6280/format=VBR+MP3&amp;ignore=x.mp3" type="audio/mpeg" medium="audio" expression="full" isDefault="true" bitrate="128"/>
+      <enclosure url="https://archive.org/download/0e823f1b-d4a7-4588-8ac8-14b527bf6280/format=VBR+MP3&amp;ignore=x.mp3" type="audio/mpeg" length="111111"/>
+    </item>
+    <item>
+      <title>Favorite Story 1947-10-11 A Connecticut Yankee in King Arthur's Court</title>
+      <media:title>Favorite Story 1947-10-11 A Connecticut Yankee in King Arthur's Court</media:title>
+      <description>&lt;img width="160" style="padding-right:3px;float:left;" src="https://archive.org/services/get-item-image.php?identifier=12edead5-37c1-4f3d-bd09-e6585ff75732&amp;mediatype=audio&amp;collection=oldtimeradio"/&gt;&lt;p&gt;No description available.&lt;/p&gt;&lt;p&gt;This item belongs to: audio/oldtimeradio.&lt;/p&gt;&lt;p&gt;This item has files of the following types: Archive BitTorrent, Derivation Rules, Item Tile, Metadata, PNG, Spectrogram, VBR MP3&lt;/p&gt;</description>
+      <link>https://archive.org/details/12edead5-37c1-4f3d-bd09-e6585ff75732</link>
+      <guid>https://archive.org/details/12edead5-37c1-4f3d-bd09-e6585ff75732</guid>
+      <pubDate>Sat, 31 Oct 2026 11:07:30 GMT</pubDate>
+      <category>audio/oldtimeradio</category>
+      <media:content url="https://archive.org/download/12edead5-37c1-4f3d-bd09-e6585ff75732/format=VBR+MP3&amp;ignore=x.mp3" type="audio/mpeg" medium="audio" expression="full" isDefault="true" bitrate="128"/>
+      <enclosure url="https://archive.org/download/12edead5-37c1-4f3d-bd09-e6585ff75732/format=VBR+MP3&amp;ignore=x.mp3" type="audio/mpeg" length="111111"/>
+    </item>
+    </channel>
+</rss>

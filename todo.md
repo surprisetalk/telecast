@@ -36,16 +36,6 @@
   - Decision: a nightly `pg_dump -Fc` to `nightly.dump` in the clone. r2-backup copies `~/Developer` to R2 at 03:00 Pacific with the token
     it already holds, and keeps each old version for 30 days. Alternative: a dump on local disk only. It does not survive pc.
   1. Add "pg_dump backed up the database in the past 26 hours." to `scripts/status.ts`, from the mtime of `nightly.dump`.
-- [ ] A visitor finds lectures from one chip on the homepage.
-  1. Seed tags each channel from `scripts/lectures.json` with `lectures`.
-  2. `discoverTags` in `src/Main.elm` gains a `lectures` chip.
-- [ ] Seed finds YouTube channel IDs in public GitHub datasets, toward an open YouTube metadata database.
-  - Decision: keep it in telecast until a second project reads the data. Alternative: a separate repo now. It costs a second schema.
-  1. Search GitHub for datasets of YouTube channel IDs. Pick the largest with a stable raw URL.
-  2. Add a `github` source to `gather` in `scripts/seed.ts` that reads it.
-- [ ] Seed indexes archive.org feeds.
-  - Decision: index feeds, not files. Alternative: mirror the files. It costs petabytes.
-  1. Add an `archive` source to `gather` that reads archive.org collection RSS for a fixed list of collections.
 - [ ] iOS and TV users open telecast as an app.
   1. Add a web app manifest and an apple-touch-icon, so iOS adds telecast to the home screen.
 - [ ] Viewers watch live streams.
@@ -56,8 +46,14 @@
 - [ ] Every weekly seed run succeeds without Reddit.
   - Decision (Taylor): drop Reddit. Alternative: a Reddit "script" app with `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` in pc's `.env`. It
     keeps Reddit's hand-picked links, but it costs an account and credentials.
-  1. Delete `fromReddit`, its source in `gather`, and its tests from `scripts/seed.ts` and `scripts/seed.test.ts`.
-  2. `sudo systemctl start telecast-seed`, then confirm `Finished telecast seed.` in the journal.
+  1. `sudo systemctl start telecast-seed`, then confirm `Finished telecast seed.` in the journal.
+- [ ] Seed resolves YouTube links outside YouTube's nightly block.
+  - Cause: `telecast-seed.timer` fires Mondays at 05:00 UTC, inside the block from about 23:00 to 07:00 UTC, so YouTube answers its resolves
+    with 404 or 500.
+  1. In `/etc/nixos/flake.nix`, move the timer to `Mon *-*-* 09:00:00 UTC`, and update the seed line in `readme.md`.
+- [ ] The GitHub seed source reads a licensed dataset.
+  - `chen-zhitao/Youtube-Channels-Dataset` has no license. Seed reads only its channel IDs, which are facts, and stores no descriptions.
+  1. Search again for a channel-ID dataset under an open license (CC0, CC-BY, ODbL), and swap `GITHUB_URL` when one turns up.
 - [ ] A visitor remixes an episode into a clip with filters, effects, and annotations, and shares it as one link.
   - Example: `/remix?src=<episode src>&t=90,150&filter=grayscale&note=95:Look%20here` plays 1:30 to 2:30 in grayscale, with "Look here" over
     the video from 1:35.
