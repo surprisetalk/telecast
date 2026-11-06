@@ -27,12 +27,20 @@ export type Measurements = {
   fence: Measured<boolean>;
   cache: Measured<number>;
   disk: Measured<{ availBytes: number; sizeBytes: number }>;
+  refresh: Measured<number | null>;
+  deploy: Measured<{ head: string; origin: string; startS: number; reflogS: number }>;
+  busy: Measured<number>;
+  visitors: Measured<number>;
+  backup: Measured<number | null>;
 };
 
 export function grade(m: Measurements): { name: string; score: number }[] {
   const db = "ok" in m.db ? m.db.ok : null;
   const disk = "ok" in m.disk ? m.disk.ok : null;
   const age = (r: Measured<number | null>, limitS: number) => "ok" in r && r.ok !== null ? limitS / Math.max(r.ok, 1) : 0;
+  // REVIEW: At most 10 Busy answers per hour. Alternative: 0. One crawler burst would then fail every hour. 10 is a guess; tune it from real counts.
+  const BUSY_LIMIT = 10;
+  const deploy = "ok" in m.deploy ? m.deploy.ok : null;
   const cs = [
     { name: "/search?q=tag:featured answers 200 within 2 s.", score: "ok" in m.search ? 2000 / Math.max(m.search.ok, 1) : 0 },
     { name: "A feed refreshed in the past 15 min.", score: db?.freshS != null ? 900 / Math.max(db.freshS, 1) : 0 },
@@ -44,6 +52,18 @@ export function grade(m: Measurements): { name: string; score: number }[] {
     { name: "Seed succeeded in the past 8 days.", score: age(m.seed, 8 * DAY_S) },
     { name: "The database is smaller than 50 GB.", score: db ? 50e9 / db.bytes : 0 },
     { name: "The feed proxy cannot reach pc's loopback.", score: "ok" in m.fence && m.fence.ok ? 1 : 0 },
+    { name: "Refresh succeeded in the past 15 min.", score: age(m.refresh, 15 * 60) },
+    {
+      name: "pc serves origin/main.",
+      score: deploy && servedCommit(deploy) === deploy.origin ? 1 : 0,
+    },
+    {
+      name: `At most ${BUSY_LIMIT} proxy requests answered Busy in the past hour.`,
+      score: "ok" in m.busy ? BUSY_LIMIT / Math.max(m.busy.ok, 1) : 0,
+    },
+    // A goal, not a failure mode: it scores 0 until 10 people show up.
+    { name: "10 people used telecast in the past 24h.", score: "ok" in m.visitors ? m.visitors.ok / 10 : 0 },
+    { name: "pg_dump backed up the database in the past 26 hours.", score: age(m.backup, 26 * 3600) },
     { name: "cache/ holds less than 5 GB.", score: "ok" in m.cache ? 5e9 / Math.max(m.cache.ok, 1) : 0 },
     { name: "The disk that holds cache/ has 10% free.", score: disk ? disk.availBytes / disk.sizeBytes / 0.1 : 0 },
   ];
@@ -175,6 +195,103 @@ async function lastSuccessS(unit: string): Promise<number | null> {
   return lastFinishAgeS(unit, new TextDecoder().decode(out.stdout), Date.now());
 }
 
+// pc restarts telecast-web on each write to the HEAD reflog. A web process that started before that write runs old code.
+export function servedCommit(d: { head: string; startS: number; reflogS: number }): string | null {
+  return d.startS >= d.reflogS ? d.head : null;
+}
+
+export function parseStartS(text: string): number {
+  const m = /^ExecMainStartTimestamp=@(\d+)$/m.exec(text);
+  if (!m) {
+    throw new Error(
+      `Expected "ExecMainStartTimestamp=@<unix seconds>" from systemctl show telecast-web, received: ${
+        text.slice(0, 200)
+      }. Check that telecast-web is running on this host.`,
+    );
+  }
+  return Number(m[1]);
+}
+
+export function parseLsRemote(text: string): string {
+  const m = /^([0-9a-f]{40})\trefs\/heads\/main$/m.exec(text);
+  if (!m) {
+    throw new Error(
+      `Expected "<sha><TAB>refs/heads/main" from git ls-remote origin, received: ${text.slice(0, 200)}. Check the origin remote.`,
+    );
+  }
+  return m[1];
+}
+
+export function countBusy(text: string): number {
+  return text.split("\n").filter((l) => l.startsWith("busy:")).length;
+}
+
+export function countVisitors(text: string): number {
+  return new Set(text.split("\n").flatMap((l) => /^visitor ([0-9a-f]{16})\b/.exec(l)?.[1] ?? [])).size;
+}
+
+// Backup age in seconds, or null when the file is missing.
+export function backupAgeS(mtimeMs: number | null, nowMs: number): number | null {
+  if (mtimeMs === null) return null;
+  const ageS = (nowMs - mtimeMs) / 1000;
+  if (ageS < -SKEW_S) {
+    throw new Error(`Expected nightly.dump modified in the past, received ${new Date(mtimeMs).toISOString()}. Check this host's clock.`);
+  }
+  return ageS;
+}
+
+async function run(cmd: string, args: string[]): Promise<string> {
+  const out = await new Deno.Command(cmd, { args, signal: AbortSignal.timeout(TIMEOUT_MS) }).output();
+  if (!out.success) {
+    throw new Error(
+      `Expected ${cmd} ${args.join(" ")} to exit 0, received exit ${out.code}: ${new TextDecoder().decode(out.stderr).slice(0, 200)}`,
+    );
+  }
+  return new TextDecoder().decode(out.stdout);
+}
+
+async function deployProbe() {
+  const head = (await run("git", ["rev-parse", "HEAD"])).trim();
+  const reflog = (await run("git", ["rev-parse", "--git-path", "logs/HEAD"])).trim();
+  const reflogS = Math.floor(((await Deno.stat(reflog)).mtime?.getTime() ?? NaN) / 1000);
+  if (!(reflogS > 0)) throw new Error(`Expected a modification time on ${reflog}, received none. Check the file system.`);
+  const startS = parseStartS(await run("systemctl", ["show", "telecast-web", "--property=ExecMainStartTimestamp", "--timestamp=unix"]));
+  const origin = parseLsRemote(await run("git", ["ls-remote", "origin", "refs/heads/main"]));
+  return { head, origin, startS, reflogS };
+}
+
+// The journal may hold many lines. Cap the read, and crash at the cap instead of counting a partial window.
+const JOURNAL_LINES = 500_000;
+// journalctl --lines keeps the newest N lines. N lines back means older lines may be missing.
+export function atJournalCap(text: string): boolean {
+  return text.split("\n").filter((l) => l !== "").length >= JOURNAL_LINES;
+}
+
+async function webJournal(since: string): Promise<string> {
+  const text = await run("journalctl", [
+    "--unit=telecast-web.service",
+    `--since=${since}`,
+    `--lines=${JOURNAL_LINES}`,
+    "--output=cat",
+    "--no-pager",
+  ]);
+  if (atJournalCap(text)) {
+    throw new Error(
+      `Expected under ${JOURNAL_LINES} telecast-web journal lines since ${since}, received more. Lower the log volume of telecast-web.`,
+    );
+  }
+  return text;
+}
+
+async function backupMtimeMs(): Promise<number | null> {
+  try {
+    return (await Deno.stat("nightly.dump")).mtime?.getTime() ?? null;
+  } catch (e) {
+    if (e instanceof Deno.errors.NotFound) return null;
+    throw e;
+  }
+}
+
 export async function dbStats(url: string) {
   let password: string;
   try {
@@ -233,7 +350,7 @@ if (import.meta.main) {
       "DATABASE_URL is missing. Expected a postgres URL in .env. Received undefined. Copy it from the Neon console into .env.",
     );
   }
-  const [search, stats, curate, seed, fence, cache, disk] = await Promise.all([
+  const [search, stats, curate, seed, fence, cache, disk, refresh, deploy, busy, visitors, backup] = await Promise.all([
     measured(`fetching ${SEARCH_URL}`, TIMEOUT_MS, searchMs),
     measured("querying the channel table", DB_TIMEOUT_MS, () => dbStats(url)),
     measured("reading the journal for telecast-curate.service", TIMEOUT_MS, () => lastSuccessS("telecast-curate.service")),
@@ -241,8 +358,13 @@ if (import.meta.main) {
     measured(`fetching ${FENCE_URL}`, FENCE_TIMEOUT_MS, fenceProbe),
     measured("summing cache/", TIMEOUT_MS, () => cacheBytes(CACHE_DIRS)),
     measured("running df -Pk cache", TIMEOUT_MS, diskFree),
+    measured("reading the journal for telecast-refresh.service", TIMEOUT_MS, () => lastSuccessS("telecast-refresh.service")),
+    measured("comparing HEAD, origin/main, and telecast-web's start", TIMEOUT_MS, deployProbe),
+    measured("reading the telecast-web journal for the past hour", TIMEOUT_MS, async () => countBusy(await webJournal("-1h"))),
+    measured("reading the telecast-web journal for the past 24h", TIMEOUT_MS, async () => countVisitors(await webJournal("-24h"))),
+    measured("reading nightly.dump", TIMEOUT_MS, async () => backupAgeS(await backupMtimeMs(), Date.now())),
   ]);
-  const m: Measurements = { search, db: stats, curate, seed, fence, cache, disk };
+  const m: Measurements = { search, db: stats, curate, seed, fence, cache, disk, refresh, deploy, busy, visitors, backup };
   // snitch parses from the first line that starts with "{", so a reason line stays on one line.
   for (const [name, r] of Object.entries(m)) if ("error" in r) console.log(`${name}: ${r.error.replace(/\s+/g, " ")}`);
   if ("ok" in stats && stats.ok.freshS === null) console.log("db: no channel has a last_success_at");
@@ -250,6 +372,20 @@ if (import.meta.main) {
   if ("ok" in fence && !fence.ok) {
     console.log(`fence: ${FENCE_URL} answered without a timeout, so the proxy may reach ${FENCE_TARGET}.`);
   }
+  if ("ok" in deploy) {
+    const d = deploy.ok;
+    if (servedCommit(d) === null) {
+      console.log(
+        `deploy: telecast-web started at unix ${d.startS}, before the HEAD reflog changed at unix ${d.reflogS}, so it is stale. Run: sudo systemctl restart telecast-web`,
+      );
+    } else if (d.head !== d.origin) {
+      console.log(`deploy: pc serves ${d.head} but origin/main is ${d.origin}. Push or pull so they match.`);
+    }
+  }
+  if ("ok" in backup && backup.ok === null) {
+    console.log("backup: nightly.dump is missing from the repo root. Run: sudo systemctl start telecast-backup");
+  }
+  if ("ok" in refresh && refresh.ok === null) console.log("refresh: no successful run of telecast-refresh.service in the journal");
   for (const [name, r] of [["curate", curate], ["seed", seed]] as const) {
     if ("ok" in r && r.ok === null) console.log(`${name}: no successful run of telecast-${name}.service in the journal`);
   }

@@ -18,9 +18,6 @@
     database errors and bugs. Alternative: count failures and exit nonzero past 50%. It hides a database fault in half the rows.
   1. Remove the catch in `scripts/pool.ts`.
   2. Add "Refresh succeeded in the past 15 min." to `scripts/status.ts`, from the journal of `telecast-refresh.service`.
-- [ ] The status check fails when pc serves a commit other than origin/main.
-  1. In `scripts/status.ts`, the served commit is `git rev-parse HEAD` when `telecast-web` started after the last write to `.git/logs/HEAD`.
-     jj appends to that file too. Score 1 when the served commit equals `git ls-remote origin main`, else 0.
 - [ ] The public feed and thumb proxies cannot exhaust pc. Today parallel requests to large bodies can pass telecast-web's MemoryMax=2G.
       systemd then kills it, and the site is down for the 30 s RestartSec.
   1. Measure on a local server: 60 parallel `/proxy/rss/` requests to a 45 MB feed, and the peak RSS of the deno process.
@@ -32,10 +29,6 @@
   1. `server.ts` logs `visitor <hash>` on the first `/search` of each visitor per UTC day. The hash is the first 16 hex digits of sha256 of
      the day and `CF-Connecting-IP`.
   2. Add "10 people used telecast in the past 24h." to `scripts/status.ts`: distinct hashes in the journal of `telecast-web`, over 10.
-- [ ] Telecast's database survives the loss of pc.
-  - Decision: a nightly `pg_dump -Fc` to `nightly.dump` in the clone. r2-backup copies `~/Developer` to R2 at 03:00 Pacific with the token
-    it already holds, and keeps each old version for 30 days. Alternative: a dump on local disk only. It does not survive pc.
-  1. Add "pg_dump backed up the database in the past 26 hours." to `scripts/status.ts`, from the mtime of `nightly.dump`.
 - [ ] Seed resolves YouTube links outside YouTube's nightly block.
   - Cause: `telecast-seed.timer` fires Mondays at 05:00 UTC, inside the block from about 23:00 to 07:00 UTC, so YouTube answers its resolves
     with 404 or 500.

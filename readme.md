@@ -61,7 +61,7 @@ deno run --env-file=.env --allow-net --allow-env --allow-read scripts/seed.ts --
 # curate: sync tag:featured to scripts/curation.json priority minus blocked (06:00 UTC on pc: telecast-curate.timer)
 deno run --env-file=.env --allow-net --allow-env --allow-read scripts/curate.ts --dry-run
 
-# production status: site, feed freshness, refresh error rate, curate/seed runs, DB size; exits 1 when any score is below 1.0
+# production status: site, feed freshness, refresh/curate/seed runs, deploy match, Busy answers, visitors, backup, DB size; exits 1 when any score is below 1.0
 deno task status
 ```
 
