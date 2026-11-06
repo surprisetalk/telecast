@@ -42,14 +42,11 @@
   1. In `tui/main.go`, decode each item into `{title, src}`: a title without control characters, and an http or https src. Show the count of
      items that fail, under the list.
   2. View and play read only that record. Delete the call sites of `clean` and `playable` that the record makes redundant.
-- [ ] A visitor remixes an episode into a clip with filters, effects, and annotations, and shares it as one link.
-  - Example: `/remix?src=<episode src>&t=90,150&filter=grayscale&note=95:Look%20here` plays 1:30 to 2:30 in grayscale, with "Look here" over
-    the video from 1:35.
-  - Decision: a remix is a URL that the player applies, not a rendered file. Alternative: render each remix with ffmpeg on pc. It costs CPU
-    and storage per remix, and visitors choose the input.
-  1. Clip: the player plays only `t=<start>,<end>`, and a "clip" button copies the link at the current range.
-  2. Filters and effects: a fixed list of CSS `filter` values on the video element, chosen from the URL.
-  3. Annotations: timed text overlays from repeated `note=<seconds>:<text>` parameters.
+- [ ] The remix player receives only a src that the remix decoder checked.
+  - Cause: three break rounds each found a gap between the text the decoder checked and the value the player used: a query parameter
+    that `Url.Parser` dropped, a `youtube` substring match, a float that `String.fromFloat` printed as `1e-7`, and a `..` path.
+  1. In `src/Main.elm`, build the player src from the decoded `Remix`, parse that exact string again with `Url.fromString`, and show the
+     remix error when it differs from the checked value.
 
 ## Blocked on you
 

@@ -8,6 +8,7 @@ a minimalist & free youtube alternative
 GET /search                # search video
 GET /proxy/rss/*           # fetch rss feeds
 GET /proxy/thumb/*         # cache thumbnails
+/remix?src=<episode src>&t=90,150&filter=grayscale&note=95:Look%20here   # app route: the player clips, filters, and annotates
 ```
 
 ## Run your own

@@ -45,7 +45,7 @@ Deno.test("server: serves the app, app routes, search, and a resized thumb", asy
       await new Promise((r) => setTimeout(r, 50));
     }
     const index = await Deno.readTextFile(`${ROOT}/public/index.html`);
-    for (const path of ["/", "/episode/x"]) {
+    for (const path of ["/", "/episode/x", "/remix?src=http%3A%2F%2Fa.example%2Fa.mp4&t=1,2"]) {
       const res = await fetch(base + path);
       assertEquals([path, res.status, await res.text()], [path, 200, index]);
     }

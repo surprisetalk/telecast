@@ -633,3 +633,180 @@ codecFuzz =
                     |> Result.map libraryShape
                     |> Expect.equal (Ok (libraryShape lib))
         ]
+
+
+
+-- ============================================================
+-- Remix URL
+-- ============================================================
+
+
+remixParse : String -> Result String Main.Remix
+remixParse s =
+    case Url.fromString ("https://telecast.company/remix?" ++ s) of
+        Just u ->
+            Main.parseRemix u
+
+        Nothing ->
+            Err ("test url did not parse: " ++ s)
+
+
+remixTests : Test
+remixTests =
+    describe "Remix"
+        [ test "the todo example decodes" <|
+            \_ ->
+                remixParse "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=90,150&filter=grayscale&note=95:Look%20here"
+                    |> Result.map (\r -> { src = Url.toString r.src, start = r.start, end = r.end, filter = r.filter, notes = r.notes })
+                    |> Expect.equal (Ok { src = "https://ex.example.com/a.mp4", start = 90, end = 150, filter = Just Main.Grayscale, notes = [ { at = 95, text = "Look here" } ] })
+        , test "filter and notes are optional, a note keeps colons in its text" <|
+            \_ ->
+                remixParse "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=0,10&note=1:a:b&note=2:c"
+                    |> Result.map (\r -> ( r.filter, List.map .text r.notes ))
+                    |> Expect.equal (Ok ( Nothing, [ "a:b", "c" ] ))
+        , test "bad inputs name expected and received" <|
+            \_ ->
+                let
+                    ok =
+                        "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=10,20"
+
+                    bad =
+                        [ ( "", "Expected src" )
+                        , ( "src=ftp%3A%2F%2Fex.example.com%2Fa.mp4&t=10,20", "received \"ftp://ex.example.com/a.mp4\"" )
+                        , ( "src=javascript%3Aalert(1)&t=10,20", "Expected src" )
+                        , ( "src=https%3A%2F%2Fex.example.com%2Fa.mp4", "Expected t" )
+                        , ( "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=10", "received \"10\"" )
+                        , ( "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=a,20", "received \"a,20\"" )
+                        , ( "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=-1,20", "received \"-1,20\"" )
+                        , ( "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=20,20", "received \"20,20\"" )
+                        , ( "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=30,20", "received \"30,20\"" )
+                        , ( ok ++ "&filter=blurry", "received \"blurry\"" )
+                        , ( ok ++ "&note=nocolon", "received \"nocolon\"" )
+                        , ( ok ++ "&note=x:hi", "received \"x:hi\"" )
+                        , ( ok ++ "&note=5:hi", "received \"5:hi\"" )
+                        , ( ok ++ "&note=20:hi", "received \"20:hi\"" )
+                        , ( ok ++ "&note=15:", "received \"15:\"" )
+                        ]
+                in
+                bad
+                    |> List.filterMap
+                        (\( q, want ) ->
+                            case remixParse q of
+                                Err e ->
+                                    if String.contains want e then
+                                        Nothing
+
+                                    else
+                                        Just (q ++ " -> " ++ e)
+
+                                Ok _ ->
+                                    Just (q ++ " decoded")
+                        )
+                    |> Expect.equal []
+        , test "a query that Url.Parser would drop is an error, not a skipped parameter" <|
+            \_ ->
+                let
+                    ok =
+                        "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=10,20"
+
+                    bad =
+                        [ ( ok ++ "&filter=sepia&filter=blur", "twice" )
+                        , ( ok ++ "&t=1,2", "twice" )
+                        , ( ok ++ "&note=15:100%", "received \"note=15:100%\"" )
+                        , ( ok ++ "&filter=%zz", "received \"filter=%zz\"" )
+                        , ( "src=https%3A%2F%2Fa.example%2Fa.mp4&src=https%3A%2F%2Fb.example%2Fb.mp4&t=1,2", "twice" )
+                        , ( "src=https%3A%2F%2Fwww.youtube.com%2Fwatch%3Fv%3Dx&t=1,2", "embed" )
+                        ]
+                in
+                bad
+                    |> List.filterMap
+                        (\( q, want ) ->
+                            case remixParse q of
+                                Err e ->
+                                    if String.contains want e then
+                                        Nothing
+
+                                    else
+                                        Just (q ++ " -> " ++ e)
+
+                                Ok _ ->
+                                    Just (q ++ " decoded")
+                        )
+                    |> Expect.equal []
+        , test "a note text keeps equals signs and plus means space" <|
+            \_ ->
+                remixParse "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=10,20&note=15:a=b+c"
+                    |> Result.map (\r -> List.map .text r.notes)
+                    |> Expect.equal (Ok [ "a=b c" ])
+        , test "only a youtube.com host gets an iframe" <|
+            \_ ->
+                [ "https://evil.example/a.mp4?youtube", "https://youtube.com.evil.example/embed/x", "https://www.youtube.com/embed/x", "https://youtube.com/embed/x", "https://WWW.YouTube.com/embed/x" ]
+                    |> List.map (\s -> Url.fromString s |> Maybe.map Main.isYoutube)
+                    |> Expect.equal [ Just False, Just False, Just True, Just True, Just True ]
+        , test "a youtube src with its own start and end gets only the clip range" <|
+            \_ ->
+                remixParse "src=https%3A%2F%2Fwww.youtube.com%2Fembed%2Fabc%3Fstart%3D5%26rel%3D0%26end%3D9&t=10,20"
+                    |> Result.map (Url.toString << Main.youtubeClipSrc)
+                    |> Expect.equal (Ok "https://www.youtube.com/embed/abc?rel=0&start=10&end=20")
+        , test "a range that prints with an exponent is an error, not an ignored fragment" <|
+            \_ ->
+                [ "t=1e-7,1e-6", "t=1,1e21" ]
+                    |> List.filterMap
+                        (\t ->
+                            case remixParse ("src=https%3A%2F%2Fex.example.com%2Fa.mp4&" ++ t) of
+                                Err e ->
+                                    if String.contains "plain decimal" e then
+                                        Nothing
+
+                                    else
+                                        Just (t ++ " -> " ++ e)
+
+                                Ok r ->
+                                    Just (t ++ " decoded to " ++ Url.toString (Main.mediaClipSrc r))
+                        )
+                    |> Expect.equal []
+        , test "a youtube path with dot segments is an error" <|
+            \_ ->
+                [ "https%3A%2F%2Fwww.youtube.com%2Fembed%2F..%2Fwatch%3Fv%3Dx", "https%3A%2F%2Fwww.youtube.com%2Fembed%2F%252e%252e%2Fwatch" ]
+                    |> List.filterMap
+                        (\s ->
+                            case remixParse ("src=" ++ s ++ "&t=1,2") of
+                                Err e ->
+                                    if String.contains "embed" e then
+                                        Nothing
+
+                                    else
+                                        Just (s ++ " -> " ++ e)
+
+                                Ok _ ->
+                                    Just (s ++ " decoded")
+                        )
+                    |> Expect.equal []
+        , test "a note shows for five seconds from its time" <|
+            \_ ->
+                let
+                    notes =
+                        [ { at = 95, text = "a" }, { at = 97, text = "b" } ]
+                in
+                [ 94.9, 95, 99.9, 100, 102 ]
+                    |> List.map (\t -> List.map .text (Main.activeNotes t notes))
+                    |> Expect.equal [ [], [ "a" ], [ "a", "b" ], [ "b" ], [] ]
+        , test "the clip range reaches media as a fragment and YouTube as start and end" <|
+            \_ ->
+                case remixParse "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=90.5,150.2" of
+                    Ok r ->
+                        ( Url.toString (Main.mediaClipSrc r)
+                        , Url.toString (Main.youtubeClipSrc { r | src = { exampleUrl | host = "www.youtube.com", path = "/embed/abc", query = Just "rel=0" } })
+                        )
+                            |> Expect.equal
+                                ( "https://ex.example.com/a.mp4#t=90.5,150.2"
+                                , "https://www.youtube.com/embed/abc?rel=0&start=90&end=151"
+                                )
+
+                    Err e ->
+                        Expect.fail e
+        , test "the clip link starts at the current second and runs a minute" <|
+            \_ ->
+                Main.clipHref exampleUrl 12.9
+                    |> Expect.equal "/remix?src=https%3A%2F%2Fexample.com%2Ffeed.xml&t=12,72"
+        ]

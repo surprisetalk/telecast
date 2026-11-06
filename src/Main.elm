@@ -72,6 +72,8 @@ type alias Model =
     , featured : Loadable (List Channel)
     , showHistory : Bool
     , playerError : Maybe Id
+    , position : Float -- currentTime of the playing media element, in seconds
+    , remix : Maybe { link : String, result : Result String Remix } -- Just on /remix
     }
 
 
@@ -218,6 +220,8 @@ initModel flags key =
     , featured = cachedFeatured
     , showHistory = False
     , playerError = Nothing
+    , position = 0
+    , remix = Nothing
     }
 
 
@@ -274,6 +278,7 @@ type Msg
     | ChannelRetrying String
     | PlayerFailed Id
     | PlayerRetrying
+    | TimeUpdated Float
     | KeyPressed String
     | NoOp
 
@@ -691,6 +696,9 @@ update msg model =
             , Nav.load url
             )
 
+        TimeUpdated t ->
+            ( { model | position = t }, Cmd.none )
+
         UrlChanged url ->
             let
                 ( m, cmd ) =
@@ -857,13 +865,29 @@ route url modelIn =
             parsedQuery.e
 
         model =
-            if modelIn.playerError /= Nothing && modelIn.episode /= episodeId then
-                { modelIn | playerError = Nothing }
+            { modelIn
+                | position = 0
+                , remix =
+                    if url.path == "/remix" then
+                        Just { link = Url.toString url, result = parseRemix url }
 
-            else
-                modelIn
+                    else
+                        Nothing
+                , playerError =
+                    if modelIn.playerError /= Nothing && modelIn.episode /= episodeId then
+                        Nothing
+
+                    else
+                        modelIn.playerError
+            }
     in
     case ( url.path, searchQuery, tagFilter ) of
+        -- Remix: /remix?src=...&t=90,150. The view reads model.remix; no episode plays, so none enters the history.
+        ( "/remix", _, _ ) ->
+            ( { model | search = Nothing, channel = Nothing, episode = Nothing, feedSnapshot = Nothing, showHistory = False }
+            , Cmd.none
+            )
+
         ( "/history", _, _ ) ->
             ( { model
                 | search = Nothing
@@ -1105,8 +1129,11 @@ view model =
                         |> Maybe.withDefault (a [ href "/?q=", class "header-action" ] [ text "SEARCH" ])
                     ]
                 ]
-            , case findSelectedEpisode model.episode model.channel model.library of
-                Just ( episode, maybeChannel ) ->
+            , case ( model.remix, findSelectedEpisode model.episode model.channel model.library ) of
+                ( Just remix, _ ) ->
+                    viewRemix model.position remix
+
+                ( Nothing, Just ( episode, maybeChannel ) ) ->
                     div [ class "rows", id "player-section" ]
                         [ if model.playerError == Just episode.id then
                             viewPlayerError episode
@@ -1138,10 +1165,10 @@ view model =
                                 iframe [ id "player", src peerTubeEmbedUrl, A.autoplay True, A.attribute "allowfullscreen" "true", A.attribute "sandbox" "allow-same-origin allow-scripts allow-popups allow-forms" ] []
 
                             else if String.endsWith ".mp3" srcStr || String.endsWith ".m4a" srcStr then
-                                audio [ id "player", src srcStr, A.controls True, A.autoplay True, onMediaError ] []
+                                audio [ id "player", src srcStr, A.controls True, A.autoplay True, onMediaError, onTimeUpdate ] []
 
                             else
-                                video [ id "player", src srcStr, A.controls True, A.autoplay True, onMediaError ] []
+                                video [ id "player", src srcStr, A.controls True, A.autoplay True, onMediaError, onTimeUpdate ] []
                         , div [ id "player-info" ]
                             [ h2 [] [ text episode.title ]
                             , case maybeChannel of
@@ -1151,12 +1178,16 @@ view model =
 
                                 Nothing ->
                                     text ""
+                            , a [ href (clipHref episode.src model.position), class "channel-link" ] [ text "clip" ]
                             ]
                         ]
 
-                Nothing ->
+                ( Nothing, Nothing ) ->
                     text ""
-            , if model.showHistory then
+            , if model.remix /= Nothing then
+                text ""
+
+              else if model.showHistory then
                 viewHistory model
 
               else
@@ -2501,3 +2532,372 @@ makeEpisodeDict episodes =
     episodes
         |> List.indexedMap (\i ep -> ( ep.id, { ep | index = i } ))
         |> Dict.fromList
+
+
+
+-- REMIX
+-- REVIEW: A remix is a URL that the player applies, not a rendered file. Alternative: render each remix with ffmpeg on pc. It costs CPU and storage per remix, and visitors choose the input.
+
+
+type alias Remix =
+    { src : Url
+    , start : Float
+    , end : Float
+    , filter : Maybe Filter
+    , notes : List Note
+    }
+
+
+type alias Note =
+    { at : Float
+    , text : String
+    }
+
+
+
+-- REVIEW: The filter list is fixed and each name maps to a CSS class in style.css (`filter-<name>`). Alternative: accept any CSS `filter` string. It lets a link inject arbitrary CSS values and needs escaping.
+
+
+type Filter
+    = Grayscale
+    | Sepia
+    | Invert
+    | Blur
+    | Contrast
+    | Saturate
+
+
+allFilters : List Filter
+allFilters =
+    [ Grayscale, Sepia, Invert, Blur, Contrast, Saturate ]
+
+
+filterName : Filter -> String
+filterName f =
+    case f of
+        Grayscale ->
+            "grayscale"
+
+        Sepia ->
+            "sepia"
+
+        Invert ->
+            "invert"
+
+        Blur ->
+            "blur"
+
+        Contrast ->
+            "contrast"
+
+        Saturate ->
+            "saturate"
+
+
+noteSeconds : Float
+noteSeconds =
+    5
+
+
+
+-- REVIEW: The remix query is split by hand, not with Url.Parser.Query. That parser silently drops a parameter whose value has a bad percent escape or a second "=", and it turns a repeated single-value parameter into Nothing. Alternative: keep it. A shared link would then lose a note or filter with no error.
+
+
+remixParams : Url -> Result String (Dict String (List String))
+remixParams url =
+    let
+        decode s =
+            Url.percentDecode (String.replace "+" " " s)
+
+        add seg acc =
+            let
+                ( rawKey, rawValue ) =
+                    case String.indexes "=" seg of
+                        i :: _ ->
+                            ( String.left i seg, String.dropLeft (i + 1) seg )
+
+                        [] ->
+                            ( seg, "" )
+            in
+            case ( decode rawKey, decode rawValue ) of
+                ( Just k, Just v ) ->
+                    acc |> Result.map (Dict.update k (\old -> Just (Maybe.withDefault [] old ++ [ v ])))
+
+                _ ->
+                    Err ("Expected a percent-encoded query parameter, received " ++ quoted seg ++ ". Write a literal % as %25.")
+    in
+    url.query
+        |> Maybe.withDefault ""
+        |> String.split "&"
+        |> List.filter (not << String.isEmpty)
+        |> List.foldl add (Ok Dict.empty)
+
+
+remixOne : String -> Dict String (List String) -> Result String (Maybe String)
+remixOne key params =
+    case Dict.get key params of
+        Nothing ->
+            Ok Nothing
+
+        Just [ v ] ->
+            Ok (Just v)
+
+        Just _ ->
+            Err ("Expected " ++ key ++ " once, received it twice or more. Keep one " ++ key ++ "=... parameter.")
+
+
+parseRemix : Url -> Result String Remix
+parseRemix url =
+    if url.path /= "/remix" then
+        Err ("Expected the path /remix, received " ++ url.path ++ ". Open a link of the form /remix?src=<episode src>&t=<start>,<end>.")
+
+    else
+        remixParams url
+            |> Result.andThen
+                (\params ->
+                    Result.map3 (\a b c -> ( a, b, c )) (remixOne "src" params) (remixOne "t" params) (remixOne "filter" params)
+                        |> Result.andThen
+                            (\( srcRaw, tRaw, filterRaw ) ->
+                                parseRemixSrc srcRaw
+                                    |> Result.andThen
+                                        (\src ->
+                                            parseRemixRange tRaw
+                                                |> Result.andThen
+                                                    (\( start, end ) ->
+                                                        Result.map2 (\filter notes -> { src = src, start = start, end = end, filter = filter, notes = notes })
+                                                            (parseRemixFilter filterRaw)
+                                                            (parseRemixNotes start end (Dict.get "note" params |> Maybe.withDefault []))
+                                                    )
+                                        )
+                            )
+                )
+
+
+isYoutube : Url -> Bool
+isYoutube u =
+    let
+        host =
+            String.toLower u.host
+    in
+    host == "youtube.com" || String.endsWith ".youtube.com" host
+
+
+isYoutubeEmbedPath : String -> Bool
+isYoutubeEmbedPath path =
+    -- A browser resolves ".." and "%2e%2e" before it requests the page, so "/embed/../watch" loads the watch page.
+    String.startsWith "/embed/" path && not (String.contains ".." path) && not (String.contains "%2e" (String.toLower path))
+
+
+parseRemixSrc : Maybe String -> Result String Url
+parseRemixSrc maybeSrc =
+    case maybeSrc |> Maybe.andThen Url.fromString of
+        Just u ->
+            if isYoutube u && not (isYoutubeEmbedPath u.path) then
+                Err ("Expected a YouTube src of the form https://www.youtube.com/embed/<id>, received " ++ quoted (Url.toString u) ++ ". A watch page refuses to load in an embed.")
+
+            else
+                Ok u
+
+        Nothing ->
+            Err ("Expected src to be an http or https URL, received " ++ quoted (Maybe.withDefault "no src parameter" maybeSrc) ++ ". Add src=<episode src>.")
+
+
+parseRemixRange : Maybe String -> Result String ( Float, Float )
+parseRemixRange maybeT =
+    let
+        fail =
+            Err ("Expected t=<start>,<end> with 0 <= start < end in plain decimal seconds, received " ++ quoted (Maybe.withDefault "no t parameter" maybeT) ++ ". Example: t=90,150.")
+    in
+    case maybeT |> Maybe.map (String.split ",") of
+        Just [ a, b ] ->
+            case ( finite a, finite b ) of
+                ( Just start, Just end ) ->
+                    if 0 <= start && start < end then
+                        Ok ( start, end )
+
+                    else
+                        fail
+
+                _ ->
+                    fail
+
+        _ ->
+            fail
+
+
+parseRemixFilter : Maybe String -> Result String (Maybe Filter)
+parseRemixFilter maybeName =
+    case maybeName of
+        Nothing ->
+            Ok Nothing
+
+        Just name ->
+            case List.filter (\f -> filterName f == name) allFilters of
+                f :: _ ->
+                    Ok (Just f)
+
+                [] ->
+                    Err ("Expected filter to be one of " ++ String.join ", " (List.map filterName allFilters) ++ ", received " ++ quoted name ++ ".")
+
+
+parseRemixNotes : Float -> Float -> List String -> Result String (List Note)
+parseRemixNotes start end raws =
+    let
+        one raw =
+            let
+                fail =
+                    Err ("Expected note=<seconds>:<text> with " ++ String.fromFloat start ++ " <= seconds < " ++ String.fromFloat end ++ " and some text, received " ++ quoted raw ++ ".")
+            in
+            case String.indexes ":" raw of
+                i :: _ ->
+                    case finite (String.left i raw) of
+                        Just at ->
+                            let
+                                text =
+                                    String.dropLeft (i + 1) raw
+                            in
+                            if start <= at && at < end && not (String.isEmpty (String.trim text)) then
+                                Ok { at = at, text = text }
+
+                            else
+                                fail
+
+                        Nothing ->
+                            fail
+
+                [] ->
+                    fail
+    in
+    List.foldr (\raw acc -> Result.map2 (::) (one raw) acc) (Ok []) raws
+
+
+finite : String -> Maybe Float
+finite s =
+    String.toFloat s
+        |> Maybe.andThen
+            (\x ->
+                if isNaN x || isInfinite x || String.contains "e" (String.fromFloat x) then
+                    Nothing
+
+                else
+                    Just x
+            )
+
+
+quoted : String -> String
+quoted s =
+    "\"" ++ s ++ "\""
+
+
+activeNotes : Float -> List Note -> List Note
+activeNotes now =
+    List.filter (\n -> n.at <= now && now < n.at + noteSeconds)
+
+
+
+-- REVIEW: <audio> and <video> clip with a media fragment (`src#t=start,end`): the browser seeks and stops, with no JS. Alternative: seek and pause from timeupdate. It needs a decoder per element and races with autoplay.
+
+
+mediaClipSrc : Remix -> Url
+mediaClipSrc r =
+    let
+        src =
+            r.src
+    in
+    { src | fragment = Just ("t=" ++ String.fromFloat r.start ++ "," ++ String.fromFloat r.end) }
+
+
+
+-- REVIEW: A YouTube embed clips with the start and end query parameters, which take whole seconds: the clip widens to the enclosing seconds.
+
+
+youtubeClipSrc : Remix -> Url
+youtubeClipSrc r =
+    let
+        src =
+            r.src
+
+        kept =
+            src.query
+                |> Maybe.withDefault ""
+                |> String.split "&"
+                |> List.filter (\p -> not (String.isEmpty p || String.startsWith "start=" p || String.startsWith "end=" p))
+
+        extra =
+            "start=" ++ String.fromInt (floor r.start) ++ "&end=" ++ String.fromInt (ceiling r.end)
+    in
+    { src | query = Just (String.join "&" (kept ++ [ extra ])) }
+
+
+
+-- REVIEW: "clip" is a link to /remix, not a copy button. The remix page shows its own link in a read-only input to copy. Alternative: a clipboard port. It adds a port and JS for what select-and-copy does. The range starts at the current second and runs 60 s; YouTube iframes report no time, so their clip starts at 0.
+
+
+clipHref : Url -> Float -> String
+clipHref src position =
+    let
+        start =
+            floor position
+    in
+    "/remix?src=" ++ Url.percentEncode (Url.toString src) ++ "&t=" ++ String.fromInt start ++ "," ++ String.fromInt (start + 60)
+
+
+onTimeUpdate : Html.Attribute Msg
+onTimeUpdate =
+    Html.Events.on "timeupdate" (D.at [ "target", "currentTime" ] D.float |> D.map TimeUpdated)
+
+
+clock : Float -> String
+clock seconds =
+    let
+        s =
+            floor seconds
+    in
+    String.fromInt (s // 60) ++ ":" ++ String.padLeft 2 '0' (String.fromInt (modBy 60 s))
+
+
+
+-- REVIEW: Annotations overlay only on <video>, where timeupdate gives the time. Audio and YouTube iframes list every note under the player. Alternative: the YouTube IFrame API. It needs a script and a port.
+
+
+viewRemix : Float -> { link : String, result : Result String Remix } -> Html Msg
+viewRemix position { link, result } =
+    case result of
+        Err err ->
+            div [ class "rows", id "remix-error" ] [ p [] [ text err ], a [ href "/" ] [ text "Back to telecasts" ] ]
+
+        Ok r ->
+            let
+                srcStr =
+                    Url.toString r.src
+
+                filterClass =
+                    r.filter |> Maybe.map (\f -> [ class ("filter-" ++ filterName f) ]) |> Maybe.withDefault []
+
+                noteList =
+                    ul [ class "remix-note-list" ]
+                        (List.map (\n -> li [] [ text (clock n.at ++ " " ++ n.text) ]) r.notes)
+            in
+            div [ class "rows", id "player-section" ]
+                [ if isYoutube r.src then
+                    div []
+                        [ iframe (filterClass ++ [ id "player", src (Url.toString (youtubeClipSrc r)), A.autoplay True, A.attribute "allow" "fullscreen; autoplay; encrypted-media; picture-in-picture", A.attribute "allowfullscreen" "true" ]) []
+                        , noteList
+                        ]
+
+                  else if String.endsWith ".mp3" srcStr || String.endsWith ".m4a" srcStr then
+                    div []
+                        [ audio (filterClass ++ [ id "player", src (Url.toString (mediaClipSrc r)), A.controls True, A.autoplay True ]) []
+                        , noteList
+                        ]
+
+                  else
+                    div [ class "remix-stage" ]
+                        [ video (filterClass ++ [ id "player", src (Url.toString (mediaClipSrc r)), A.controls True, A.autoplay True, onTimeUpdate ]) []
+                        , div [ class "remix-overlay" ] (List.map (\n -> p [] [ text n.text ]) (activeNotes position r.notes))
+                        ]
+                , div [ id "player-info" ]
+                    [ h2 [] [ text (clock r.start ++ " to " ++ clock r.end) ]
+                    , input [ class "remix-link", A.readonly True, value link, A.attribute "aria-label" "Link to this remix" ] []
+                    ]
+                ]
