@@ -30,10 +30,10 @@ export function transformYouTubeThumb(url: string): string {
 }
 
 export async function handleThumbProxy(
-  deps: { cache: Cache; fetcher: typeof fetch },
+  deps: { cache: Cache; fetcher: typeof fetch; reservePixels: (pixels: number) => Promise<void> },
   input: { thumbUrl: string },
 ): Promise<Response> {
-  const { cache, fetcher } = deps;
+  const { cache, fetcher, reservePixels } = deps;
   const { thumbUrl } = input;
   if (!thumbUrl) return serveFallback();
   // Deno's fetch reads file: and data: URLs, so anything but http and https could leak local files.
@@ -88,6 +88,9 @@ export async function handleThumbProxy(
   }
   let body: Uint8Array<ArrayBuffer>;
   try {
+    // The header gives the pixel count before sharp decodes. A decode holds about as many bytes as the pixels, whatever the file size.
+    const { width = 0, height = 0 } = await sharp(original).metadata();
+    await reservePixels(Math.min(width * height, MAX_PIXELS));
     body = new Uint8Array(
       await sharp(original, { limitInputPixels: MAX_PIXELS }).resize({ width: SMALL_WIDTH, withoutEnlargement: true }).webp({
         quality: QUALITY,

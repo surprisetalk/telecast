@@ -1,14 +1,3 @@
-- [ ] The public feed and thumb proxies cannot exhaust pc. Today parallel requests to large bodies can pass telecast-web's MemoryMax=2G.
-      systemd then kills it, and the site is down for the 30 s RestartSec.
-  1. Measure on a local server: 60 parallel `/proxy/rss/` requests to a 45 MB feed, and the peak RSS of the deno process.
-  2. If the peak passes 2 GB, cap concurrent upstream fetches with a counter in `server.ts`. Derive the cap from 2 GB and the measured peak
-     per request. Past the cap, answer 503 `Busy: <n> feeds are loading. Expected fewer than <n>. Retry in a few seconds.` and log one
-     `busy:` line.
-  3. Add a status condition on the `busy:` lines of `telecast-web` in the past hour.
-- [ ] Status shows how many people used telecast in the past 24h, against a goal of 10.
-  1. `server.ts` logs `visitor <hash>` on the first `/search` of each visitor per UTC day. The hash is the first 16 hex digits of sha256 of
-     the day and `CF-Connecting-IP`.
-  2. Add "10 people used telecast in the past 24h." to `scripts/status.ts`: distinct hashes in the journal of `telecast-web`, over 10.
 - [ ] Seed resolves YouTube links outside YouTube's nightly block.
   - Cause: `telecast-seed.timer` fires Mondays at 05:00 UTC, inside the block from about 23:00 to 07:00 UTC, so YouTube answers its resolves
     with 404 or 500.

@@ -102,3 +102,185 @@ Deno.test("server: exits nonzero and names DATABASE_URL when it is missing", asy
   assertEquals(status.success, false);
   assertStringIncludes(stderr, "DATABASE_URL is missing");
 });
+
+// Boots the server and returns its base URL, its stderr so far, and a stop function.
+async function boot(env: Record<string, string>) {
+  const child = serve(env);
+  let log = "";
+  const reading = (async () => {
+    for await (const chunk of child.stderr.pipeThrough(new TextDecoderStream())) log += chunk;
+  })();
+  let exited = false;
+  child.status.then(() => exited = true);
+  const t0 = performance.now();
+  let base: string | undefined;
+  while (!base) {
+    if (exited) throw new Error(`Server exited before it listened. stderr: ${log}`);
+    if (performance.now() - t0 > START_TIMEOUT_MS) throw new Error(`Server did not listen within ${START_TIMEOUT_MS} ms. stderr: ${log}`);
+    base = log.match(/Listening on (http:\/\/127\.0\.0\.1:\d+)/)?.[1];
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return {
+    base,
+    log: () => log,
+    async stop() {
+      if (!exited) child.kill();
+      await child.status;
+      await reading;
+    },
+  };
+}
+
+// Streams ?bytes= bytes of text in 100 KB chunks, counts the responses that sent all of them, then waits for release.
+function stallingUpstream(release: Promise<void>) {
+  const counter = { sent: 0 };
+  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, (req) => {
+    let left = Number(new URL(req.url).searchParams.get("bytes"));
+    const chunk = new TextEncoder().encode("x".repeat(100_000));
+    return new Response(
+      new ReadableStream({
+        async pull(c) {
+          if (left > 0) {
+            left -= chunk.length;
+            c.enqueue(chunk);
+            return;
+          }
+          counter.sent++;
+          await release;
+          c.close();
+        },
+      }),
+    );
+  });
+  const url = (i: number, bytes: number) => `http://127.0.0.1:${server.addr.port}/f${i}?bytes=${bytes}`;
+  const sentAll = async (n: number) => {
+    const t0 = performance.now();
+    while (counter.sent < n) {
+      if (performance.now() - t0 > 10_000) throw new Error(`Expected ${n} feeds fully sent, received ${counter.sent} after 10 s.`);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+  };
+  return { server, url, sentAll };
+}
+
+// 7 feeds of 40 MB reserve 7 x (1 MB + 40 MB x 6.22) = 1749 MB of the 1753 MB budget. One more feed of 0.4 MB takes 3.5 MB, which leaves
+async function fillBudget(server: { base: string }, up: ReturnType<typeof stallingUpstream>) {
+  const get = (url: string) => fetch(`${server.base}/proxy/rss/${encodeURIComponent(url)}`);
+  const held = [...Array.from({ length: 7 }, (_, i) => get(up.url(i, 40e6))), get(up.url(7, 0.4e6))];
+  await up.sentAll(8);
+  // The proxy still holds the last chunks in flight when the upstream has sent them.
+  await new Promise((r) => setTimeout(r, 300));
+  return { get, held };
+}
+
+Deno.test("server: a request past the memory budget gets a 503 Busy and one busy: line each, and the slots free up after", async () => {
+  const release = Promise.withResolvers<void>();
+  const up = stallingUpstream(release.promise);
+  const server = await boot(NO_DB);
+  try {
+    const { get, held } = await fillBudget(server, up);
+    const busy = await get(up.url(8, 40e6));
+    assertEquals(busy.status, 503);
+    assertEquals(
+      /^Busy: 8 feeds and thumbs are loading and use 175\d of 1753 MB\. Retry in a few seconds\.$/.test(await busy.text()),
+      true,
+    );
+    // The YouTube resolver swallows the first rejection and fetches again. This request still logs one busy: line.
+    const youtube = await get("https://www.youtube.com/channel/UCbusyprobe0000000000000");
+    assertEquals(youtube.status, 503);
+    await youtube.body?.cancel();
+    release.resolve();
+    const responses = await Promise.all(held);
+    await Promise.all(responses.map((r) => r.body?.cancel()));
+    assertEquals(responses.map((r) => r.status), Array(8).fill(400));
+    const after = await get(up.url(9, 40e6));
+    assertEquals(after.status, 400);
+    await after.body?.cancel();
+    assertEquals(server.log().split("\n").filter((l) => l.startsWith("busy:")).length, 2);
+  } finally {
+    release.resolve();
+    await server.stop();
+    await up.server.shutdown();
+  }
+});
+
+Deno.test("server: logs one visitor line per IP on the first /search of the UTC day", async () => {
+  const server = await boot(NO_DB);
+  try {
+    for (const ip of ["203.0.113.7", "203.0.113.7", "203.0.113.8"]) {
+      const res = await fetch(`${server.base}/search?q=rust`, { headers: { "CF-Connecting-IP": ip } });
+      await res.body?.cancel();
+    }
+    const lines = server.log().split("\n").filter((l) => l.startsWith("visitor"));
+    assertEquals(lines.length, 2);
+    for (const l of lines) assertEquals(/^visitor [0-9a-f]{16}$/.test(l), true, l);
+    assertEquals(lines[0] !== lines[1], true);
+  } finally {
+    await server.stop();
+  }
+});
+
+Deno.test("server: 40 small thumbs and 20 small feeds in parallel are never Busy", async () => {
+  const jpeg = await sharp({ create: { width: 300, height: 300, channels: 3, background: "#f80" } }).jpeg().toBuffer();
+  const feed = `<rss><channel><title>t</title><!--${"x".repeat(100_000)}--></channel></rss>`;
+  // Upstream waits, so all 60 requests are in flight together.
+  const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async (req) => {
+    await new Promise((r) => setTimeout(r, 800));
+    return req.url.includes("/thumb")
+      ? new Response(new Uint8Array(jpeg), { headers: { "content-type": "image/jpeg" } })
+      : new Response(feed);
+  });
+  const server = await boot(NO_DB);
+  try {
+    const get = (kind: string, i: number) =>
+      fetch(`${server.base}/proxy/${kind}/${encodeURIComponent(`http://127.0.0.1:${upstream.addr.port}/${kind}${i}`)}`);
+    const all = [
+      ...Array.from({ length: 40 }, (_, i) => get("thumb", i)),
+      ...Array.from({ length: 20 }, (_, i) => get("rss", i)),
+    ];
+    const responses = await Promise.all(all);
+    await Promise.all(responses.map((r) => r.body?.cancel()));
+    assertEquals(responses.filter((r) => r.status === 503).length, 0);
+    assertEquals(server.log().split("\n").filter((l) => l.startsWith("busy:")).length, 0);
+  } finally {
+    await server.stop();
+    await upstream.shutdown();
+  }
+});
+
+Deno.test("server: /search without CF-Connecting-IP, or from the status probe, logs no visitor", async () => {
+  const server = await boot(NO_DB);
+  try {
+    for (
+      const headers of [{}, { "CF-Connecting-IP": "203.0.113.9", "user-agent": "telecast-status" }] as Record<string, string>[]
+    ) {
+      const res = await fetch(`${server.base}/search?q=rust`, { headers });
+      await res.body?.cancel();
+    }
+    assertEquals(server.log().split("\n").filter((l) => l.startsWith("visitor")).length, 0);
+  } finally {
+    await server.stop();
+  }
+});
+
+Deno.test("server: 16 parallel 30 MB feeds serve some and answer 503 Busy to the rest", async () => {
+  const body = new Uint8Array(30e6).fill(120);
+  const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, () => new Response(body));
+  const server = await boot(NO_DB);
+  try {
+    const responses = await Promise.all(
+      Array.from(
+        { length: 16 },
+        (_, i) => fetch(`${server.base}/proxy/rss/${encodeURIComponent(`http://127.0.0.1:${upstream.addr.port}/f${i}`)}`),
+      ),
+    );
+    const busy = responses.filter((r) => r.status === 503).length;
+    await Promise.all(responses.map((r) => r.body?.cancel()));
+    // 16 x 188 MB is 3 GB against a 1753 MB budget. The oldest requests finish (400: not a feed), the youngest answer Busy.
+    assertEquals(busy > 0 && busy < 16, true, `busy ${busy} of 16`);
+    assertEquals(server.log().split("\n").filter((l) => l.startsWith("busy:")).length, busy);
+  } finally {
+    await server.stop();
+    await upstream.shutdown();
+  }
+});

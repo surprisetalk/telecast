@@ -885,7 +885,7 @@ Deno.test("transformYouTubeThumb: non-YouTube URL passes through", () => {
 Deno.test("handleThumbProxy: empty thumb URL → fallback SVG", async () => {
   const cache = await tempCache();
   const fetcher = mockFetch({});
-  const res = await handleThumbProxy({ cache, fetcher }, { thumbUrl: "" });
+  const res = await handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl: "" });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(fetcher.calls.length, 0);
@@ -896,7 +896,7 @@ Deno.test("handleThumbProxy: cache hit returns cached body with immutable header
   const thumbUrl = "https://example.com/img.jpg";
   await cache.put(`small/${thumbUrl}`, "fake-webp-bytes");
   const fetcher = mockFetch({});
-  const res = await handleThumbProxy({ cache, fetcher }, { thumbUrl });
+  const res = await handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("content-type"), "image/webp");
   assertStringIncludes(res.headers.get("cache-control") || "", "immutable");
@@ -909,7 +909,7 @@ Deno.test("handleThumbProxy: cache miss → fetch → resize to 256 px webp → 
   const transformed = "https://i.ytimg.com/vi/abc123/mqdefault.jpg";
   const png = await sharp({ create: { width: 600, height: 400, channels: 3, background: "#f00" } }).png().toBuffer();
   const fetcher = mockFetch({ [transformed]: () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }) });
-  const res = await handleThumbProxy({ cache, fetcher }, { thumbUrl });
+  const res = await handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("content-type"), "image/webp");
   assertStringIncludes(res.headers.get("cache-control") || "", "immutable");
@@ -923,7 +923,9 @@ Deno.test("handleThumbProxy: bytes sharp cannot read → fallback SVG + logs typ
   const cache = await tempCache();
   const thumbUrl = "https://example.com/corrupt.jpg";
   const fetcher = mockFetch({ [thumbUrl]: new Response("fake-image", { headers: { "content-type": "image/jpeg" } }) });
-  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, `sharp could not resize image/jpeg from ${thumbUrl}`);
@@ -947,7 +949,7 @@ Deno.test("handleThumbProxy: a body over 20 MB → fallback SVG + logs URL and c
   ) {
     const cache = await tempCache();
     const { result: res, logs } = await captureConsoleError(() =>
-      handleThumbProxy({ cache, fetcher: mockFetch({ [thumbUrl]: upstream }) }, { thumbUrl })
+      handleThumbProxy({ cache, fetcher: mockFetch({ [thumbUrl]: upstream }), reservePixels: () => Promise.resolve() }, { thumbUrl })
     );
     assertEquals(res.headers.get("content-type"), "image/svg+xml");
     assertEquals(logs, [`thumb proxy: body from ${thumbUrl} is larger than 20 MB. Expected an image under 20 MB.`]);
@@ -971,7 +973,7 @@ dbTest("proxies: a scheme other than http or https returns 400 before any fetch 
     const expected = `Expected an http or https URL, received ${url}. Encode the URL with encodeURIComponent.`;
     const rss = await handleRssProxy({ sql: pg.sql, cache: await tempCache(), fetcher }, { rssUrl: url });
     assertEquals([rss.status, await rss.text()], [400, expected]);
-    const thumb = await handleThumbProxy({ cache: await tempCache(), fetcher }, { thumbUrl: url });
+    const thumb = await handleThumbProxy({ cache: await tempCache(), fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl: url });
     assertEquals([thumb.status, await thumb.text()], [400, expected]);
     assertEquals(fetcher.calls, []);
   }
@@ -982,7 +984,7 @@ Deno.test("handleThumbProxy: an image over 25 megapixels → fallback SVG + logs
   const png = await sharp({ create: { width: 6000, height: 5000, channels: 3, background: "#000" } }).png().toBuffer();
   const fetcher = mockFetch({ [thumbUrl]: () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }) });
   const { result: res, logs } = await captureConsoleError(async () =>
-    handleThumbProxy({ cache: await tempCache(), fetcher }, { thumbUrl })
+    handleThumbProxy({ cache: await tempCache(), fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
   );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
@@ -1009,7 +1011,9 @@ Deno.test("handleThumbProxy: upstream non-2xx → fallback SVG + logs status and
   const cache = await tempCache();
   const thumbUrl = "https://example.com/broken.jpg";
   const fetcher = mockFetch({ [thumbUrl]: new Response("", { status: 503, statusText: "Service Unavailable" }) });
-  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, thumbUrl);
@@ -1022,7 +1026,9 @@ Deno.test("handleThumbProxy: non-image content-type → fallback SVG + logs type
   const fetcher = mockFetch({
     [thumbUrl]: new Response("<html/>", { status: 200, headers: { "content-type": "text/html" } }),
   });
-  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, thumbUrl);
@@ -1037,7 +1043,9 @@ Deno.test("handleThumbProxy: fetch rejection → fallback SVG + logs cause and U
       throw new TypeError("DNS lookup failed");
     },
   });
-  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, thumbUrl);
@@ -1052,7 +1060,9 @@ Deno.test("handleThumbProxy: fetch timeout → fallback SVG + logs URL and timeo
       throw new DOMException("signal timed out", "TimeoutError");
     },
   });
-  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, `Timed out after 10000 ms fetching ${thumbUrl}`);
@@ -1062,7 +1072,9 @@ Deno.test("handleThumbProxy: body timeout after headers → fallback SVG + logs 
   const cache = await tempCache();
   const thumbUrl = "https://example.com/stall.jpg";
   const fetcher = mockFetch({ [thumbUrl]: () => stalledBody({ "content-type": "image/jpeg" }) });
-  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
   assertStringIncludes(logs[0]!, `Timed out after 10000 ms fetching ${thumbUrl}`);
@@ -1073,7 +1085,9 @@ Deno.test("handleThumbProxy: non-ok upstream with an unreadable body logs the HT
   const thumbUrl = "https://example.com/gone.jpg";
   const fetcher = mockFetch({ [thumbUrl]: () => new Response(stalledBody().body, { status: 404, statusText: "Not Found" }) });
   const cache = await tempCache();
-  const { result: res, logs } = await captureConsoleError(() => handleThumbProxy({ cache, fetcher }, { thumbUrl }));
+  const { result: res, logs } = await captureConsoleError(() =>
+    handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
+  );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs, [`thumb proxy: upstream 404 Not Found for ${thumbUrl}`]);
 });

@@ -12,6 +12,7 @@ import {
   Measurements,
   parseDf,
   parseLsRemote,
+  parseMemory,
   parseStartS,
   servedCommit,
 } from "./status.ts";
@@ -29,11 +30,12 @@ const healthy: Measurements = {
   busy: { ok: 2 },
   visitors: { ok: 20 },
   backup: { ok: 3600 },
+  memory: { ok: { peakBytes: 0.9e9, maxBytes: 2e9 } },
 };
 const scores = (m: Measurements) => grade(m).map((c) => Math.round(c.score * 100) / 100);
 
 Deno.test("grade: healthy production passes every condition", () => {
-  assertEquals(scores(healthy), [5, 3, 1.13, 48, 2.67, 10, 1, 3, 1, 5, 2, 26, 5, 4]);
+  assertEquals(scores(healthy), [5, 3, 1.13, 48, 2.67, 10, 1, 3, 1, 5, 2, 26, 2, 5, 4]);
 });
 
 Deno.test("grade: each failure mode scores below 1.0", () => {
@@ -51,8 +53,9 @@ Deno.test("grade: each failure mode scores below 1.0", () => {
       busy: { ok: 20 },
       visitors: { ok: 0 },
       backup: { ok: 52 * 3600 },
+      memory: { ok: { peakBytes: 1.9e9, maxBytes: 2e9 } },
     }),
-    [0.5, 0, 0.63, 0, 0.5, 0.5, 0, 0.5, 0, 0.5, 0, 0.5, 0.5, 0.5],
+    [0.5, 0, 0.63, 0, 0.5, 0.5, 0, 0.5, 0, 0.5, 0, 0.5, 0.95, 0.5, 0.5],
   );
 });
 
@@ -71,8 +74,9 @@ Deno.test("grade: errors and empty data score 0", () => {
       busy: { error: "journalctl failed" },
       visitors: { error: "journalctl failed" },
       backup: { ok: null },
+      memory: { error: "systemctl failed" },
     }),
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   );
   assertEquals(scores({ ...healthy, db: { ok: { freshS: null, refreshed: 0, failed: 0, bytes: 5e9 } } }), [
     5,
@@ -87,6 +91,7 @@ Deno.test("grade: errors and empty data score 0", () => {
     5,
     2,
     26,
+    2,
     5,
     4,
   ]);
@@ -167,4 +172,9 @@ Deno.test("backupAgeS: a missing file is null and a future mtime throws", () => 
 Deno.test("atJournalCap: a full read may have lost older lines", () => {
   assertEquals(atJournalCap("a\n".repeat(499_999)), false);
   assertEquals(atJournalCap("a\n".repeat(500_000)), true);
+});
+
+Deno.test("parseMemory: reads MemoryPeak and MemoryMax, and an unset value throws", () => {
+  assertEquals(parseMemory("MemoryPeak=39432192\nMemoryMax=2147483648\n"), { peakBytes: 39432192, maxBytes: 2147483648 });
+  assertThrows(() => parseMemory("MemoryPeak=[not set]\nMemoryMax=infinity\n"), Error, "Expected");
 });

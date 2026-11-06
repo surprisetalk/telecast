@@ -32,6 +32,7 @@ export type Measurements = {
   busy: Measured<number>;
   visitors: Measured<number>;
   backup: Measured<number | null>;
+  memory: Measured<{ peakBytes: number; maxBytes: number }>;
 };
 
 export function grade(m: Measurements): { name: string; score: number }[] {
@@ -64,6 +65,11 @@ export function grade(m: Measurements): { name: string; score: number }[] {
     // A goal, not a failure mode: it scores 0 until 10 people show up.
     { name: "10 people used telecast in the past 24h.", score: "ok" in m.visitors ? m.visitors.ok / 10 : 0 },
     { name: "pg_dump backed up the database in the past 26 hours.", score: age(m.backup, 26 * 3600) },
+    // server.ts budgets proxy memory from measured factors. This catches the day the factors stop matching real feeds.
+    {
+      name: "telecast-web's memory peak stays under 90% of its MemoryMax.",
+      score: "ok" in m.memory ? 0.9 * m.memory.ok.maxBytes / Math.max(m.memory.ok.peakBytes, 1) : 0,
+    },
     { name: "cache/ holds less than 5 GB.", score: "ok" in m.cache ? 5e9 / Math.max(m.cache.ok, 1) : 0 },
     { name: "The disk that holds cache/ has 10% free.", score: disk ? disk.availBytes / disk.sizeBytes / 0.1 : 0 },
   ];
@@ -95,7 +101,8 @@ async function measured<T>(what: string, ms: number, f: () => Promise<T>): Promi
 async function searchMs(): Promise<number> {
   const url = SEARCH_URL;
   const t0 = performance.now();
-  const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  // server.ts counts no visitor for this agent, so the hourly probe is not a person.
+  const res = await fetch(url, { headers: { "user-agent": "telecast-status" }, signal: AbortSignal.timeout(TIMEOUT_MS) });
   const body = await res.text();
   const ms = performance.now() - t0;
   if (res.status !== 200) throw new Error(`Expected HTTP 200 from ${url}, received ${res.status} ${res.statusText}.`);
@@ -231,6 +238,19 @@ export function countVisitors(text: string): number {
 }
 
 // Backup age in seconds, or null when the file is missing.
+// systemd's peak since telecast-web last started: each deploy restarts it.
+export function parseMemory(text: string): { peakBytes: number; maxBytes: number } {
+  const peak = /^MemoryPeak=(\d+)$/m.exec(text)?.[1], max = /^MemoryMax=(\d+)$/m.exec(text)?.[1];
+  if (!peak || !max) {
+    throw new Error(
+      `Expected "MemoryPeak=<bytes>" and "MemoryMax=<bytes>" from systemctl show telecast-web, received: ${
+        text.slice(0, 200)
+      }. Check that telecast-web runs with a MemoryMax.`,
+    );
+  }
+  return { peakBytes: Number(peak), maxBytes: Number(max) };
+}
+
 export function backupAgeS(mtimeMs: number | null, nowMs: number): number | null {
   if (mtimeMs === null) return null;
   const ageS = (nowMs - mtimeMs) / 1000;
@@ -350,7 +370,7 @@ if (import.meta.main) {
       "DATABASE_URL is missing. Expected a postgres URL in .env. Received undefined. Copy it from the Neon console into .env.",
     );
   }
-  const [search, stats, curate, seed, fence, cache, disk, refresh, deploy, busy, visitors, backup] = await Promise.all([
+  const [search, stats, curate, seed, fence, cache, disk, refresh, deploy, busy, visitors, backup, memory] = await Promise.all([
     measured(`fetching ${SEARCH_URL}`, TIMEOUT_MS, searchMs),
     measured("querying the channel table", DB_TIMEOUT_MS, () => dbStats(url)),
     measured("reading the journal for telecast-curate.service", TIMEOUT_MS, () => lastSuccessS("telecast-curate.service")),
@@ -363,8 +383,13 @@ if (import.meta.main) {
     measured("reading the telecast-web journal for the past hour", TIMEOUT_MS, async () => countBusy(await webJournal("-1h"))),
     measured("reading the telecast-web journal for the past 24h", TIMEOUT_MS, async () => countVisitors(await webJournal("-24h"))),
     measured("reading nightly.dump", TIMEOUT_MS, async () => backupAgeS(await backupMtimeMs(), Date.now())),
+    measured(
+      "reading telecast-web's memory",
+      TIMEOUT_MS,
+      async () => parseMemory(await run("systemctl", ["show", "telecast-web", "--property=MemoryPeak,MemoryMax"])),
+    ),
   ]);
-  const m: Measurements = { search, db: stats, curate, seed, fence, cache, disk, refresh, deploy, busy, visitors, backup };
+  const m: Measurements = { search, db: stats, curate, seed, fence, cache, disk, refresh, deploy, busy, visitors, backup, memory };
   // snitch parses from the first line that starts with "{", so a reason line stays on one line.
   for (const [name, r] of Object.entries(m)) if ("error" in r) console.log(`${name}: ${r.error.replace(/\s+/g, " ")}`);
   if ("ok" in stats && stats.ok.freshS === null) console.log("db: no channel has a last_success_at");
