@@ -36,12 +36,6 @@
   - Decision: a nightly `pg_dump -Fc` to `nightly.dump` in the clone. r2-backup copies `~/Developer` to R2 at 03:00 Pacific with the token
     it already holds, and keeps each old version for 30 days. Alternative: a dump on local disk only. It does not survive pc.
   1. Add "pg_dump backed up the database in the past 26 hours." to `scripts/status.ts`, from the mtime of `nightly.dump`.
-- [ ] A terminal user browses and plays telecast in a bubbletea TUI.
-  1. `tui/` lists `/search?q=tag:featured` and plays an episode with mpv.
-- [ ] Every weekly seed run succeeds without Reddit.
-  - Decision (Taylor): drop Reddit. Alternative: a Reddit "script" app with `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` in pc's `.env`. It
-    keeps Reddit's hand-picked links, but it costs an account and credentials.
-  1. `sudo systemctl start telecast-seed`, then confirm `Finished telecast seed.` in the journal.
 - [ ] Seed resolves YouTube links outside YouTube's nightly block.
   - Cause: `telecast-seed.timer` fires Mondays at 05:00 UTC, inside the block from about 23:00 to 07:00 UTC, so YouTube answers its resolves
     with 404 or 500.
@@ -49,6 +43,12 @@
 - [ ] The GitHub seed source reads a licensed dataset.
   - `chen-zhitao/Youtube-Channels-Dataset` has no license. Seed reads only its channel IDs, which are facts, and stores no descriptions.
   1. Search again for a channel-ID dataset under an open license (CC0, CC-BY, ODbL), and swap `GITHUB_URL` when one turns up.
+- [ ] The TUI decodes each feed item once, at the boundary, into a checked record.
+  - Cause: three break rounds each found raw feed data in use: Atom hrefs, option-like and `file:` srcs, terminal escapes in titles, Latin-1
+    charsets, and extra links.
+  1. In `tui/main.go`, decode each item into `{title, src}`: a title without control characters, and an http or https src. Show the count of
+     items that fail, under the list.
+  2. View and play read only that record. Delete the call sites of `clean` and `playable` that the record makes redundant.
 - [ ] A visitor remixes an episode into a clip with filters, effects, and annotations, and shares it as one link.
   - Example: `/remix?src=<episode src>&t=90,150&filter=grayscale&note=95:Look%20here` plays 1:30 to 2:30 in grayscale, with "Look here" over
     the video from 1:35.

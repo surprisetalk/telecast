@@ -38,3 +38,17 @@ jobs:
             exit 1
           }
       - run: npx elm make src/Main.elm --output=/dev/null
+
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tui/go.mod
+      - run: test -z "$(gofmt -l .)"
+        working-directory: tui
+      - run: go vet ./...
+        working-directory: tui
+      - run: go test ./...
+        working-directory: tui

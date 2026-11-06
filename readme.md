@@ -68,3 +68,11 @@ deno task status
 Drop `--dry-run` to write. `scripts/curation.json` is the hand-editable curation surface: `priority` (always-featured human picks),
 `blocked` (never featured). Featured = `priority` minus `blocked`. `scripts/lectures.json` holds curated MOOC/lecture channel URLs for the
 seeder.
+
+## tui
+
+browse `tag:featured` and play with `mpv` (must be on PATH)
+
+```bash
+cd tui && go run .
+```

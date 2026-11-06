@@ -10,3 +10,4 @@ public/elm.js
 !.env.example
 *.dump
 /cache
+/tui/tui

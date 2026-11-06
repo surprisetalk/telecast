@@ -16,3 +16,4 @@ echo "$summary" | jq -e '.event == "runComplete" and .failed == "0" and (.passed
 }
 deno check server.ts server.test.ts functions/ scripts/
 deno test -A server.test.ts functions/ scripts/
+(cd tui && test -z "$(gofmt -l .)" && go vet ./... && go test ./...)
