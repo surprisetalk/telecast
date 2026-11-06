@@ -324,7 +324,7 @@ export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channe
   let completed = 0;
   let succeeded = 0;
   const failures: Failure[] = [];
-  const fetches: Record<string, number> = {};
+  const hosts = new Map<string, { fetches: number; httpErrors: number }>();
   // The schema allows `https://` alone. Its fetch throws and is recorded like any other fetch error.
   const hostOf = (channel: any) => (URL.canParse(channel.rss) ? new URL(channel.rss).hostname : channel.rss);
 
@@ -332,7 +332,10 @@ export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channe
   await pool(channels, CONCURRENCY, async (channel: any) => {
     const index = ++completed;
     const shortUrl = channel.rss.replace(/^https?:\/\//, "").slice(0, 50);
-    fetches[hostOf(channel)] = (fetches[hostOf(channel)] ?? 0) + 1;
+    const host = hostOf(channel);
+    const counts = hosts.get(host) ?? { fetches: 0, httpErrors: 0 };
+    hosts.set(host, counts);
+    counts.fetches++;
 
     let channelInfo: Channel;
     let episodes: Episode[];
@@ -345,6 +348,7 @@ export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channe
       if (!res.ok) {
         const msg = `HTTP ${res.status}`;
         failures.push({ channel, msg, http: true });
+        counts.httpErrors++;
         console.log(`[${index}/${total}] ✗ ${shortUrl} → ${msg}`);
         return;
       }
@@ -445,20 +449,21 @@ export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channe
   });
 
   // YouTube answers HTTP errors for almost every feed during its nightly quota block. Those channels are not dead.
-  const httpErrors: Record<string, number> = {};
-  for (const f of failures) if (f.http) httpErrors[hostOf(f.channel)] = (httpErrors[hostOf(f.channel)] ?? 0) + 1;
   const blocked = new Set(
-    Object.entries(httpErrors)
-      .filter(([h, n]) => fetches[h]! >= BLOCKED_MIN_FETCHES && n / fetches[h]! > BLOCKED_HTTP_ERROR_SHARE)
-      .map(([h]) => h),
+    [...hosts].filter(([, c]) => c.fetches >= BLOCKED_MIN_FETCHES && c.httpErrors / c.fetches > BLOCKED_HTTP_ERROR_SHARE).map(([h]) => h),
   );
   for (const h of blocked) {
-    console.log(`refresh: ${h} answered HTTP errors for ${httpErrors[h]} of ${fetches[h]} feeds, so it looks blocked, not dead`);
+    const c = hosts.get(h)!;
+    console.log(`refresh: ${h} answered HTTP errors for ${c.httpErrors} of ${c.fetches} feeds, so it looks blocked, not dead`);
   }
 
   for (const { channel, msg, http } of failures) {
     // 429 is transient. A blocked host's HTTP errors say nothing about the channel.
-    if (msg === "HTTP 429" || (http && blocked.has(hostOf(channel)))) continue;
+    // A skipped row still moves to the back of the queue. Without that, every batch picks the same rows again.
+    if (msg === "HTTP 429" || (http && blocked.has(hostOf(channel)))) {
+      await sql`UPDATE channel SET updated_at = now() WHERE channel_id = ${channel.channel_id}`;
+      continue;
+    }
     await sql`
             UPDATE channel SET
               consecutive_errors = consecutive_errors + 1,

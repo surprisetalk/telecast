@@ -28,7 +28,7 @@ like `deno install`, which also ignores package-lock.json, leaves `bin/elm` as a
 Telecasts is a podcast/video feed aggregator with:
 
 - **Frontend** (`src/Main.elm`): Elm 0.19.1 SPA with localStorage ports for library persistence
-- **Backend** (`server.ts`, handlers in `functions/`): `deno serve`, with feed and thumb caches on disk in `cache/`
+- **Backend** (`server.ts`, handlers in `functions/`, the proxies' memory budget in `functions/_shared/budget.ts`): `deno serve`, with feed and thumb caches on disk in `cache/`
 - **Database**: PostgreSQL (schema in `db.sql`)
 
 ### Endpoints

@@ -58,7 +58,7 @@ export async function handleThumbProxy(
       : err instanceof Error
       ? err.message
       : String(err);
-    console.error(`thumb proxy: fetch rejected for ${fetchUrl}: ${msg}`);
+    console.error(`thumb proxy: fetch rejected for ${JSON.stringify(fetchUrl)}: ${JSON.stringify(msg)}`);
     return serveFallback();
   };
   let fetchResponse: Response;
@@ -68,14 +68,22 @@ export async function handleThumbProxy(
     return fetchFailed(err);
   }
   if (!fetchResponse.ok) {
-    console.error(`thumb proxy: upstream ${fetchResponse.status} ${fetchResponse.statusText} for ${fetchUrl}`);
+    console.error(`thumb proxy: upstream ${fetchResponse.status} ${fetchResponse.statusText} for ${JSON.stringify(fetchUrl)}`);
     return serveFallback();
   }
   const contentType = fetchResponse.headers.get("content-type");
   if (!contentType?.startsWith("image/")) {
-    console.error(`thumb proxy: non-image content-type ${contentType ?? "(none)"} for ${fetchUrl}`);
+    console.error(`thumb proxy: non-image content-type ${JSON.stringify(contentType)} for ${JSON.stringify(fetchUrl)}`);
     return serveFallback();
   }
+  const sharpFailed = (err: unknown): Response => {
+    console.error(
+      `thumb proxy: sharp could not resize ${contentType} from ${JSON.stringify(fetchUrl)}: ${
+        JSON.stringify(err instanceof Error ? err.message : String(err))
+      }`,
+    );
+    return serveFallback();
+  };
   let original: Uint8Array<ArrayBuffer> | null;
   try {
     original = await readCapped(fetchResponse, MAX_MB * 1e6);
@@ -83,22 +91,33 @@ export async function handleThumbProxy(
     return fetchFailed(err);
   }
   if (!original) {
-    console.error(`thumb proxy: body from ${fetchUrl} is larger than ${MAX_MB} MB. Expected an image under ${MAX_MB} MB.`);
+    console.error(`thumb proxy: body from ${JSON.stringify(fetchUrl)} is larger than ${MAX_MB} MB. Expected an image under ${MAX_MB} MB.`);
     return serveFallback();
   }
+  // The header gives the pixel count before sharp decodes. A decode holds about as many bytes as the pixels, whatever the file size.
+  let meta: sharp.Metadata;
+  try {
+    meta = await sharp(original).metadata();
+  } catch (err) {
+    return sharpFailed(err);
+  }
+  const { width, height } = meta;
+  if (!width || !height) {
+    throw new Error(
+      `Expected sharp to report a width and height for ${contentType} from ${JSON.stringify(fetchUrl)}, received ${width} x ${height}.`,
+    );
+  }
+  // A Busy refusal propagates to withSlot, which answers 503 and logs one busy: line.
+  await reservePixels(Math.min(width * height, MAX_PIXELS));
   let body: Uint8Array<ArrayBuffer>;
   try {
-    // The header gives the pixel count before sharp decodes. A decode holds about as many bytes as the pixels, whatever the file size.
-    const { width = 0, height = 0 } = await sharp(original).metadata();
-    await reservePixels(Math.min(width * height, MAX_PIXELS));
     body = new Uint8Array(
       await sharp(original, { limitInputPixels: MAX_PIXELS }).resize({ width: SMALL_WIDTH, withoutEnlargement: true }).webp({
         quality: QUALITY,
       }).toBuffer(),
     );
   } catch (err) {
-    console.error(`thumb proxy: sharp could not resize ${contentType} from ${fetchUrl}: ${err instanceof Error ? err.message : err}`);
-    return serveFallback();
+    return sharpFailed(err);
   }
   await cache.put(smallKey, body);
   return new Response(body, {

@@ -92,7 +92,7 @@ export async function handleSearch(deps: { sql: Sql }, input: { query: string | 
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`Search query failed for q="${query}": ${message}`);
+    console.error(`Search query failed for q=${JSON.stringify(query)}: ${JSON.stringify(message)}`);
     return new Response(`Search failed: ${message}`, { status: 502 });
   }
 }

@@ -263,22 +263,49 @@ Deno.test("server: /search without CF-Connecting-IP, or from the status probe, l
   }
 });
 
-Deno.test("server: 16 parallel 30 MB feeds serve some and answer 503 Busy to the rest", async () => {
+Deno.test("server: 16 parallel 30 MB feeds staggered 5 ms apart: the oldest finish and only the youngest answer 503 Busy", async () => {
   const body = new Uint8Array(30e6).fill(120);
-  const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, () => new Response(body));
+  // Every body starts when the last request has arrived, so all 16 bodies stream together and the arrival order stays 5 ms apart.
+  const arrived = Promise.withResolvers<void>();
+  let hits = 0;
+  const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async () => {
+    if (++hits === 16) arrived.resolve();
+    await arrived.promise;
+    return new Response(body);
+  });
   const server = await boot(NO_DB);
   try {
-    const responses = await Promise.all(
-      Array.from(
-        { length: 16 },
-        (_, i) => fetch(`${server.base}/proxy/rss/${encodeURIComponent(`http://127.0.0.1:${upstream.addr.port}/f${i}`)}`),
-      ),
-    );
-    const busy = responses.filter((r) => r.status === 503).length;
+    const pending: Promise<Response>[] = [];
+    for (let i = 0; i < 16; i++) {
+      pending.push(fetch(`${server.base}/proxy/rss/${encodeURIComponent(`http://127.0.0.1:${upstream.addr.port}/f${i}`)}`));
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    const responses = await Promise.all(pending);
     await Promise.all(responses.map((r) => r.body?.cancel()));
-    // 16 x 188 MB is 3 GB against a 1753 MB budget. The oldest requests finish (400: not a feed), the youngest answer Busy.
-    assertEquals(busy > 0 && busy < 16, true, `busy ${busy} of 16`);
-    assertEquals(server.log().split("\n").filter((l) => l.startsWith("busy:")).length, busy);
+    const statuses = responses.map((r) => r.status);
+    // 16 x 188 MB is 3 GB against a 1753 MB budget. The oldest finish (400: not a feed), and every request after the first Busy is Busy.
+    const firstBusy = statuses.indexOf(503);
+    assertEquals(firstBusy > 0 && firstBusy < 16, true, statuses.join(" "));
+    assertEquals(statuses, statuses.map((_, i) => i < firstBusy ? 400 : 503));
+    assertEquals(server.log().split("\n").filter((l) => l.startsWith("busy:")).length, 16 - firstBusy);
+  } finally {
+    await server.stop();
+    await upstream.shutdown();
+  }
+});
+
+Deno.test("server: a visitor-chosen URL with a newline cannot forge a busy: or visitor line", async () => {
+  const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, () => new Response("gone", { status: 404 }));
+  const server = await boot(NO_DB);
+  try {
+    const url = `http://127.0.0.1:${upstream.addr.port}/\nbusy: forged\nvisitor 0123456789abcdef`;
+    for (const kind of ["thumb", "rss"]) {
+      const res = await fetch(`${server.base}/proxy/${kind}/${encodeURIComponent(url)}`);
+      await res.body?.cancel();
+    }
+    const lines = server.log().split("\n");
+    assertEquals(lines.some((l) => l.includes("forged")), true, server.log());
+    assertEquals(lines.filter((l) => l.startsWith("busy:") || l.startsWith("visitor")), []);
   } finally {
     await server.stop();
     await upstream.shutdown();

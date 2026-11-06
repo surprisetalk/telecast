@@ -3,11 +3,14 @@ module Tests exposing (..)
 import Dict
 import Expect
 import Fuzz
+import Html.Attributes as A
 import Json.Decode as D
 import Json.Encode as E
 import Main exposing (..)
 import Set
 import Test exposing (..)
+import Test.Html.Query as Query
+import Test.Html.Selector as Sel
 import Time
 import Url
 import Xml.Decode as X
@@ -562,6 +565,19 @@ feedDecoders =
                     |> D.decodeValue Main.episodeDecoder
                     |> Result.map .live
                     |> Expect.equal (Ok (Just Main.Live))
+        , test "an episode row and the player title show the live status" <|
+            \_ ->
+                let
+                    ep =
+                        sampleEpisode "x"
+                in
+                Expect.all
+                    [ \_ -> Main.viewLive (Just Main.Live) |> Query.fromHtml |> Query.has [ Sel.class "live", Sel.text "LIVE" ]
+                    , \_ -> Main.viewLive (Just Main.Pending) |> Query.fromHtml |> Query.has [ Sel.class "pending", Sel.text "UPCOMING" ]
+                    , \_ -> Main.viewEpisodeCard Nothing Nothing { ep | live = Just Main.Live } |> Query.fromHtml |> Query.has [ Sel.class "live-label" ]
+                    , \_ -> Main.viewEpisodeCard Nothing Nothing ep |> Query.fromHtml |> Query.hasNot [ Sel.class "live-label" ]
+                    ]
+                    ()
         , test "feedDecoder parses a YouTube channel feed" <|
             \_ ->
                 X.run Main.feedDecoder youtubeXml
@@ -641,6 +657,37 @@ codecFuzz =
 -- ============================================================
 
 
+sourceUrl : Main.Source -> Url.Url
+sourceUrl src =
+    case src of
+        Main.YoutubeEmbed u ->
+            u
+
+        Main.Audio u ->
+            u
+
+        Main.Video u ->
+            u
+
+
+sourceString : Main.Source -> String
+sourceString =
+    Url.toString << sourceUrl
+
+
+kindOf : Main.Source -> String
+kindOf src =
+    case src of
+        Main.YoutubeEmbed _ ->
+            "youtube"
+
+        Main.Audio _ ->
+            "audio"
+
+        Main.Video _ ->
+            "video"
+
+
 remixParse : String -> Result String Main.Remix
 remixParse s =
     case Url.fromString ("https://telecast.company/remix?" ++ s) of
@@ -657,7 +704,7 @@ remixTests =
         [ test "the todo example decodes" <|
             \_ ->
                 remixParse "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=90,150&filter=grayscale&note=95:Look%20here"
-                    |> Result.map (\r -> { src = Url.toString r.src, start = r.start, end = r.end, filter = r.filter, notes = r.notes })
+                    |> Result.map (\r -> { src = sourceString r.src, start = r.start, end = r.end, filter = r.filter, notes = r.notes })
                     |> Expect.equal (Ok { src = "https://ex.example.com/a.mp4", start = 90, end = 150, filter = Just Main.Grayscale, notes = [ { at = 95, text = "Look here" } ] })
         , test "filter and notes are optional, a note keeps colons in its text" <|
             \_ ->
@@ -738,15 +785,58 @@ remixTests =
                 remixParse "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=10,20&note=15:a=b+c"
                     |> Result.map (\r -> List.map .text r.notes)
                     |> Expect.equal (Ok [ "a=b c" ])
-        , test "only a youtube.com host gets an iframe" <|
+        , test "only an exact YouTube host gets an iframe" <|
             \_ ->
-                [ "https://evil.example/a.mp4?youtube", "https://youtube.com.evil.example/embed/x", "https://www.youtube.com/embed/x", "https://youtube.com/embed/x", "https://WWW.YouTube.com/embed/x" ]
-                    |> List.map (\s -> Url.fromString s |> Maybe.map Main.isYoutube)
-                    |> Expect.equal [ Just False, Just False, Just True, Just True, Just True ]
+                [ "https://evil.example/a.mp4?youtube"
+                , "https://youtube.com.evil.example/embed/x"
+                , "https://evil.youtube.com/embed/x"
+                , "https://www.youtube.com/embed/x"
+                , "https://youtube.com/embed/x"
+                , "https://WWW.YouTube.com/embed/x"
+                , "https://www.youtube-nocookie.com/embed/x"
+                ]
+                    |> List.map (\s -> remixParse ("src=" ++ Url.percentEncode s ++ "&t=1,2") |> Result.map (\r -> kindOf r.src))
+                    |> Expect.equal [ Ok "video", Ok "video", Ok "video", Ok "youtube", Ok "youtube", Ok "youtube", Ok "youtube" ]
+        , test "a backslash or control character in src is an error, not an iframe" <|
+            \_ ->
+                [ "https://evil.com\\.youtube.com/embed/x", "https://www.youtube.com\\@evil.com/embed/x", "https://ex.example.com/a\t.mp4", "https://ex.example.com/a\u{0000}.mp4" ]
+                    |> List.filterMap
+                        (\s ->
+                            case remixParse ("src=" ++ Url.percentEncode s ++ "&t=1,2") of
+                                Err e ->
+                                    if String.contains "Expected src without a backslash or control character" e then
+                                        Nothing
+
+                                    else
+                                        Just (s ++ " -> " ++ e)
+
+                                Ok _ ->
+                                    Just (s ++ " decoded")
+                        )
+                    |> Expect.equal []
+        , test "the player kind and src come from the decoded source" <|
+            \_ ->
+                let
+                    check q expectation =
+                        \_ ->
+                            case remixParse q of
+                                Ok r ->
+                                    Main.viewRemix 0 { link = "", result = Ok r } |> Query.fromHtml |> expectation
+
+                                Err e ->
+                                    Expect.fail e
+                in
+                Expect.all
+                    [ check "src=https%3A%2F%2Fwww.youtube.com%2Fembed%2Fabc%3Frel%3D0&t=1,2"
+                        (Query.has [ Sel.tag "iframe", Sel.attribute (A.attribute "sandbox" "allow-scripts allow-same-origin allow-presentation allow-popups"), Sel.attribute (A.src "https://www.youtube.com/embed/abc?rel=0&start=1&end=2") ])
+                    , check "src=https%3A%2F%2Fex.example.com%2Fa.MP3&t=1,2" (Query.has [ Sel.tag "audio", Sel.attribute (A.src "https://ex.example.com/a.MP3#t=1,2") ])
+                    , check "src=https%3A%2F%2Fex.example.com%2Fa.mp4%3Fx%3D.mp3&t=1,2" (Query.has [ Sel.tag "video" ])
+                    ]
+                    ()
         , test "a youtube src with its own start and end gets only the clip range" <|
             \_ ->
                 remixParse "src=https%3A%2F%2Fwww.youtube.com%2Fembed%2Fabc%3Fstart%3D5%26rel%3D0%26end%3D9&t=10,20"
-                    |> Result.map (Url.toString << Main.youtubeClipSrc)
+                    |> Result.map (\r -> Url.toString (Main.youtubeClipSrc (sourceUrl r.src) r.start r.end))
                     |> Expect.equal (Ok "https://www.youtube.com/embed/abc?rel=0&start=10&end=20")
         , test "a range that prints with an exponent is an error, not an ignored fragment" <|
             \_ ->
@@ -762,7 +852,7 @@ remixTests =
                                         Just (t ++ " -> " ++ e)
 
                                 Ok r ->
-                                    Just (t ++ " decoded to " ++ Url.toString (Main.mediaClipSrc r))
+                                    Just (t ++ " decoded to " ++ Url.toString (Main.mediaClipSrc (sourceUrl r.src) r.start r.end))
                         )
                     |> Expect.equal []
         , test "a youtube path with dot segments is an error" <|
@@ -795,8 +885,8 @@ remixTests =
             \_ ->
                 case remixParse "src=https%3A%2F%2Fex.example.com%2Fa.mp4&t=90.5,150.2" of
                     Ok r ->
-                        ( Url.toString (Main.mediaClipSrc r)
-                        , Url.toString (Main.youtubeClipSrc { r | src = { exampleUrl | host = "www.youtube.com", path = "/embed/abc", query = Just "rel=0" } })
+                        ( Url.toString (Main.mediaClipSrc (sourceUrl r.src) r.start r.end)
+                        , Url.toString (Main.youtubeClipSrc { exampleUrl | host = "www.youtube.com", path = "/embed/abc", query = Just "rel=0" } r.start r.end)
                         )
                             |> Expect.equal
                                 ( "https://ex.example.com/a.mp4#t=90.5,150.2"

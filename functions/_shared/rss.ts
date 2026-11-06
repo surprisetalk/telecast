@@ -54,22 +54,64 @@ const MAX_TEXT_CHARS = 10_000;
 
 // Every value that reaches SQL must fit its db.sql column. A value that cannot fit rejects the feed here,
 // so the channel records a parse failure and the database never sees it.
-function fit<T extends object>(row: T, source: string): T {
-  for (const [field, v] of Object.entries(row)) {
-    const bad = (received: string) => {
+// A checker returns what it received when the value does not fit, and null when it fits.
+type Checker = (x: unknown) => string | null;
+const nonNull = (x: unknown, c: Checker): string | null => (x === null || x === undefined ? null : c(x));
+const text: Checker = (x) =>
+  nonNull(x, (v) => typeof v === "string" && v.includes("\0") ? "a NUL byte, which postgres text cannot hold" : null);
+const textList: Checker = (x) => nonNull(x, (v) => (v as unknown[]).map(text).find((r) => r !== null) ?? null);
+const bool: Checker = () => null;
+const intWithin = (max: number): Checker => (x) =>
+  nonNull(x, (v) => Number.isInteger(v) && Math.abs(v as number) <= max ? null : `the number ${v}`);
+const int32 = intWithin(INT32_MAX);
+// A bigint column. A JS number is exact up to 2^53, so that bounds it.
+const int64 = intWithin(Number.MAX_SAFE_INTEGER);
+// postgres.js writes years outside 1 to 9999 in a form that postgres rejects.
+const timestamp: Checker = (x) =>
+  nonNull(x, (v) => {
+    const y = (v as Date).getUTCFullYear();
+    return y >= 1 && y <= 9999 ? null : `the date ${(v as Date).toISOString()}`;
+  });
+
+const channelChecks = {
+  channel_id: text,
+  rss: text,
+  title: text,
+  description: text,
+  thumb: text,
+  updated_at: timestamp,
+  author: text,
+  language: text,
+  explicit: bool,
+  website: text,
+  categories: textList,
+  tags: textList,
+} satisfies Record<keyof Channel, Checker>;
+
+const episodeChecks = {
+  channel_id: text,
+  episode_id: text,
+  title: text,
+  description: text,
+  thumb: text,
+  src: text,
+  src_type: text,
+  src_size_bytes: int64,
+  duration_seconds: int32,
+  published_at: timestamp,
+  link: text,
+  season: int32,
+  episode: int32,
+  explicit: bool,
+} satisfies Record<keyof Episode, Checker>;
+
+function fit<T extends object>(row: T, checks: Record<keyof T, Checker>, source: string): T {
+  for (const field of Object.keys(checks) as (keyof T & string)[]) {
+    const received = checks[field](row[field]);
+    if (received !== null) {
       throw new Error(
         `Expected ${source} field ${field} to fit its db.sql column, received ${received}. The feed is malformed: report it to the publisher.`,
       );
-    };
-    for (const x of Array.isArray(v) ? v : [v]) {
-      if (typeof x === "string" && x.includes("\0")) bad("a NUL byte, which postgres text cannot hold");
-      // src_size_bytes is bigint. A JS number is exact up to 2^53, so that bounds it.
-      else if (
-        typeof x === "number" && !(Number.isInteger(x) && Math.abs(x) <= (field === "src_size_bytes" ? Number.MAX_SAFE_INTEGER : INT32_MAX))
-      ) {
-        bad(`the number ${x}`);
-      } // postgres.js writes years outside 1 to 9999 in a form that postgres rejects.
-      else if (x instanceof Date && !(x.getUTCFullYear() >= 1 && x.getUTCFullYear() <= 9999)) bad(`the date ${x.toISOString()}`);
     }
   }
   return row;
@@ -217,7 +259,7 @@ function extractYoutubeChannelId(feed: any): string | null {
 }
 
 export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
-  return episodes(xmlText, channelId).map((e, i) => fit(e, `episode ${i + 1} (${JSON.stringify(e.title.slice(0, 40))})`));
+  return episodes(xmlText, channelId).map((e, i) => fit(e, episodeChecks, `episode ${i + 1} (${JSON.stringify(e.title.slice(0, 40))})`));
 }
 
 function episodes(xmlText: string, channelId: string): Episode[] {
@@ -295,7 +337,7 @@ function findThumbnail(channel: any): string | null {
 }
 
 export function parse(xmlText: string, sourceUrl?: string): Channel {
-  return fit(channel(xmlText, sourceUrl), "channel");
+  return fit(channel(xmlText, sourceUrl), channelChecks, "channel");
 }
 
 function channel(xmlText: string, sourceUrl?: string): Channel {

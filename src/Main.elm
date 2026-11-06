@@ -1170,7 +1170,7 @@ view model =
                             else
                                 video [ id "player", src srcStr, A.controls True, A.autoplay True, onMediaError, onTimeUpdate ] []
                         , div [ id "player-info" ]
-                            [ h2 [] [ text episode.title ]
+                            [ h2 [] [ viewLive episode.live, text episode.title ]
                             , case maybeChannel of
                                 Just channel ->
                                     a [ href ("/" ++ Url.percentEncode (Url.toString channel.rss)), class "channel-link" ]
@@ -1419,6 +1419,19 @@ viewTagLink ( tag, label ) =
     a [ href ("/?tag=" ++ tag), class "tag" ] [ text label ]
 
 
+viewLive : Maybe LiveStatus -> Html msg
+viewLive status =
+    case status of
+        Just Live ->
+            span [ class "live-label live" ] [ text "LIVE" ]
+
+        Just Pending ->
+            span [ class "live-label pending" ] [ text "UPCOMING" ]
+
+        Nothing ->
+            text ""
+
+
 viewEpisodeCard : Maybe Library -> Maybe Url -> Episode -> Html Msg
 viewEpisodeCard maybeLib maybeRss episode =
     let
@@ -1448,7 +1461,7 @@ viewEpisodeCard maybeLib maybeRss episode =
             ]
         , div [ class "episode-info" ]
             [ a [ href (episodeUrl maybeRss episode.id), class "episode-title" ]
-                [ text (episodePrefix ++ episode.title) ]
+                [ viewLive episode.live, text (episodePrefix ++ episode.title) ]
             , div [ class "episode-meta-row" ]
                 [ case ( maybeRss, episode.channelTitle, episode.publishedAt ) of
                     ( Just _, _, Just date ) ->
@@ -2540,12 +2553,22 @@ makeEpisodeDict episodes =
 
 
 type alias Remix =
-    { src : Url
+    { src : Source
     , start : Float
     , end : Float
     , filter : Maybe Filter
     , notes : List Note
     }
+
+
+
+-- REVIEW: The decoder builds each YouTube url from an exact host and a checked video id, so no text of the link reaches the iframe. Alternative: keep the parsed Url and test its host. Elm parses the host loosely, and a backslash made "evil.com\\.youtube.com" pass.
+
+
+type Source
+    = YoutubeEmbed Url
+    | Audio Url
+    | Video Url
 
 
 type alias Note =
@@ -2673,33 +2696,63 @@ parseRemix url =
                 )
 
 
-isYoutube : Url -> Bool
-isYoutube u =
-    let
-        host =
-            String.toLower u.host
-    in
-    host == "youtube.com" || String.endsWith ".youtube.com" host
+youtubeHosts : List String
+youtubeHosts =
+    [ "youtube.com", "www.youtube.com", "m.youtube.com", "www.youtube-nocookie.com" ]
 
 
-isYoutubeEmbedPath : String -> Bool
-isYoutubeEmbedPath path =
-    -- A browser resolves ".." and "%2e%2e" before it requests the page, so "/embed/../watch" loads the watch page.
-    String.startsWith "/embed/" path && not (String.contains ".." path) && not (String.contains "%2e" (String.toLower path))
+isVideoId : String -> Bool
+isVideoId id =
+    -- A browser resolves ".." and "%2e%2e" before it requests the page, so only the plain id alphabet may follow /embed/.
+    id /= "" && String.all (\c -> (Char.isAlphaNum c && Char.toCode c < 128) || c == '_' || c == '-') id
 
 
-parseRemixSrc : Maybe String -> Result String Url
+parseRemixSrc : Maybe String -> Result String Source
 parseRemixSrc maybeSrc =
-    case maybeSrc |> Maybe.andThen Url.fromString of
-        Just u ->
-            if isYoutube u && not (isYoutubeEmbedPath u.path) then
-                Err ("Expected a YouTube src of the form https://www.youtube.com/embed/<id>, received " ++ quoted (Url.toString u) ++ ". A watch page refuses to load in an embed.")
+    let
+        raw =
+            Maybe.withDefault "" maybeSrc
+    in
+    if String.any (\c -> c == '\\' || Char.toCode c < 32 || Char.toCode c == 127) raw then
+        Err ("Expected src without a backslash or control character, received " ++ quoted raw ++ ". A browser reads a backslash as a slash and loads another host.")
 
-            else
-                Ok u
+    else
+        case Url.fromString raw of
+            Just u ->
+                let
+                    host =
+                        String.toLower u.host
 
-        Nothing ->
-            Err ("Expected src to be an http or https URL, received " ++ quoted (Maybe.withDefault "no src parameter" maybeSrc) ++ ". Add src=<episode src>.")
+                    id =
+                        String.dropLeft (String.length "/embed/") u.path
+
+                    path =
+                        String.toLower u.path
+                in
+                if List.member host youtubeHosts then
+                    if String.startsWith "/embed/" u.path && isVideoId id then
+                        Ok
+                            (YoutubeEmbed
+                                { protocol = Url.Https
+                                , host = host
+                                , port_ = Nothing
+                                , path = "/embed/" ++ id
+                                , query = u.query
+                                , fragment = Nothing
+                                }
+                            )
+
+                    else
+                        Err ("Expected a YouTube src of the form https://www.youtube.com/embed/<id>, received " ++ quoted (Url.toString u) ++ ". A watch page refuses to load in an embed.")
+
+                else if String.endsWith ".mp3" path || String.endsWith ".m4a" path then
+                    Ok (Audio u)
+
+                else
+                    Ok (Video u)
+
+            Nothing ->
+                Err ("Expected src to be an http or https URL, received " ++ quoted raw ++ ". Add src=<episode src>.")
 
 
 parseRemixRange : Maybe String -> Result String ( Float, Float )
@@ -2798,25 +2851,18 @@ activeNotes now =
 -- REVIEW: <audio> and <video> clip with a media fragment (`src#t=start,end`): the browser seeks and stops, with no JS. Alternative: seek and pause from timeupdate. It needs a decoder per element and races with autoplay.
 
 
-mediaClipSrc : Remix -> Url
-mediaClipSrc r =
-    let
-        src =
-            r.src
-    in
-    { src | fragment = Just ("t=" ++ String.fromFloat r.start ++ "," ++ String.fromFloat r.end) }
+mediaClipSrc : Url -> Float -> Float -> Url
+mediaClipSrc src start end =
+    { src | fragment = Just ("t=" ++ String.fromFloat start ++ "," ++ String.fromFloat end) }
 
 
 
 -- REVIEW: A YouTube embed clips with the start and end query parameters, which take whole seconds: the clip widens to the enclosing seconds.
 
 
-youtubeClipSrc : Remix -> Url
-youtubeClipSrc r =
+youtubeClipSrc : Url -> Float -> Float -> Url
+youtubeClipSrc src start end =
     let
-        src =
-            r.src
-
         kept =
             src.query
                 |> Maybe.withDefault ""
@@ -2824,7 +2870,7 @@ youtubeClipSrc r =
                 |> List.filter (\p -> not (String.isEmpty p || String.startsWith "start=" p || String.startsWith "end=" p))
 
         extra =
-            "start=" ++ String.fromInt (floor r.start) ++ "&end=" ++ String.fromInt (ceiling r.end)
+            "start=" ++ String.fromInt (floor start) ++ "&end=" ++ String.fromInt (ceiling end)
     in
     { src | query = Just (String.join "&" (kept ++ [ extra ])) }
 
@@ -2868,9 +2914,6 @@ viewRemix position { link, result } =
 
         Ok r ->
             let
-                srcStr =
-                    Url.toString r.src
-
                 filterClass =
                     r.filter |> Maybe.map (\f -> [ class ("filter-" ++ filterName f) ]) |> Maybe.withDefault []
 
@@ -2879,23 +2922,24 @@ viewRemix position { link, result } =
                         (List.map (\n -> li [] [ text (clock n.at ++ " " ++ n.text) ]) r.notes)
             in
             div [ class "rows", id "player-section" ]
-                [ if isYoutube r.src then
-                    div []
-                        [ iframe (filterClass ++ [ id "player", src (Url.toString (youtubeClipSrc r)), A.autoplay True, A.attribute "allow" "fullscreen; autoplay; encrypted-media; picture-in-picture", A.attribute "allowfullscreen" "true" ]) []
-                        , noteList
-                        ]
+                [ case r.src of
+                    YoutubeEmbed u ->
+                        div []
+                            [ iframe (filterClass ++ [ id "player", src (Url.toString (youtubeClipSrc u r.start r.end)), A.autoplay True, A.attribute "sandbox" "allow-scripts allow-same-origin allow-presentation allow-popups", A.attribute "allow" "fullscreen; autoplay; encrypted-media; picture-in-picture", A.attribute "allowfullscreen" "true" ]) []
+                            , noteList
+                            ]
 
-                  else if String.endsWith ".mp3" srcStr || String.endsWith ".m4a" srcStr then
-                    div []
-                        [ audio (filterClass ++ [ id "player", src (Url.toString (mediaClipSrc r)), A.controls True, A.autoplay True ]) []
-                        , noteList
-                        ]
+                    Audio u ->
+                        div []
+                            [ audio (filterClass ++ [ id "player", src (Url.toString (mediaClipSrc u r.start r.end)), A.controls True, A.autoplay True ]) []
+                            , noteList
+                            ]
 
-                  else
-                    div [ class "remix-stage" ]
-                        [ video (filterClass ++ [ id "player", src (Url.toString (mediaClipSrc r)), A.controls True, A.autoplay True, onTimeUpdate ]) []
-                        , div [ class "remix-overlay" ] (List.map (\n -> p [] [ text n.text ]) (activeNotes position r.notes))
-                        ]
+                    Video u ->
+                        div [ class "remix-stage" ]
+                            [ video (filterClass ++ [ id "player", src (Url.toString (mediaClipSrc u r.start r.end)), A.controls True, A.autoplay True, onTimeUpdate ]) []
+                            , div [ class "remix-overlay" ] (List.map (\n -> p [] [ text n.text ]) (activeNotes position r.notes))
+                            ]
                 , div [ id "player-info" ]
                     [ h2 [] [ text (clock r.start ++ " to " ++ clock r.end) ]
                     , input [ class "remix-link", A.readonly True, value link, A.attribute "aria-label" "Link to this remix" ] []

@@ -14,11 +14,6 @@
   1. Add `/episodes/` to `server.ts`, through the same memory budget and cache as `/proxy/rss/`, with a test in `server.test.ts`.
   2. In `tui/main.go`, read `/episodes/` and decode its JSON into the checked `{title, src}` record. Delete the XML structs, the charset
      reader, and their tests.
-- [ ] The remix player receives only a src that the remix decoder checked.
-  - Cause: three break rounds each found a gap between the text the decoder checked and the value the player used: a query parameter
-    that `Url.Parser` dropped, a `youtube` substring match, a float that `String.fromFloat` printed as `1e-7`, and a `..` path.
-  1. In `src/Main.elm`, build the player src from the decoded `Remix`, parse that exact string again with `Url.fromString`, and show the
-     remix error when it differs from the checked value.
 
 ## Blocked on you
 

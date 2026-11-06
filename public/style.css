@@ -1121,3 +1121,21 @@ img.thumb-error {
 #remix-error {
   padding: var(--s-6);
 }
+
+.live-label {
+  display: inline-block;
+  margin-right: 0.5em;
+  padding: 0 0.4em;
+  border-radius: 3px;
+  font-size: 0.75em;
+  font-weight: 700;
+  color: #fff;
+}
+
+.live-label.live {
+  background: #d00;
+}
+
+.live-label.pending {
+  background: #666;
+}

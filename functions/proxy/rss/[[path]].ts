@@ -41,7 +41,7 @@ export async function handleRssProxy(
     return new Response(cachedText, { headers: { "content-type": "application/xml" } });
   }
   const stale = (reason: string): Response => {
-    console.error(`rss proxy: serving stale ${rssUrl}: ${reason}`);
+    console.error(`rss proxy: serving stale ${JSON.stringify(rssUrl)}: ${JSON.stringify(reason)}`);
     return new Response(cachedText!, { headers: { "content-type": "application/xml", "x-telecast-stale": "1" } });
   };
   const networkError = (err: unknown): Response => {
@@ -84,12 +84,21 @@ export async function handleRssProxy(
       { status: 400 },
     );
   }
-  const channel = rss.parse(text, rssUrl);
+  let channel: ReturnType<typeof rss.parse>;
+  try {
+    channel = rss.parse(text, rssUrl);
+  } catch (err) {
+    return new Response(
+      `Expected a parseable feed at ${rssUrl} (raw input: ${rawUrl}), received a parse error: ${err instanceof Error ? err.message : err}`,
+      { status: 502 },
+    );
+  }
   // The channel table needs rss and title, and a feed without <link> or <title> parses to null for them.
   for (const [column, element] of [["rss", "<link>"], ["title", "<title>"]] as const) {
     if (!channel[column]) {
-      throw new Error(
+      return new Response(
         `Expected feed at ${rssUrl} (raw input: ${rawUrl}) to have a channel ${element}, received none. Fix the feed, or skip this URL.`,
+        { status: 502 },
       );
     }
   }

@@ -35,6 +35,7 @@ Deno.test("refreshChannels", async (t) => {
       id: "dead",
       rss: "https://dead.example.org/feed",
     }]);
+    const before = (await pg.sql`select now() as t`)[0]!.t;
     await refreshChannels(
       pg.sql,
       fakeFetch((url) =>
@@ -51,6 +52,8 @@ Deno.test("refreshChannels", async (t) => {
       assertEquals([s.last_error_at, s.consecutive_errors], [null, 0], r.id);
     }
     assertEquals((await state("dead")).last_error, "HTTP 404");
+    const moved = await pg.sql`select channel_id from channel where updated_at > ${before} and channel_id like 'yt%'`;
+    assertEquals(moved.length, 20, "skipped rows move to the back of the queue");
     assertEquals((await state("good")).last_success_at !== null, true);
   });
 

@@ -732,30 +732,33 @@ dbTest("handleRssProxy: HTML body returns 400 with URL and missing-root-element 
   assertEquals((await sql`select channel_id from channel`).length, 0);
 });
 
-dbTest("handleRssProxy: gibberish XML bytes → parse throws (let it crash)", async () => {
+dbTest("handleRssProxy: gibberish XML bytes → 502 with the parse error, no channel row", async () => {
   const cache = await tempCache();
   const url = "https://gibberish.example.com/feed.xml";
   const sql = pg.sql;
   const fetcher = mockFetch({
     [url]: new Response("<feed>not actually a valid atom feed at all", { status: 200 }),
   });
-  // Expect the handler to raise rather than silently swallow.
-  await assertRejects(
-    () => handleRssProxy({ sql, cache, fetcher }, { rssUrl: url }),
-    Error,
-  );
+  const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
+  assertEquals(res.status, 502);
+  const body = await res.text();
+  assertStringIncludes(body, `Expected a parseable feed at ${url}`);
+  assertStringIncludes(body, "received a parse error");
+  assertEquals((await sql`select count(*)::int as n from channel`)[0]!.n, 0);
 });
 
-dbTest("handleRssProxy: a feed with no channel link or no title throws naming the feed URL and the missing element", async () => {
+dbTest("handleRssProxy: a feed with no channel link or no title → 502 naming the feed URL and the missing element", async () => {
   const sql = await freshSql();
   const url = "https://nolink.example.com/feed.xml";
   const noLink = `<rss version="2.0"><channel><title>No Link</title><description>x</description></channel></rss>`;
   const noTitle = `<rss version="2.0"><channel><link>https://nolink.example.com/</link></channel></rss>`;
   for (const [xml, element] of [[noLink, "<link>"], [noTitle, "<title>"]]) {
     const cache = await tempCache();
-    const err = await assertRejects(() => handleRssProxy({ sql, cache, fetcher: mockFetch({ [url]: xmlResponse(xml) }) }, { rssUrl: url }));
-    assertStringIncludes((err as Error).message, url);
-    assertStringIncludes((err as Error).message, element);
+    const res = await handleRssProxy({ sql, cache, fetcher: mockFetch({ [url]: xmlResponse(xml) }) }, { rssUrl: url });
+    assertEquals(res.status, 502);
+    const body = await res.text();
+    assertStringIncludes(body, url);
+    assertStringIncludes(body, `to have a channel ${element}, received none`);
   }
   assertEquals((await sql`select count(*)::int as n from channel`)[0]!.n, 0);
 });
@@ -805,7 +808,7 @@ dbTest("handleRssProxy: expired cache + origin failure serves stale", async () =
   await age(cache.dir, TWO_HOURS_MS);
   const fetcher = mockFetch({ [url]: new Response("nope", { status: 500 }) });
   const { result: res, logs } = await captureConsoleError(async () => handleRssProxy({ sql: pg.sql, cache, fetcher }, { rssUrl: url }));
-  assertEquals(logs, [`rss proxy: serving stale ${url}: HTTP 500`]);
+  assertEquals(logs, [`rss proxy: serving stale ${JSON.stringify(url)}: "HTTP 500"`]);
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("x-telecast-stale"), "1");
   assertEquals(await res.text(), oldXml);
@@ -928,7 +931,7 @@ Deno.test("handleThumbProxy: bytes sharp cannot read → fallback SVG + logs typ
   );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
-  assertStringIncludes(logs[0]!, `sharp could not resize image/jpeg from ${thumbUrl}`);
+  assertStringIncludes(logs[0]!, `sharp could not resize image/jpeg from ${JSON.stringify(thumbUrl)}`);
   assertEquals(await Array.fromAsync(Deno.readDir(cache.dir)), []);
 });
 
@@ -952,7 +955,7 @@ Deno.test("handleThumbProxy: a body over 20 MB → fallback SVG + logs URL and c
       handleThumbProxy({ cache, fetcher: mockFetch({ [thumbUrl]: upstream }), reservePixels: () => Promise.resolve() }, { thumbUrl })
     );
     assertEquals(res.headers.get("content-type"), "image/svg+xml");
-    assertEquals(logs, [`thumb proxy: body from ${thumbUrl} is larger than 20 MB. Expected an image under 20 MB.`]);
+    assertEquals(logs, [`thumb proxy: body from ${JSON.stringify(thumbUrl)} is larger than 20 MB. Expected an image under 20 MB.`]);
     assertEquals(await Array.fromAsync(Deno.readDir(cache.dir)), []);
   }
 });
@@ -988,8 +991,35 @@ Deno.test("handleThumbProxy: an image over 25 megapixels → fallback SVG + logs
   );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
   assertEquals(logs.length, 1);
-  assertStringIncludes(logs[0]!, `sharp could not resize image/png from ${thumbUrl}`);
+  assertStringIncludes(logs[0]!, `sharp could not resize image/png from ${JSON.stringify(thumbUrl)}`);
   assertStringIncludes(logs[0]!, "pixel limit");
+});
+
+Deno.test("handleThumbProxy: a Busy refusal from reservePixels propagates and logs nothing", async () => {
+  const thumbUrl = "https://example.com/busy.png";
+  const png = await sharp({ create: { width: 10, height: 10, channels: 3, background: "#000" } }).png().toBuffer();
+  const fetcher = mockFetch({ [thumbUrl]: () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }) });
+  const cache = await tempCache();
+  const { logs } = await captureConsoleError(async () => {
+    const err = await assertRejects(() =>
+      handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.reject(new Error("busy")) }, { thumbUrl })
+    );
+    assertEquals((err as Error).message, "busy");
+    return null;
+  });
+  assertEquals(logs, []);
+  assertEquals(await Array.fromAsync(Deno.readDir(cache.dir)), []);
+});
+
+Deno.test("handleThumbProxy: a URL with a newline logs one line", async () => {
+  const thumbUrl = "https://example.com/a.png\nbusy: forged";
+  const fetcher = mockFetch({ [thumbUrl]: () => new Response("no", { status: 404, statusText: "Not Found" }) });
+  const cache = await tempCache();
+  const { logs } = await captureConsoleError(() =>
+    handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
+  );
+  assertEquals(logs.length, 1);
+  assertEquals(logs[0]!.includes("\n"), false);
 });
 
 Deno.test("sweep: deletes cache files older than the limit and keeps newer ones", async () => {
@@ -1089,5 +1119,5 @@ Deno.test("handleThumbProxy: non-ok upstream with an unreadable body logs the HT
     handleThumbProxy({ cache, fetcher, reservePixels: () => Promise.resolve() }, { thumbUrl })
   );
   assertEquals(res.headers.get("content-type"), "image/svg+xml");
-  assertEquals(logs, [`thumb proxy: upstream 404 Not Found for ${thumbUrl}`]);
+  assertEquals(logs, [`thumb proxy: upstream 404 Not Found for ${JSON.stringify(thumbUrl)}`]);
 });
