@@ -7,13 +7,20 @@
   1. Search again for a channel-ID dataset under an open license (CC0, CC-BY, ODbL), and swap `GITHUB_URL` when one turns up.
 - [ ] The TUI reads episodes that `functions/_shared/rss.ts` parsed, not raw feed XML.
   - Example: `GET /episodes/https%3A%2F%2Fexample.com%2Ffeed.xml` answers `[{"title":"Ep 1","src":"https://example.com/1.mp3"}]`.
-  - Cause: three break rounds of the TUI's Go feed decoder each found a feed quirk that rss.ts already handles: XML namespaces, Atom
-    hrefs, Latin-1 charsets, and extra links.
-  - Decision: `/proxy/rss/` keeps its XML for the Elm app, and `/episodes/` answers the rows of rss.ts `parseEpisodes` as JSON.
-    Alternative: keep the Go parser. It costs one fix per feed quirk, in a second parser.
+  - Cause: three break rounds of the TUI's Go feed decoder each found a feed quirk that rss.ts already handles: XML namespaces, Atom hrefs,
+    Latin-1 charsets, and extra links. Review also found that an RDF feed decodes to zero items with no error.
+  - Decision: `/proxy/rss/` keeps its XML for the Elm app, and `/episodes/` answers the rows of rss.ts `parseEpisodes` as JSON. Alternative:
+    keep the Go parser. It costs one fix per feed quirk, in a second parser.
   1. Add `/episodes/` to `server.ts`, through the same memory budget and cache as `/proxy/rss/`, with a test in `server.test.ts`.
   2. In `tui/main.go`, read `/episodes/` and decode its JSON into the checked `{title, src}` record. Delete the XML structs, the charset
      reader, and their tests.
+- [ ] A visitor who meets a 503 Busy gets the feed or thumb a few seconds later, without a reload.
+  - Today `src/Main.elm` shows `Server error: 503` for a feed and leaves a broken thumb until reload.
+  1. Retry a `/proxy/rss/` answer of 503 once after 3 s. If it fails again, show the Busy body, which says what is loading.
+  2. On a thumb's `error`, retry its src once after 3 s, with CSS for the waiting state.
+- [ ] The pre-commit hook and CI run `deno lint`.
+  1. In `deno.json`, exclude `no-import-prefix`: the inline `jsr:` and `npm:` imports are this repo's style. Fix the rest, which
+     `deno lint server.ts server.test.ts functions/ scripts/` prints, then add that command to `.githooks/pre-commit` and `ci.yml`.
 
 ## Blocked on you
 
