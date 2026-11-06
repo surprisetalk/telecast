@@ -36,8 +36,6 @@
   - Decision: a nightly `pg_dump -Fc` to `nightly.dump` in the clone. r2-backup copies `~/Developer` to R2 at 03:00 Pacific with the token
     it already holds, and keeps each old version for 30 days. Alternative: a dump on local disk only. It does not survive pc.
   1. Add "pg_dump backed up the database in the past 26 hours." to `scripts/status.ts`, from the mtime of `nightly.dump`.
-- [ ] A stranger runs their own telecast from the readme.
-  1. Add `## Run your own` to `readme.md`: clone, `.env`, `db.sql`, `npm ci`, `elm make`, `deno task serve`, and the refresh timer.
 - [ ] A visitor finds lectures from one chip on the homepage.
   1. Seed tags each channel from `scripts/lectures.json` with `lectures`.
   2. `discoverTags` in `src/Main.elm` gains a `lectures` chip.
@@ -55,6 +53,19 @@
   1. Play `podcast:liveItem` HLS streams in the player.
 - [ ] A terminal user browses and plays telecast in a bubbletea TUI.
   1. `tui/` lists `/search?q=tag:featured` and plays an episode with mpv.
+- [ ] Every weekly seed run succeeds without Reddit.
+  - Decision (Taylor): drop Reddit. Alternative: a Reddit "script" app with `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` in pc's `.env`. It
+    keeps Reddit's hand-picked links, but it costs an account and credentials.
+  1. Delete `fromReddit`, its source in `gather`, and its tests from `scripts/seed.ts` and `scripts/seed.test.ts`.
+  2. `sudo systemctl start telecast-seed`, then confirm `Finished telecast seed.` in the journal.
+- [ ] A visitor remixes an episode into a clip with filters, effects, and annotations, and shares it as one link.
+  - Example: `/remix?src=<episode src>&t=90,150&filter=grayscale&note=95:Look%20here` plays 1:30 to 2:30 in grayscale, with "Look here" over
+    the video from 1:35.
+  - Decision: a remix is a URL that the player applies, not a rendered file. Alternative: render each remix with ffmpeg on pc. It costs CPU
+    and storage per remix, and visitors choose the input.
+  1. Clip: the player plays only `t=<start>,<end>`, and a "clip" button copies the link at the current range.
+  2. Filters and effects: a fixed list of CSS `filter` values on the video element, chosen from the URL.
+  3. Annotations: timed text overlays from repeated `note=<seconds>:<text>` parameters.
 
 ## Blocked on you
 
@@ -66,6 +77,7 @@
   - Tradeoff: the site is down when pc is down. Cloudflare still caches static files and thumbs at the edge.
   - Until step 1, Pages serves from Neon, and pc's copy drifts by each channel a visitor adds. Cloudflare also answers the fence probe with
     its own 502, so "The feed proxy cannot reach pc's loopback." scores 0.
+  - Taylor does step 1 now. The agent then runs steps 2 to 4.
   1. Taylor removes the `telecast.company` custom domain from Pages, then runs
      `cloudflared tunnel route dns 5fbc95ea-fe6b-42a5-81d7-a038bea896d0 telecast.company`.
   2. `curl -si https://telecast.company/proxy/rss/http%3A%2F%2F127.0.0.1%3A2%2F` prints `Network error fetching ... Timed out after`. Search
@@ -75,12 +87,7 @@
   5. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon
      project, and closes the Neon account.
   6. Taylor deletes the Mac clone `~/Developer/telecast`. pc holds the commits, `todo.md`, and both dumps.
-- [ ] Seed finds channels on Reddit again. Reddit closed unauthenticated `search.json`, so every seed run fails.
-  - `fromReddit` already uses an app-only OAuth token. It throws when `REDDIT_CLIENT_ID` or `REDDIT_CLIENT_SECRET` is missing.
-  1. Taylor creates a Reddit app of type "script" at https://www.reddit.com/prefs/apps and adds both variables to pc's `.env`.
-  2. `sudo systemctl start telecast-seed`, then confirm `Finished telecast seed.` in the journal.
 - [ ] Each lecture is transcribed and searchable.
+  - Parked: Taylor decides how whisper.cpp shares pc's GPU with llama.cpp: a nightly window that stops llama.cpp, or CPU only.
   1. Download audio with yt-dlp and run whisper.cpp on pc's GPU. Store text in a `transcript` table with a tsvector. Blocked: a run of days
      on pc's GPU, which llama.cpp also uses.
-- [ ] telecast remixes.
-  1. Define a remix. Blocked: meaning unknown.
