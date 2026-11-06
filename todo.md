@@ -1,23 +1,7 @@
-- [ ] A YouTube block does not mark its channels as failed, so "At most 20% of channels refreshed in the past 24h failed." scores 1.0.
-  - Cause: each night since 30 Oct, from about 23:00 to 07:00 UTC, YouTube answers almost every feed with HTTP 404 or 500. The end matches a
-    daily quota that resets at midnight Pacific. `refresh.ts` treats only 429 as transient, so it marks about 40,000 channels failed each
-    night. The score was 0.83 on 1 Nov.
-  - Decision: no one-time `UPDATE` to clear the 30–31 Oct errors. The block recurs each night, and the next success of each channel clears
-    its error.
-  1. Add `scripts/refresh.test.ts`. It loads `db.sql` into pgtemp and refreshes 20 YouTube channels whose feeds answer 404 or 500, plus
-     channels on another host. Expect no `last_error_at` on the YouTube rows.
-  2. In `scripts/refresh.ts`, keep each failure in memory and write the error rows after the pool. A host whose HTTP errors pass 50% of at
-     least 20 fetches looks blocked. Skip its HTTP-error rows and log
-     `refresh: <host> answered HTTP errors for <n> of <m> feeds, so it looks blocked, not dead`.
 - [ ] Tests run their SQL against a real Postgres from pgtemp (`jsr:@surprisetalk/pgtemp`), not against `mockSql`.
   1. `scripts/refresh.test.ts` is the first user (entry above).
   2. Port the `handleSearch` and `handleRssProxy` tests in `functions/test.ts` to pgtemp. Assert rows and responses, not SQL text. Delete
      `mockSql`.
-- [ ] A refresh or seed run that meets an unexpected error exits nonzero, and status shows a failed refresh.
-  - Decision: `pool()` rejects on the first worker error. The refresh worker already catches each feed error, so pool's catch sees only
-    database errors and bugs. Alternative: count failures and exit nonzero past 50%. It hides a database fault in half the rows.
-  1. Remove the catch in `scripts/pool.ts`.
-  2. Add "Refresh succeeded in the past 15 min." to `scripts/status.ts`, from the journal of `telecast-refresh.service`.
 - [ ] The public feed and thumb proxies cannot exhaust pc. Today parallel requests to large bodies can pass telecast-web's MemoryMax=2G.
       systemd then kills it, and the site is down for the 30 s RestartSec.
   1. Measure on a local server: 60 parallel `/proxy/rss/` requests to a 45 MB feed, and the peak RSS of the deno process.

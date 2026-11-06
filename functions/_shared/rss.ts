@@ -38,12 +38,50 @@ const parser = new XMLParser({
   attributeNamePrefix: "@_",
 });
 
+// fast-xml-parser returns an array for a repeated tag. The first one wins, as in sanitizeText.
 function extractText(raw: any): string {
-  return typeof raw === "object" ? raw["#text"] : String(raw);
+  if (Array.isArray(raw)) raw = raw[0];
+  const text = typeof raw === "object" ? raw?.["#text"] : String(raw);
+  if (typeof text !== "string") {
+    throw new Error(`Expected text, received ${JSON.stringify(raw)?.slice(0, 80)}. The feed is malformed: report it to the publisher.`);
+  }
+  return text;
+}
+
+const INT32_MAX = 2 ** 31 - 1;
+// tsvector holds 1 MiB. The keywords of a channel join 20 episodes of title and description.
+const MAX_TEXT_CHARS = 10_000;
+
+// Every value that reaches SQL must fit its db.sql column. A value that cannot fit rejects the feed here,
+// so the channel records a parse failure and the database never sees it.
+function fit<T extends object>(row: T, source: string): T {
+  for (const [field, v] of Object.entries(row)) {
+    const bad = (received: string) => {
+      throw new Error(
+        `Expected ${source} field ${field} to fit its db.sql column, received ${received}. The feed is malformed: report it to the publisher.`,
+      );
+    };
+    for (const x of Array.isArray(v) ? v : [v]) {
+      if (typeof x === "string" && x.includes("\0")) bad("a NUL byte, which postgres text cannot hold");
+      // src_size_bytes is bigint. A JS number is exact up to 2^53, so that bounds it.
+      else if (
+        typeof x === "number" && !(Number.isInteger(x) && Math.abs(x) <= (field === "src_size_bytes" ? Number.MAX_SAFE_INTEGER : INT32_MAX))
+      ) {
+        bad(`the number ${x}`);
+      } // postgres.js writes years outside 1 to 9999 in a form that postgres rejects.
+      else if (x instanceof Date && !(x.getUTCFullYear() >= 1 && x.getUTCFullYear() <= 9999)) bad(`the date ${x.toISOString()}`);
+    }
+  }
+  return row;
 }
 
 export function httpsUrl(url: string | null | undefined): string | null {
   if (!url) return null;
+  if (typeof url !== "string") {
+    throw new Error(
+      `Expected a URL string, received ${JSON.stringify(url)?.slice(0, 80)}. The feed is malformed: report it to the publisher.`,
+    );
+  }
   const s = url.trim();
   if (/^https:\/\//i.test(s)) return "https://" + s.slice(8);
   if (/^http:\/\//i.test(s)) return "https://" + s.slice(7);
@@ -79,6 +117,9 @@ export function sanitizeText(text: any): string | null {
 
   text = text.replace(/\s+/g, " ").trim();
 
+  // REVIEW: Cut text to MAX_TEXT_CHARS. Alternative: reject the feed. It keeps the data whole but fails every channel with long show notes.
+  text = text.slice(0, MAX_TEXT_CHARS).replace(/[\ud800-\udbff]$/, "").trim();
+
   return text || null;
 }
 
@@ -91,9 +132,10 @@ export function parseDuration(raw: any): number | null {
   if (parts.some(isNaN)) return null;
 
   const [a = 0, b = 0, c = 0] = parts;
-  if (parts.length === 3) return a * 3600 + b * 60 + c;
-  if (parts.length === 2) return a * 60 + b;
-  if (parts.length === 1) return a; // Already seconds
+  // The column is integer, and a feed may say "1.5".
+  if (parts.length === 3) return Math.round(a * 3600 + b * 60 + c);
+  if (parts.length === 2) return Math.round(a * 60 + b);
+  if (parts.length === 1) return Math.round(a); // Already seconds
   return null;
 }
 
@@ -175,6 +217,10 @@ function extractYoutubeChannelId(feed: any): string | null {
 }
 
 export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
+  return episodes(xmlText, channelId).map((e, i) => fit(e, `episode ${i + 1} (${JSON.stringify(e.title.slice(0, 40))})`));
+}
+
+function episodes(xmlText: string, channelId: string): Episode[] {
   const xml = parser.parse(xmlText);
 
   const ytChannelId = extractYoutubeChannelId(xml.feed);
@@ -249,6 +295,10 @@ function findThumbnail(channel: any): string | null {
 }
 
 export function parse(xmlText: string, sourceUrl?: string): Channel {
+  return fit(channel(xmlText, sourceUrl), "channel");
+}
+
+function channel(xmlText: string, sourceUrl?: string): Channel {
   const xml = parser.parse(xmlText);
 
   if (xml.feed) {

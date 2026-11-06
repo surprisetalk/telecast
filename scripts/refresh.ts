@@ -7,10 +7,10 @@ const BATCH_SIZE = 500;
 const FETCH_TIMEOUT_MS = 15_000;
 const CONCURRENCY = 20;
 
-async function maybeUpgradeToUulf(rss: string): Promise<string> {
+async function maybeUpgradeToUulf(rss: string, fetcher: typeof fetch): Promise<string> {
   const m = rss.match(/^https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?channel_id=(UC[\w-]+)$/);
   if (!m) return rss;
-  return preferUulfFeedUrl(m[1]!, fetch);
+  return preferUulfFeedUrl(m[1]!, fetcher);
 }
 
 // Language code to tag mapping
@@ -314,59 +314,54 @@ function inferAllTags(channelInfo: Channel, episodes: Episode[]): string[] {
   return tags;
 }
 
-async function main() {
-  const databaseUrl = Deno.env.get("DATABASE_URL");
-  if (!databaseUrl) {
-    console.error("DATABASE_URL not set");
-    Deno.exit(1);
-  }
+const BLOCKED_MIN_FETCHES = 20;
+const BLOCKED_HTTP_ERROR_SHARE = 0.5;
 
-  const sql = db(databaseUrl, { max: CONCURRENCY, idle_timeout: 20, connect_timeout: 30 });
+type Failure = { channel: any; msg: string; http: boolean };
 
-  // `--featured` refreshes the curated set so hand-picks don't wait behind the
-  // huge never-fetched backlog; default refreshes the oldest channels by batch.
-  const channels = Deno.args.includes("--featured")
-    ? await sql`SELECT * FROM channel WHERE tags @> array['featured']::text[] ORDER BY updated_at`
-    : await sql`
-      SELECT * FROM channel
-      ORDER BY
-        CASE WHEN last_success_at IS NULL AND last_error_at IS NULL THEN 0 ELSE 1 END,
-        updated_at
-          + random() * interval '1 day' * coalesce(consecutive_errors,0)
-          -- TODO: - random() * interval '1 week' * log(1+coalesce(episode_count,0))
-          -- TODO: - random() * interval '1 month' * coalesce((latest_episode_at-first_episode_at)/interval '1 year',0)
-          nulls first,
-        random()
-      LIMIT ${BATCH_SIZE}
-    `;
-
+export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channels: readonly any[]): Promise<void> {
   const total = channels.length;
-  console.log(`Processing ${total} channels...\n`);
-
   let completed = 0;
   let succeeded = 0;
-  const failures: { rss: string; error: string }[] = [];
+  const failures: Failure[] = [];
+  const fetches: Record<string, number> = {};
+  // The schema allows `https://` alone. Its fetch throws and is recorded like any other fetch error.
+  const hostOf = (channel: any) => (URL.canParse(channel.rss) ? new URL(channel.rss).hostname : channel.rss);
 
+  // Only fetch and parse errors are caught here. A database error or a bug rejects the pool, and the run exits nonzero.
   await pool(channels, CONCURRENCY, async (channel: any) => {
     const index = ++completed;
     const shortUrl = channel.rss.replace(/^https?:\/\//, "").slice(0, 50);
+    fetches[hostOf(channel)] = (fetches[hostOf(channel)] ?? 0) + 1;
 
+    let channelInfo: Channel;
+    let episodes: Episode[];
     try {
-      const fetchUrl = await maybeUpgradeToUulf(channel.rss);
-
-      const res = await fetch(fetchUrl, {
+      const fetchUrl = await maybeUpgradeToUulf(channel.rss, fetcher);
+      const res = await fetcher(fetchUrl, {
         headers: { "User-Agent": "Telecasts/1.0" },
         signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
       });
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
+      if (!res.ok) {
+        const msg = `HTTP ${res.status}`;
+        failures.push({ channel, msg, http: true });
+        console.log(`[${index}/${total}] ✗ ${shortUrl} → ${msg}`);
+        return;
+      }
       const text = await res.text();
-      const channelInfo = parse(text, fetchUrl);
-      const episodes = parseEpisodes(text, channel.channel_id);
+      channelInfo = parse(text, fetchUrl);
+      // A feed may repeat a guid. One INSERT ... ON CONFLICT cannot touch a row twice, so the last item wins.
+      episodes = [...new Map(parseEpisodes(text, channel.channel_id).map((e) => [e.episode_id, e])).values()];
+    } catch (e) {
+      const name = (e as Error).name;
+      const msg = name === "AbortError" || name === "TimeoutError" ? "Request timed out" : (e as Error).message;
+      failures.push({ channel, msg, http: false });
+      console.log(`[${index}/${total}] ✗ ${shortUrl} → ${msg}`);
+      return;
+    }
 
-      if (episodes.length > 0) {
-        await sql`
+    if (episodes.length > 0) {
+      await sql`
             INSERT INTO episode ${sql(episodes)}
             ON CONFLICT (channel_id, episode_id) DO UPDATE
             SET title = EXCLUDED.title,
@@ -383,13 +378,13 @@ async function main() {
                 explicit = EXCLUDED.explicit,
                 updated_at = now()
           `;
-      }
+    }
 
-      // Infer tags from channel metadata and episodes
-      const inferredTags = inferAllTags(channelInfo, episodes);
+    // Infer tags from channel metadata and episodes
+    const inferredTags = inferAllTags(channelInfo, episodes);
 
-      // Update channel metadata and stats on success
-      await sql`
+    // Update channel metadata and stats on success
+    await sql`
           UPDATE channel SET
             title = coalesce(${channelInfo.title}, title),
             description = coalesce(${channelInfo.description}, description),
@@ -445,15 +440,26 @@ async function main() {
           WHERE channel_id = ${channel.channel_id}
         `;
 
-      succeeded++;
-      console.log(`[${index}/${total}] ✓ ${shortUrl} (${episodes.length} episodes)`);
-    } catch (e) {
-      const msg = (e as Error).name === "AbortError" ? "Request timed out" : (e as Error).message;
-      const isRateLimit = msg === "HTTP 429";
+    succeeded++;
+    console.log(`[${index}/${total}] ✓ ${shortUrl} (${episodes.length} episodes)`);
+  });
 
-      // Track errors (excluding rate-limits which are transient)
-      if (!isRateLimit) {
-        await sql`
+  // YouTube answers HTTP errors for almost every feed during its nightly quota block. Those channels are not dead.
+  const httpErrors: Record<string, number> = {};
+  for (const f of failures) if (f.http) httpErrors[hostOf(f.channel)] = (httpErrors[hostOf(f.channel)] ?? 0) + 1;
+  const blocked = new Set(
+    Object.entries(httpErrors)
+      .filter(([h, n]) => fetches[h]! >= BLOCKED_MIN_FETCHES && n / fetches[h]! > BLOCKED_HTTP_ERROR_SHARE)
+      .map(([h]) => h),
+  );
+  for (const h of blocked) {
+    console.log(`refresh: ${h} answered HTTP errors for ${httpErrors[h]} of ${fetches[h]} feeds, so it looks blocked, not dead`);
+  }
+
+  for (const { channel, msg, http } of failures) {
+    // 429 is transient. A blocked host's HTTP errors say nothing about the channel.
+    if (msg === "HTTP 429" || (http && blocked.has(hostOf(channel)))) continue;
+    await sql`
             UPDATE channel SET
               consecutive_errors = consecutive_errors + 1,
               last_error = ${msg},
@@ -486,28 +492,53 @@ async function main() {
               )
             WHERE channel_id = ${channel.channel_id}
           `;
-      }
+  }
 
-      failures.push({ rss: channel.rss, error: msg });
-      console.log(`[${index}/${total}] ✗ ${shortUrl} → ${msg}`);
-    }
-  });
-
-  // Summary
   console.log(`\nDone: ${succeeded} succeeded, ${failures.length} failed`);
 
   if (failures.length > 0) {
     console.log("\nFailed:");
     for (const f of failures) {
-      const shortUrl = f.rss.replace(/^https?:\/\//, "");
-      console.log(`  • ${shortUrl} → ${f.error}`);
+      const shortUrl = f.channel.rss.replace(/^https?:\/\//, "");
+      console.log(`  • ${shortUrl} → ${f.msg}`);
     }
   }
+}
 
+async function main() {
+  const databaseUrl = Deno.env.get("DATABASE_URL");
+  if (!databaseUrl) {
+    console.error("DATABASE_URL not set");
+    Deno.exit(1);
+  }
+
+  const sql = db(databaseUrl, { max: CONCURRENCY, idle_timeout: 20, connect_timeout: 30 });
+
+  // `--featured` refreshes the curated set so hand-picks don't wait behind the
+  // huge never-fetched backlog; default refreshes the oldest channels by batch.
+  const channels = Deno.args.includes("--featured")
+    ? await sql`SELECT * FROM channel WHERE tags @> array['featured']::text[] ORDER BY updated_at`
+    : await sql`
+      SELECT * FROM channel
+      ORDER BY
+        CASE WHEN last_success_at IS NULL AND last_error_at IS NULL THEN 0 ELSE 1 END,
+        updated_at
+          + random() * interval '1 day' * coalesce(consecutive_errors,0)
+          -- TODO: - random() * interval '1 week' * log(1+coalesce(episode_count,0))
+          -- TODO: - random() * interval '1 month' * coalesce((latest_episode_at-first_episode_at)/interval '1 year',0)
+          nulls first,
+        random()
+      LIMIT ${BATCH_SIZE}
+    `;
+
+  console.log(`Processing ${channels.length} channels...\n`);
+  await refreshChannels(sql, fetch, channels);
   await sql.end();
 }
 
-main().catch((e) => {
-  console.error(e);
-  Deno.exit(1);
-});
+if (import.meta.main) {
+  main().catch((e) => {
+    console.error(e);
+    Deno.exit(1);
+  });
+}

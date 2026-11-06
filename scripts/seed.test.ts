@@ -144,3 +144,9 @@ Deno.test("seedChannel: inserts the feed url as rss, tags it, and adds tags to a
     await sql.end();
   }
 });
+
+Deno.test("seedChannel: a feed HTTP error is a status, not a rejection", async () => {
+  await using server = Deno.serve({ port: 0, onListen: () => {} }, () => new Response("no", { status: 404 }));
+  const link = `http://127.0.0.1:${server.addr.port}/feed`;
+  assertEquals(await seedChannel({} as never, link, false, []), { link, feed: link, status: "feed HTTP 404" });
+});
