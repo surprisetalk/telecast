@@ -36,8 +36,6 @@
   - Decision: a nightly `pg_dump -Fc` to `nightly.dump` in the clone. r2-backup copies `~/Developer` to R2 at 03:00 Pacific with the token
     it already holds, and keeps each old version for 30 days. Alternative: a dump on local disk only. It does not survive pc.
   1. Add "pg_dump backed up the database in the past 26 hours." to `scripts/status.ts`, from the mtime of `nightly.dump`.
-  2. In `/etc/nixos/flake.nix`, add `telecast-backup`: a oneshot at 02:00 Pacific that runs `pg_dump -Fc` to `nightly.dump.tmp`, then
-     renames it. Exclude `/telecast/cache/**` from r2-backup.
 - [ ] A stranger runs their own telecast from the readme.
   1. Add `## Run your own` to `readme.md`: clone, `.env`, `db.sql`, `npm ci`, `elm make`, `deno task serve`, and the refresh timer.
 - [ ] A visitor finds lectures from one chip on the homepage.
