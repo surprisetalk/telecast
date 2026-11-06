@@ -69,6 +69,7 @@ sampleEpisode id =
     , viewCount = Nothing
     , fileSizeBytes = Nothing
     , isExplicit = False
+    , live = Nothing
     }
 
 
@@ -358,6 +359,41 @@ navigation =
 -- ============================================================
 -- Feed XML decoders
 -- ============================================================
+-- Shaped like the Podcasting 2.0 spec example for podcast:liveItem.
+
+
+liveXml : String
+liveXml =
+    """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+  <channel>
+    <title>Live Podcast</title>
+    <description>Has live items</description>
+    <link>https://live.example.com</link>
+    <item>
+      <guid>vod-1</guid>
+      <title>Old show</title>
+      <enclosure url="https://live.example.com/old.mp3" length="1" type="audio/mpeg" />
+    </item>
+    <podcast:liveItem status="live" start="2021-09-26T07:30:00.000-0600" end="2021-09-26T08:30:00.000-0600">
+      <title>Podcasting 2.0 Live Show</title>
+      <description>Streaming now</description>
+      <link>https://live.example.com/live</link>
+      <guid isPermaLink="false">e32b4890-983b-4ce5-8b46-f2a6eb4b39be</guid>
+      <enclosure url="https://live.example.com/stream/index.m3u8" length="0" type="application/x-mpegURL" />
+    </podcast:liveItem>
+    <podcast:liveItem status="pending" start="2031-09-26T07:30:00.000-0600" end="2031-09-26T08:30:00.000-0600">
+      <title>Next show</title>
+      <guid isPermaLink="false">pending-1</guid>
+      <enclosure url="https://live.example.com/next/index.m3u8" length="0" type="application/x-mpegURL" />
+    </podcast:liveItem>
+    <podcast:liveItem status="ended" start="2020-09-26T07:30:00.000-0600" end="2020-09-26T08:30:00.000-0600">
+      <title>Past show</title>
+      <guid isPermaLink="false">ended-1</guid>
+      <enclosure url="https://live.example.com/past/index.m3u8" length="0" type="application/x-mpegURL" />
+    </podcast:liveItem>
+  </channel>
+</rss>"""
 
 
 podcastXml : String
@@ -468,6 +504,64 @@ feedDecoders =
                 X.run Main.feedDecoder podcastXml
                     |> Result.map (\f -> f.episodes |> Dict.get "pod-ep-1" |> Maybe.map .isExplicit)
                     |> Expect.equal (Ok (Just False))
+        , test "liveItem: live and pending decode with status, ended is dropped, live sorts first" <|
+            \_ ->
+                X.run Main.feedDecoder liveXml
+                    |> Result.map
+                        (\f ->
+                            f.episodes
+                                |> Dict.values
+                                |> List.sortBy .index
+                                |> List.map (\ep -> ( ep.id, ep.live, Url.toString ep.src ))
+                        )
+                    |> Expect.equal
+                        (Ok
+                            [ ( "e32b4890-983b-4ce5-8b46-f2a6eb4b39be", Just Main.Live, "https://live.example.com/stream/index.m3u8" )
+                            , ( "pending-1", Just Main.Pending, "https://live.example.com/next/index.m3u8" )
+                            , ( "vod-1", Nothing, "https://live.example.com/old.mp3" )
+                            ]
+                        )
+        , test "liveItem: an ended item without enclosure or start does not fail the feed" <|
+            \_ ->
+                X.run Main.feedDecoder
+                    (String.replace "</channel>" "<podcast:liveItem status=\"ended\"><title>Bare</title></podcast:liveItem></channel>" liveXml)
+                    |> Result.map (.episodes >> Dict.keys >> List.sort)
+                    |> Expect.equal (Ok [ "e32b4890-983b-4ce5-8b46-f2a6eb4b39be", "pending-1", "vod-1" ])
+        , test "liveItem: a live item without start still plays" <|
+            \_ ->
+                X.run Main.feedDecoder
+                    (String.replace " start=\"2021-09-26T07:30:00.000-0600\"" "" liveXml)
+                    |> Result.map (.episodes >> Dict.get "e32b4890-983b-4ce5-8b46-f2a6eb4b39be" >> Maybe.map .live)
+                    |> Expect.equal (Ok (Just (Just Main.Live)))
+        , test "liveItem: a live item without enclosure is skipped, the feed still decodes" <|
+            \_ ->
+                X.run Main.feedDecoder
+                    (String.replace "</channel>" "<podcast:liveItem status=\"live\"><title>NoStream</title><guid>ns</guid></podcast:liveItem></channel>" liveXml)
+                    |> Result.map (.episodes >> Dict.keys >> List.sort)
+                    |> Expect.equal (Ok [ "e32b4890-983b-4ce5-8b46-f2a6eb4b39be", "pending-1", "vod-1" ])
+        , test "liveItem: an item without a status attribute is skipped, the feed still decodes" <|
+            \_ ->
+                X.run Main.feedDecoder
+                    (String.replace "</channel>" "<podcast:liveItem><title>NoStatus</title><guid>nst</guid></podcast:liveItem></channel>" liveXml)
+                    |> Result.map (.episodes >> Dict.keys >> List.sort)
+                    |> Expect.equal (Ok [ "e32b4890-983b-4ce5-8b46-f2a6eb4b39be", "pending-1", "vod-1" ])
+        , test "liveItem: a live item sharing a guid with a regular item stays live" <|
+            \_ ->
+                X.run Main.feedDecoder
+                    (String.replace "<guid>vod-1</guid>" "<guid>pending-1</guid>" liveXml)
+                    |> Result.map (.episodes >> Dict.get "pending-1" >> Maybe.map .live)
+                    |> Expect.equal (Ok (Just (Just Main.Pending)))
+        , test "liveItem: episode codec keeps live status" <|
+            \_ ->
+                let
+                    ep =
+                        sampleEpisode "x"
+                in
+                { ep | live = Just Main.Live }
+                    |> Main.episodeEncoder
+                    |> D.decodeValue Main.episodeDecoder
+                    |> Result.map .live
+                    |> Expect.equal (Ok (Just Main.Live))
         , test "feedDecoder parses a YouTube channel feed" <|
             \_ ->
                 X.run Main.feedDecoder youtubeXml

@@ -36,11 +36,6 @@
   - Decision: a nightly `pg_dump -Fc` to `nightly.dump` in the clone. r2-backup copies `~/Developer` to R2 at 03:00 Pacific with the token
     it already holds, and keeps each old version for 30 days. Alternative: a dump on local disk only. It does not survive pc.
   1. Add "pg_dump backed up the database in the past 26 hours." to `scripts/status.ts`, from the mtime of `nightly.dump`.
-- [ ] iOS and TV users open telecast as an app.
-  1. Add a web app manifest and an apple-touch-icon, so iOS adds telecast to the home screen.
-- [ ] Viewers watch live streams.
-  - Decision: live playback first. Comments and ads wait for 10 daily users.
-  1. Play `podcast:liveItem` HLS streams in the player.
 - [ ] A terminal user browses and plays telecast in a bubbletea TUI.
   1. `tui/` lists `/search?q=tag:featured` and plays an episode with mpv.
 - [ ] Every weekly seed run succeeds without Reddit.

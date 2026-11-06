@@ -49,6 +49,16 @@ Deno.test("server: serves the app, app routes, search, and a resized thumb", asy
       const res = await fetch(base + path);
       assertEquals([path, res.status, await res.text()], [path, 200, index]);
     }
+    // iOS and Android install the app from these: the page links both, and each icon is served at the size the manifest declares.
+    assertStringIncludes(index, '<link rel="manifest" href="/manifest.json" />');
+    assertStringIncludes(index, '<link rel="apple-touch-icon" href="/apple-touch-icon.png" />');
+    const manifest = await (await fetch(`${base}/manifest.json`)).json();
+    const icons = [...manifest.icons, { src: "/apple-touch-icon.png", sizes: "180x180" }];
+    for (const { src, sizes } of icons) {
+      const res = await fetch(base + src);
+      const meta = await sharp(new Uint8Array(await res.arrayBuffer())).metadata();
+      assertEquals([src, res.status, `${meta.width}x${meta.height}`], [src, 200, sizes]);
+    }
     const css = await fetch(`${base}/style.css`);
     assertEquals([css.status, css.headers.get("content-type")], [200, "text/css; charset=UTF-8"]);
     await css.body?.cancel();

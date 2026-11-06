@@ -117,6 +117,15 @@ type alias Channel =
     }
 
 
+
+-- REVIEW: Only pending and live exist in the model. An ended podcast:liveItem and an unknown status decode to Nothing and drop out of the feed, because an ended stream has no playable URL. Alternative: keep a third Ended state. It lists dead streams.
+
+
+type LiveStatus
+    = Pending
+    | Live
+
+
 type alias Episode =
     { id : Id
     , title : String
@@ -135,6 +144,7 @@ type alias Episode =
     , viewCount : Maybe Int
     , fileSizeBytes : Maybe Int
     , isExplicit : Bool
+    , live : Maybe LiveStatus
     }
 
 
@@ -2087,6 +2097,7 @@ episodeDecoder =
         |> D.optional "viewCount" (D.maybe D.int) Nothing
         |> D.optional "fileSizeBytes" (D.maybe D.int) Nothing
         |> D.optional "isExplicit" D.bool False
+        |> D.optional "live" (D.maybe liveStatusDecoder) Nothing
 
 
 discoverEpisodeDecoder : D.Decoder DiscoverEpisode
@@ -2175,6 +2186,7 @@ episodeEncoder episode =
         , ( "viewCount", encodeMaybe E.int episode.viewCount )
         , ( "fileSizeBytes", encodeMaybe E.int episode.fileSizeBytes )
         , ( "isExplicit", E.bool episode.isExplicit )
+        , ( "live", encodeMaybe liveStatusEncoder episode.live )
         ]
 
 
@@ -2242,6 +2254,7 @@ youtubeEntryDecoder =
             , viewCount = maybeViews
             , fileSizeBytes = Nothing
             , isExplicit = False
+            , live = Nothing
             }
         )
         (X.succeed (\a b c d e -> ( ( a, b, c ), ( d, e ) ))
@@ -2271,7 +2284,7 @@ youtubeEntryDecoder =
 
 rssDecoder : String -> X.Decoder Episode -> X.Decoder Feed
 rssDecoder dateKey itemDecoder =
-    X.map2 Feed
+    X.map3 (\channel live items -> Feed channel (makeEpisodeDict (mergeLive (List.filterMap identity live) items)))
         (X.succeed mkChannel
             |> X.requiredPath [ "channel", "title" ] (X.single X.string)
             |> X.optionalPath [ "channel", "description" ] (X.single X.string) ""
@@ -2279,10 +2292,71 @@ rssDecoder dateKey itemDecoder =
             |> X.requiredPath [ "channel", "link" ] (X.single (X.string |> X.andThen urlDecoder_))
             |> X.optionalPath [ "channel", dateKey ] (X.single X.string) ""
         )
-        (X.path [ "channel", "item" ]
-            (X.list itemDecoder)
-            |> X.map makeEpisodeDict
-        )
+        (X.path [ "channel", "podcast:liveItem" ] (X.list liveItemDecoder))
+        (X.path [ "channel", "item" ] (X.list itemDecoder))
+
+
+liveStatusDecoder : D.Decoder LiveStatus
+liveStatusDecoder =
+    D.string
+        |> D.andThen
+            (\s ->
+                case liveStatusFromString s of
+                    Just status ->
+                        D.succeed status
+
+                    Nothing ->
+                        D.fail ("Expected \"pending\" or \"live\", received " ++ s)
+            )
+
+
+liveStatusEncoder : LiveStatus -> E.Value
+liveStatusEncoder status =
+    case status of
+        Pending ->
+            E.string "pending"
+
+        Live ->
+            E.string "live"
+
+
+liveStatusFromString : String -> Maybe LiveStatus
+liveStatusFromString s =
+    case s of
+        "pending" ->
+            Just Pending
+
+        "live" ->
+            Just Live
+
+        _ ->
+            Nothing
+
+
+mergeLive : List Episode -> List Episode -> List Episode
+mergeLive live items =
+    -- A stream that also appears as a regular item keeps its live entry.
+    live ++ List.filter (\item -> not (List.any (\l -> l.id == item.id) live)) items
+
+
+liveItemDecoder : X.Decoder (Maybe Episode)
+liveItemDecoder =
+    -- REVIEW: Live HLS streams play natively, in the plain video branch of the player: Safari and iOS play them, and other browsers show
+    -- the media error. Alternative: hls.js from a CDN. It adds an untested script loader to index.html, and three break rounds found races in it.
+    -- Read the status first: an ended item may lack an enclosure, and it must not fail the feed.
+    -- REVIEW: A pending or live item without a usable enclosure drops out, like an ended one. Alternative: fail the feed. One bad stream then hides every episode.
+    X.maybe (X.stringAttr "status")
+        |> X.andThen
+            (\status ->
+                case status |> Maybe.andThen liveStatusFromString of
+                    Nothing ->
+                        X.succeed Nothing
+
+                    Just s ->
+                        X.map2 (\ep start -> ep |> Maybe.map (\e -> { e | live = Just s, publishedAt = start }))
+                            (X.maybe podcastItemDecoder)
+                            (X.maybe (X.stringAttr "start"))
+            )
 
 
 podcastItemDecoder : X.Decoder Episode
@@ -2357,6 +2431,7 @@ itemDecoderWith { thumbPath, thumbDecoder, coverArtPath, coverArtDecoder, srcPat
             , viewCount = Nothing
             , fileSizeBytes = maybeFileSize
             , isExplicit = isExplicit
+            , live = Nothing
             }
 
         durationDecoder =
