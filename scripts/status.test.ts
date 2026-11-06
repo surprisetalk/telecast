@@ -15,6 +15,7 @@ import {
   parseMemory,
   parseStartS,
   servedCommit,
+  yesterdayUtc,
 } from "./status.ts";
 
 const healthy: Measurements = {
@@ -177,4 +178,9 @@ Deno.test("atJournalCap: a full read may have lost older lines", () => {
 Deno.test("parseMemory: reads MemoryPeak and MemoryMax, and an unset value throws", () => {
   assertEquals(parseMemory("MemoryPeak=39432192\nMemoryMax=2147483648\n"), { peakBytes: 39432192, maxBytes: 2147483648 });
   assertThrows(() => parseMemory("MemoryPeak=[not set]\nMemoryMax=infinity\n"), Error, "Expected");
+});
+
+Deno.test("yesterdayUtc: the whole previous UTC day, in journalctl's form", () => {
+  assertEquals(yesterdayUtc(Date.UTC(2026, 10, 6, 0, 30)), ["2026-11-05 00:00:00 UTC", "2026-11-06 00:00:00 UTC"]);
+  assertEquals(yesterdayUtc(Date.UTC(2026, 0, 1, 23, 59)), ["2025-12-31 00:00:00 UTC", "2026-01-01 00:00:00 UTC"]);
 });

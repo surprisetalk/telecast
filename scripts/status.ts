@@ -63,7 +63,9 @@ export function grade(m: Measurements): { name: string; score: number }[] {
       score: "ok" in m.busy ? BUSY_LIMIT / Math.max(m.busy.ok, 1) : 0,
     },
     // A goal, not a failure mode: it scores 0 until 10 people show up.
-    { name: "10 people used telecast in the past 24h.", score: "ok" in m.visitors ? m.visitors.ok / 10 : 0 },
+    // REVIEW: Count yesterday's UTC day, not the past 24h. server.ts salts the hash with the UTC day, so a rolling window counts one
+    // person twice across midnight. Alternative: hash without the day. It links one visitor across days.
+    { name: "10 people used telecast yesterday (UTC).", score: "ok" in m.visitors ? m.visitors.ok / 10 : 0 },
     { name: "pg_dump backed up the database in the past 26 hours.", score: age(m.backup, 26 * 3600) },
     // server.ts budgets proxy memory from measured factors. This catches the day the factors stop matching real feeds.
     {
@@ -237,7 +239,6 @@ export function countVisitors(text: string): number {
   return new Set(text.split("\n").flatMap((l) => /^visitor ([0-9a-f]{16})\b/.exec(l)?.[1] ?? [])).size;
 }
 
-// Backup age in seconds, or null when the file is missing.
 // systemd's peak since telecast-web last started: each deploy restarts it.
 export function parseMemory(text: string): { peakBytes: number; maxBytes: number } {
   const peak = /^MemoryPeak=(\d+)$/m.exec(text)?.[1], max = /^MemoryMax=(\d+)$/m.exec(text)?.[1];
@@ -287,10 +288,16 @@ export function atJournalCap(text: string): boolean {
   return text.split("\n").filter((l) => l !== "").length >= JOURNAL_LINES;
 }
 
-async function webJournal(since: string): Promise<string> {
+export function yesterdayUtc(nowMs: number): [string, string] {
+  const day = (ms: number) => `${new Date(ms).toISOString().slice(0, 10)} 00:00:00 UTC`;
+  return [day(nowMs - DAY_S * 1000), day(nowMs)];
+}
+
+async function webJournal(since: string, until: string): Promise<string> {
   const text = await run("journalctl", [
     "--unit=telecast-web.service",
     `--since=${since}`,
+    `--until=${until}`,
     `--lines=${JOURNAL_LINES}`,
     "--output=cat",
     "--no-pager",
@@ -380,8 +387,12 @@ if (import.meta.main) {
     measured("running df -Pk cache", TIMEOUT_MS, diskFree),
     measured("reading the journal for telecast-refresh.service", TIMEOUT_MS, () => lastSuccessS("telecast-refresh.service")),
     measured("comparing HEAD, origin/main, and telecast-web's start", TIMEOUT_MS, deployProbe),
-    measured("reading the telecast-web journal for the past hour", TIMEOUT_MS, async () => countBusy(await webJournal("-1h"))),
-    measured("reading the telecast-web journal for the past 24h", TIMEOUT_MS, async () => countVisitors(await webJournal("-24h"))),
+    measured("reading the telecast-web journal for the past hour", TIMEOUT_MS, async () => countBusy(await webJournal("-1h", "now"))),
+    measured(
+      "reading the telecast-web journal for yesterday (UTC)",
+      TIMEOUT_MS,
+      async () => countVisitors(await webJournal(...yesterdayUtc(Date.now()))),
+    ),
     measured("reading nightly.dump", TIMEOUT_MS, async () => backupAgeS(await backupMtimeMs(), Date.now())),
     measured(
       "reading telecast-web's memory",
