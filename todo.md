@@ -1,7 +1,3 @@
-- [ ] Tests run their SQL against a real Postgres from pgtemp (`jsr:@surprisetalk/pgtemp`), not against `mockSql`.
-  1. `scripts/refresh.test.ts` is the first user (entry above).
-  2. Port the `handleSearch` and `handleRssProxy` tests in `functions/test.ts` to pgtemp. Assert rows and responses, not SQL text. Delete
-     `mockSql`.
 - [ ] The public feed and thumb proxies cannot exhaust pc. Today parallel requests to large bodies can pass telecast-web's MemoryMax=2G.
       systemd then kills it, and the site is down for the 30 s RestartSec.
   1. Measure on a local server: 60 parallel `/proxy/rss/` requests to a 45 MB feed, and the peak RSS of the deno process.

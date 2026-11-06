@@ -85,6 +85,14 @@ export async function handleRssProxy(
     );
   }
   const channel = rss.parse(text, rssUrl);
+  // The channel table needs rss and title, and a feed without <link> or <title> parses to null for them.
+  for (const [column, element] of [["rss", "<link>"], ["title", "<title>"]] as const) {
+    if (!channel[column]) {
+      throw new Error(
+        `Expected feed at ${rssUrl} (raw input: ${rawUrl}) to have a channel ${element}, received none. Fix the feed, or skip this URL.`,
+      );
+    }
+  }
   await sql`
     insert into channel ${sql(channel)}
     on conflict (channel_id) do update

@@ -1,7 +1,7 @@
 // Integration tests for Telecast backend (parser + worker handlers).
 // Run: deno test functions/test.ts
 //
-// Includes local mocks for postgres.js tagged templates and the global fetch. Caches are real temp dirs.
+// Includes a fake fetch and a real Postgres from pgtemp. Caches are real temp dirs.
 
 import { assert, assertEquals, assertExists, assertMatch, assertRejects, assertStringIncludes, assertThrows } from "jsr:@std/assert@1";
 
@@ -22,47 +22,39 @@ import { handleRssProxy } from "./proxy/rss/[[path]].ts";
 import { handleThumbProxy, transformYouTubeThumb } from "./proxy/thumb/[[path]].ts";
 import { type Cache, diskCache, sweep } from "./_shared/cache.ts";
 import sharp from "sharp";
+import { pgtemp } from "jsr:@surprisetalk/pgtemp@0.2.7";
+import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 
 // ==================================================================
-// Mocks
+// Fixtures
 // ==================================================================
 
-interface SqlCall {
-  kind: "template" | "direct";
-  strings?: readonly string[];
-  values?: unknown[];
-  direct?: unknown;
-}
+// REVIEW: One pgtemp boots once for the file. Each test empties the tables with delete (episodes cascade). Alternative: pg.reset() restores the db.sql schema exactly, but one call takes about 2 s here (delete from channel takes about 50 ms).
+const pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(new URL("../db.sql", import.meta.url)) });
 
-interface MockSql {
-  (...args: unknown[]): unknown;
-  calls: SqlCall[];
-  end(): Promise<void>;
-}
-
-// Tagged-template postgres.js fake.
-// - `sql\`...\`` records a template call and returns a thenable resolving to
-//   the next canned response (in order).
-// - `sql(obj)` records a direct call and returns the object (so it can be
-//   interpolated into an outer template just like postgres.js does).
-function mockSql(responses: unknown[] = []): MockSql {
-  const calls: SqlCall[] = [];
-  let responseIndex = 0;
-  const fn = ((...args: unknown[]): unknown => {
-    const first = args[0];
-    if (Array.isArray(first) && "raw" in (first as object)) {
-      const strings = first as readonly string[];
-      const values = args.slice(1);
-      calls.push({ kind: "template", strings, values });
-      const result = responses[responseIndex++] ?? [];
-      return Promise.resolve(result);
+// REVIEW: The last finished dbTest closes pgtemp, so any test order works (--shuffle). Deno has no afterAll, and a top-level `await using` disposes before any test runs. Alternative: wrap all tests in one parent test with steps. It re-indents the file and loses per-test names in the summary. A --filter run never closes pgtemp, and Deno reports the leak.
+let dbTestsLeft = 0;
+function dbTest(name: string, fn: () => Promise<void>) {
+  dbTestsLeft++;
+  Deno.test(name, async () => {
+    try {
+      await fn();
+    } finally {
+      if (--dbTestsLeft === 0) await pg.close();
     }
-    calls.push({ kind: "direct", direct: first });
-    return first;
-  }) as MockSql;
-  fn.calls = calls;
-  fn.end = () => Promise.resolve();
-  return fn;
+  });
+}
+
+async function freshSql() {
+  await pg.sql`delete from channel`;
+  return pg.sql;
+}
+
+async function insertChannel(sql: typeof pg.sql, c: { id: string; title: string; quality: number; tags?: string[]; latest?: string }) {
+  await sql`
+    insert into channel (channel_id, rss, title, quality, tags, latest_episode_at)
+    values (${c.id}, ${"https://" + c.id}, ${c.title}, ${c.quality}, ${c.tags ?? null}, ${c.latest ?? null})
+  `;
 }
 
 async function tempCache(): Promise<Cache & { dir: string }> {
@@ -504,76 +496,105 @@ Deno.test("parseEpisodes: 'Untitled' fallback when title missing", () => {
 });
 
 // ==================================================================
-// Handler integration tests — handleSearch
+// Handler integration tests — handleSearch (real Postgres)
 // ==================================================================
 
-const FAKE_CHANNEL_ROW = {
-  channel_id: "example.com/feed",
-  rss: "https://example.com/feed",
-  title: "Example Feed",
-  description: "An example",
-  thumb: "https://example.com/thumb.jpg",
-  quality: 80,
-  tags: ["tech"],
-  episode_thumb: "https://example.com/ep.jpg",
-};
+const ids = (body: { channel_id: string }[]) => body.map((r) => r.channel_id);
 
-Deno.test("handleSearch: happy text search returns JSON rows", async () => {
-  // Text branch emits 3 templates: thumb subquery + optional tag fragment + outer.
-  const sql = mockSql([[], [], [FAKE_CHANNEL_ROW]]);
-  const res = await handleSearch({ sql: sql as any }, { query: "rust" });
+dbTest("handleSearch: text search returns matching channels at or above the quality threshold, with episode thumb", async () => {
+  const sql = await freshSql();
+  await insertChannel(sql, { id: "a.com/rust", title: "Rust Weekly", quality: 80 });
+  await insertChannel(sql, { id: "b.com/edge", title: "Rust Edge", quality: 10 });
+  await insertChannel(sql, { id: "c.com/low", title: "Rust Low", quality: 9 });
+  await insertChannel(sql, { id: "d.com/cook", title: "Cooking Show", quality: 90 });
+  await sql`insert into episode (channel_id, episode_id, title, thumb, published_at) values
+    ('a.com/rust', 'e1', 'New', 'https://a.com/new.jpg', '2026-02-01'),
+    ('a.com/rust', 'e2', 'Old', 'https://a.com/old.jpg', '2026-01-01'),
+    ('a.com/rust', 'e3', 'Newest without art', null, '2026-03-01')`;
+  const res = await handleSearch({ sql }, { query: "rust" });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("Content-Type"), "application/json");
   const body = await res.json();
-  assertEquals(body, [FAKE_CHANNEL_ROW]);
+  assertEquals(ids(body), ["a.com/rust", "b.com/edge"]);
+  assertEquals(body[0].episode_thumb, "https://a.com/new.jpg");
+  assertEquals(body[1].episode_thumb, null);
 });
 
-Deno.test("handleSearch: records a query with websearch_to_tsquery for text search", async () => {
-  const sql = mockSql([[], [], []]);
-  await handleSearch({ sql: sql as any }, { query: "rust" });
-  const templates = sql.calls.filter((c) => c.kind === "template");
-  assertEquals(templates.length, 3);
-  const outerSql = templates[2]!.strings!.join(" ");
-  assertStringIncludes(outerSql, "websearch_to_tsquery");
-  assert(templates[2]!.values!.includes("rust"));
-  assert(!outerSql.includes("'rust'"));
+dbTest("handleSearch: text search also matches a typo by trigram and a keyword with no title match", async () => {
+  const sql = await freshSql();
+  await insertChannel(sql, { id: "a.com/cook", title: "Cooking", quality: 50 });
+  await insertChannel(sql, { id: "b.com/kw", title: "Plain", quality: 50 });
+  await sql`update channel set keywords = to_tsvector('simple', 'zebra') where channel_id = 'b.com/kw'`;
+  const search = async (q: string) => ids(await (await handleSearch({ sql }, { query: q })).json());
+  assertEquals(await search("cookng"), ["a.com/cook"]);
+  assertEquals(await search("zebra"), ["b.com/kw"]);
 });
 
-Deno.test("handleSearch: tag: prefix filters by c.tags @> array", async () => {
-  const sql = mockSql([[], []]);
-  await handleSearch({ sql: sql as any }, { query: "tag:programming" });
-  const templates = sql.calls.filter((c) => c.kind === "template");
-  assertEquals(templates.length, 2);
-  const outerSql = templates[1]!.strings!.join(" ");
-  assertStringIncludes(outerSql, "c.tags @>");
-  const tagsArg = templates[1]!.values!.find((v) => Array.isArray(v));
-  assertEquals(tagsArg, ["programming"]);
+dbTest("handleSearch: episode thumb skips #shorts unless only shorts exist", async () => {
+  const sql = await freshSql();
+  await insertChannel(sql, { id: "a.com/mix", title: "Mixed Rust", quality: 50 });
+  await insertChannel(sql, { id: "b.com/shorts", title: "Shorts Rust", quality: 50 });
+  await insertChannel(sql, { id: "c.com/desc", title: "Desc Rust", quality: 50 });
+  await insertChannel(sql, { id: "d.com/link", title: "Link Rust", quality: 50 });
+  await insertChannel(sql, { id: "e.com/singular", title: "Singular Rust", quality: 50 });
+  // Each channel marks its newer short differently: title, description, link, singular tag.
+  await sql`insert into episode (channel_id, episode_id, title, description, link, thumb, published_at) values
+    ('a.com/mix', 'e1', 'Clip #shorts', null, null, 'https://a.com/short.jpg', '2026-02-01'),
+    ('a.com/mix', 'e2', 'Full show', null, null, 'https://a.com/full.jpg', '2026-01-01'),
+    ('b.com/shorts', 'e1', 'Clip #shorts', null, null, 'https://b.com/short.jpg', '2026-02-01'),
+    ('c.com/desc', 'e1', 'Clip', 'watch #Shorts now', null, 'https://c.com/short.jpg', '2026-02-01'),
+    ('c.com/desc', 'e2', 'Full show', null, null, 'https://c.com/full.jpg', '2026-01-01'),
+    ('c.com/desc', 'e3', 'Clip', 'a #short one', null, 'https://c.com/short2.jpg', '2026-02-02'),
+    ('d.com/link', 'e1', 'Clip', null, 'https://youtube.com/shorts/x', 'https://d.com/short.jpg', '2026-02-01'),
+    ('d.com/link', 'e2', 'Full show', null, null, 'https://d.com/full.jpg', '2026-01-01'),
+    ('e.com/singular', 'e1', 'Clip #short', null, null, 'https://e.com/short.jpg', '2026-02-01'),
+    ('e.com/singular', 'e2', 'Full show', null, null, 'https://e.com/full.jpg', '2026-01-01')`;
+  const body = await (await handleSearch({ sql }, { query: "rust" })).json();
+  const thumbs = Object.fromEntries(body.map((r: { channel_id: string; episode_thumb: string }) => [r.channel_id, r.episode_thumb]));
+  assertEquals(thumbs, {
+    "a.com/mix": "https://a.com/full.jpg",
+    "b.com/shorts": "https://b.com/short.jpg",
+    "c.com/desc": "https://c.com/full.jpg",
+    "d.com/link": "https://d.com/full.jpg",
+    "e.com/singular": "https://e.com/full.jpg",
+  });
 });
 
-Deno.test("handleSearch: missing query returns 400 with field name and example", async () => {
-  const sql = mockSql();
-  const res = await handleSearch({ sql: sql as any }, { query: null });
+dbTest("handleSearch: query text is a bound parameter, not SQL", async () => {
+  const sql = await freshSql();
+  await insertChannel(sql, { id: "a.com/rust", title: "Rust Weekly", quality: 80 });
+  const res = await handleSearch({ sql }, { query: "rust'; drop table channel; --" });
+  assertEquals(res.status, 200);
+  assertEquals((await sql`select count(*)::int as n from channel`)[0]!.n, 1);
+});
+
+dbTest("handleSearch: tag: prefix filters by tag, orders by quality, and skips the threshold only for featured", async () => {
+  const sql = await freshSql();
+  await insertChannel(sql, { id: "a.com/p1", title: "P One", quality: 40, tags: ["programming"] });
+  await insertChannel(sql, { id: "b.com/p2", title: "P Two", quality: 70, tags: ["programming", "rust"] });
+  await insertChannel(sql, { id: "c.com/plow", title: "P Low", quality: 5, tags: ["programming"] });
+  await insertChannel(sql, { id: "d.com/other", title: "Other", quality: 90, tags: ["cooking"] });
+  await insertChannel(sql, { id: "e.com/f1", title: "F One", quality: 1, tags: ["featured"], latest: "2026-01-01" });
+  await insertChannel(sql, { id: "f.com/f2", title: "F Two", quality: 99, tags: ["featured"], latest: "2025-01-01" });
+  const search = async (q: string) => ids(await (await handleSearch({ sql }, { query: q })).json());
+  assertEquals(await search("tag:programming"), ["b.com/p2", "a.com/p1"]);
+  assertEquals(await search("tag:programming tag:rust"), ["b.com/p2"]);
+  assertEquals(await search("tag:programming two"), ["b.com/p2"]);
+  assertEquals(await search("tag:featured"), ["e.com/f1", "f.com/f2"]);
+});
+
+dbTest("handleSearch: missing query returns 400 with field name and example", async () => {
+  const res = await handleSearch({ sql: pg.sql }, { query: null });
   assertEquals(res.status, 400);
   const body = await res.text();
   assertStringIncludes(body, "'q'");
   assertStringIncludes(body, "/search?q=");
-  assertEquals(sql.calls.length, 0);
 });
 
-Deno.test("handleSearch: empty results return 200 with empty array", async () => {
-  const sql = mockSql([[], []]);
-  const res = await handleSearch({ sql: sql as any }, { query: "nothing" });
+dbTest("handleSearch: empty results return 200 with empty array", async () => {
+  const res = await handleSearch({ sql: pg.sql }, { query: "nothing" });
   assertEquals(res.status, 200);
   assertEquals(await res.json(), []);
-});
-
-Deno.test("handleSearch: quality threshold appears in generated SQL", async () => {
-  const sql = mockSql([[], [], []]);
-  await handleSearch({ sql: sql as any }, { query: "rust" });
-  const templates = sql.calls.filter((c) => c.kind === "template");
-  const outerSql = templates[2]!.strings!.join(" ");
-  assertMatch(outerSql, /quality\s*>=\s*/);
-  assert(templates[2]!.values!.includes(10));
 });
 
 // ==================================================================
@@ -584,124 +605,159 @@ function xmlResponse(body: string, status = 200): Response {
   return new Response(body, { status, headers: { "content-type": "application/xml" } });
 }
 
-Deno.test("handleRssProxy: cache hit returns cached body without fetch or sql", async () => {
+dbTest("handleRssProxy: cache hit returns cached body without fetch or database write", async () => {
   const cache = await tempCache();
   const url = "https://cached.example.com/feed.xml";
   await cache.put(url, PODCAST_ITUNES_XML);
-  const sql = mockSql();
+  const sql = await freshSql();
   const fetcher = mockFetch({});
-  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("content-type"), "application/xml");
   assertStringIncludes(await res.text(), "Test Podcast");
   assertEquals(fetcher.calls.length, 0);
-  assertEquals(sql.calls.length, 0);
+  assertEquals((await sql`select channel_id from channel`).length, 0);
 });
 
-Deno.test("handleRssProxy: cache miss fetches, parses, upserts, caches", async () => {
+dbTest("handleRssProxy: cache miss fetches, parses, upserts the channel, caches", async () => {
   const cache = await tempCache();
   const url = "https://miss.example.com/feed.xml";
-  const sql = mockSql([null]); // one template insert, returns null (ignored)
+  const sql = await freshSql();
   const fetcher = mockFetch({ [url]: xmlResponse(PODCAST_ITUNES_XML) });
-  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 200);
   assertEquals(fetcher.calls, [url]);
-  // sql was invoked both as direct (sql(channel)) and as template (insert ... ${...})
-  const directs = sql.calls.filter((c) => c.kind === "direct");
-  const templates = sql.calls.filter((c) => c.kind === "template");
-  assertEquals(directs.length, 1);
-  assertEquals(templates.length, 1);
-  // Inserted channel object shape
-  const inserted = directs[0]!.direct as { title: string; channel_id: string };
-  assertEquals(inserted.title, "Test Podcast & Friends");
-  assertEquals(inserted.channel_id, "example.com/podcast");
-  // Outer template is an upsert on channel
-  const outerSql = templates[0]!.strings!.join(" ");
-  assertStringIncludes(outerSql, "insert into channel");
-  assertStringIncludes(outerSql, "on conflict");
-  // Body now cached
+  const rows = await sql`select channel_id, rss, title from channel`;
+  assertEquals(rows.map((r) => ({ ...r })), [{
+    channel_id: "example.com/podcast",
+    rss: "https://example.com/podcast",
+    title: "Test Podcast & Friends",
+  }]);
   assertExists(await cache.get(url));
 });
 
-Deno.test("handleRssProxy: YouTube feed results in youtube.com/channel/... channel_id", async () => {
-  const cache = await tempCache();
+dbTest("handleRssProxy: a second fetch updates the title and merges tags without duplicates", async () => {
+  // The YouTube feed parses to tags ["youtube"]. A feed with null tags skips the merge branch.
   const url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCtestchannelid12345";
-  const sql = mockSql([null]);
-  const fetcher = mockFetch({ [url]: xmlResponse(YOUTUBE_XML) });
-  await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
-  const inserted = sql.calls.find((c) => c.kind === "direct")!.direct as { channel_id: string; tags: string[] };
-  assertEquals(inserted.channel_id, "youtube.com/channel/UCtestchannelid12345");
-  assertEquals(inserted.tags, ["youtube"]);
+  const sql = await freshSql();
+  const run = async (xml: string) => {
+    const cache = await tempCache();
+    await handleRssProxy({ sql, cache, fetcher: mockFetch({ [url]: xmlResponse(xml) }) }, { rssUrl: url });
+  };
+  await run(YOUTUBE_XML);
+  await sql`update channel set tags = array['zzz', 'youtube']`;
+  await run(YOUTUBE_XML.replace("Test YouTube Channel", "Renamed"));
+  const rows = await sql`select title, tags from channel`;
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0]!.title, "Renamed");
+  assertEquals([...rows[0]!.tags].sort(), ["youtube", "zzz"]);
 });
 
-Deno.test("handleRssProxy: upstream non-2xx returns 502 with URL and status in message", async () => {
+dbTest("handleRssProxy: a second fetch updates description and thumb and keeps tags when the feed has none", async () => {
+  const url = "https://again.example.com/feed.xml";
+  const sql = await freshSql();
+  const run = async (xml: string) => {
+    await handleRssProxy({ sql, cache: await tempCache(), fetcher: mockFetch({ [url]: xmlResponse(xml) }) }, { rssUrl: url });
+  };
+  await run(PODCAST_ITUNES_XML);
+  await sql`update channel set tags = array['keep']`;
+  await run(PODCAST_ITUNES_XML.replace("A test podcast with &lt;b&gt;HTML&lt;/b&gt; tags", "New words").replace("podcast.jpg", "new.jpg"));
+  const rows = await sql`select description, thumb, tags from channel`;
+  assertEquals(rows.map((r) => ({ ...r })), [{ description: "New words", thumb: "https://example.com/new.jpg", tags: ["keep"] }]);
+});
+
+dbTest("handleRssProxy: YouTube feed results in youtube.com/channel/... channel_id", async () => {
+  const cache = await tempCache();
+  const url = "https://www.youtube.com/feeds/videos.xml?channel_id=UCtestchannelid12345";
+  const sql = await freshSql();
+  const fetcher = mockFetch({ [url]: xmlResponse(YOUTUBE_XML) });
+  await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
+  const rows = await sql`select channel_id, tags from channel`;
+  assertEquals(rows.map((r) => ({ ...r })), [{ channel_id: "youtube.com/channel/UCtestchannelid12345", tags: ["youtube"] }]);
+});
+
+dbTest("handleRssProxy: upstream non-2xx returns 502 with URL and status in message", async () => {
   const cache = await tempCache();
   const url = "https://dead.example.com/feed.xml";
-  const sql = mockSql();
+  const sql = pg.sql;
   const fetcher = mockFetch({ [url]: new Response("not found", { status: 404, statusText: "Not Found" }) });
-  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   const body = await res.text();
   assertStringIncludes(body, url);
   assertStringIncludes(body, "404");
 });
 
-Deno.test("handleRssProxy: fetch rejection returns 502 with URL and cause", async () => {
+dbTest("handleRssProxy: fetch rejection returns 502 with URL and cause", async () => {
   const cache = await tempCache();
   const url = "https://broken.example.com/feed.xml";
-  const sql = mockSql();
+  const sql = pg.sql;
   const fetcher = mockFetch({
     [url]: () => {
       throw new TypeError("DNS lookup failed");
     },
   });
-  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   const body = await res.text();
   assertStringIncludes(body, url);
   assertStringIncludes(body, "DNS lookup failed");
 });
 
-Deno.test("handleRssProxy: origin timeout returns 502 naming the URL and the timeout in ms", async () => {
+dbTest("handleRssProxy: origin timeout returns 502 naming the URL and the timeout in ms", async () => {
   const cache = await tempCache();
   const url = "https://slow.example.com/feed.xml";
-  const sql = mockSql();
+  const sql = pg.sql;
   const fetcher = mockFetch({
     [url]: () => {
       throw new DOMException("signal timed out", "TimeoutError");
     },
   });
-  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   assertStringIncludes(await res.text(), `Timed out after 15000 ms fetching ${url}`);
 });
 
-Deno.test("handleRssProxy: HTML body returns 400 with URL and missing-root-element hint", async () => {
+dbTest("handleRssProxy: HTML body returns 400 with URL and missing-root-element hint", async () => {
   const cache = await tempCache();
   const url = "https://html.example.com/page.html";
-  const sql = mockSql();
+  const sql = await freshSql();
   const fetcher = mockFetch({ [url]: new Response(HTML_NOT_A_FEED, { status: 200 }) });
-  const res = await handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 400);
   const body = await res.text();
   assertStringIncludes(body, url);
   assertStringIncludes(body, "<rss>");
   assertStringIncludes(body, "<feed>");
-  assertEquals(sql.calls.length, 0);
+  assertEquals((await sql`select channel_id from channel`).length, 0);
 });
 
-Deno.test("handleRssProxy: gibberish XML bytes → parse throws (let it crash)", async () => {
+dbTest("handleRssProxy: gibberish XML bytes → parse throws (let it crash)", async () => {
   const cache = await tempCache();
   const url = "https://gibberish.example.com/feed.xml";
-  const sql = mockSql();
+  const sql = pg.sql;
   const fetcher = mockFetch({
     [url]: new Response("<feed>not actually a valid atom feed at all", { status: 200 }),
   });
   // Expect the handler to raise rather than silently swallow.
   await assertRejects(
-    () => handleRssProxy({ sql: sql as any, cache, fetcher }, { rssUrl: url }),
+    () => handleRssProxy({ sql, cache, fetcher }, { rssUrl: url }),
     Error,
   );
+});
+
+dbTest("handleRssProxy: a feed with no channel link or no title throws naming the feed URL and the missing element", async () => {
+  const sql = await freshSql();
+  const url = "https://nolink.example.com/feed.xml";
+  const noLink = `<rss version="2.0"><channel><title>No Link</title><description>x</description></channel></rss>`;
+  const noTitle = `<rss version="2.0"><channel><link>https://nolink.example.com/</link></channel></rss>`;
+  for (const [xml, element] of [[noLink, "<link>"], [noTitle, "<title>"]]) {
+    const cache = await tempCache();
+    const err = await assertRejects(() => handleRssProxy({ sql, cache, fetcher: mockFetch({ [url]: xmlResponse(xml) }) }, { rssUrl: url }));
+    assertStringIncludes((err as Error).message, url);
+    assertStringIncludes((err as Error).message, element);
+  }
+  assertEquals((await sql`select count(*)::int as n from channel`)[0]!.n, 0);
 });
 
 function resolveFetch(extra: (url: string) => Response | undefined): typeof fetch {
@@ -715,40 +771,40 @@ function resolveFetch(extra: (url: string) => Response | undefined): typeof fetc
 
 const TWO_HOURS_MS = 2 * 60 * 60 * 1000;
 
-Deno.test("handleRssProxy: @handle → scrape → UULF feed XML", async () => {
+dbTest("handleRssProxy: @handle → scrape → UULF feed XML", async () => {
   const xml =
     `<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015"><yt:playlistId>UULFreal</yt:playlistId><title>ok</title><entry><id>x</id><title>t</title><link href="https://y"/><published>2026-01-01T00:00:00Z</published><yt:channelId>UCreal</yt:channelId></entry></feed>`;
   const fetcher = resolveFetch((url) => url.includes("playlist_id=UULFreal") ? new Response(xml) : undefined);
   const res = await handleRssProxy(
-    { sql: mockSql() as any, cache: await tempCache(), fetcher },
+    { sql: pg.sql, cache: await tempCache(), fetcher },
     { rssUrl: "https://www.youtube.com/@AtriocClips" },
   );
   assertEquals(res.status, 200);
   assertStringIncludes(await res.text(), "<yt:playlistId>UULFreal");
 });
 
-Deno.test("handleRssProxy: expired cache triggers refetch", async () => {
+dbTest("handleRssProxy: expired cache triggers refetch", async () => {
   const url = "https://example.com/feed.xml";
   const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
-  const newXml = `<?xml version="1.0"?><rss><channel><title>new</title></channel></rss>`;
+  const newXml = `<?xml version="1.0"?><rss><channel><title>new</title><link>https://example.com/</link></channel></rss>`;
   const cache = await tempCache();
   await cache.put(url, oldXml);
   await age(cache.dir, TWO_HOURS_MS);
   const fetcher = mockFetch({ [url]: xmlResponse(newXml) });
-  const res = await handleRssProxy({ sql: mockSql() as any, cache, fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: pg.sql, cache, fetcher }, { rssUrl: url });
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("x-telecast-stale"), null);
   assertEquals(await res.text(), newXml);
 });
 
-Deno.test("handleRssProxy: expired cache + origin failure serves stale", async () => {
+dbTest("handleRssProxy: expired cache + origin failure serves stale", async () => {
   const url = "https://example.com/feed.xml";
   const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
   const cache = await tempCache();
   await cache.put(url, oldXml);
   await age(cache.dir, TWO_HOURS_MS);
   const fetcher = mockFetch({ [url]: new Response("nope", { status: 500 }) });
-  const { result: res, logs } = await captureConsoleError(() => handleRssProxy({ sql: mockSql() as any, cache, fetcher }, { rssUrl: url }));
+  const { result: res, logs } = await captureConsoleError(async () => handleRssProxy({ sql: pg.sql, cache, fetcher }, { rssUrl: url }));
   assertEquals(logs, [`rss proxy: serving stale ${url}: HTTP 500`]);
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("x-telecast-stale"), "1");
@@ -765,33 +821,33 @@ const stalledBody = (headers: HeadersInit = {}) =>
     { headers },
   );
 
-Deno.test("handleRssProxy: body timeout after headers serves stale, else 502 naming URL and timeout", async () => {
+dbTest("handleRssProxy: body timeout after headers serves stale, else 502 naming URL and timeout", async () => {
   const url = "https://example.com/feed.xml";
   const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
   const cache = await tempCache();
   await cache.put(url, oldXml);
   await age(cache.dir, TWO_HOURS_MS);
   const fetcher = mockFetch({ [url]: () => stalledBody() });
-  const stale = await handleRssProxy({ sql: mockSql() as any, cache, fetcher }, { rssUrl: url });
+  const stale = await handleRssProxy({ sql: pg.sql, cache, fetcher }, { rssUrl: url });
   assertEquals(stale.headers.get("x-telecast-stale"), "1");
   assertEquals(await stale.text(), oldXml);
-  const res = await handleRssProxy({ sql: mockSql() as any, cache: await tempCache(), fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: pg.sql, cache: await tempCache(), fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   assertStringIncludes(await res.text(), `Timed out after 15000 ms fetching ${url}`);
 });
 
-Deno.test("handleRssProxy: non-ok upstream with an unreadable body still reports the HTTP status", async () => {
+dbTest("handleRssProxy: non-ok upstream with an unreadable body still reports the HTTP status", async () => {
   const url = "https://example.com/gone.xml";
   const fetcher = mockFetch({ [url]: () => new Response(stalledBody().body, { status: 404, statusText: "Not Found" }) });
-  const res = await handleRssProxy({ sql: mockSql() as any, cache: await tempCache(), fetcher }, { rssUrl: url });
+  const res = await handleRssProxy({ sql: pg.sql, cache: await tempCache(), fetcher }, { rssUrl: url });
   assertEquals(res.status, 502);
   assertStringIncludes(await res.text(), "HTTP 404 Not Found");
 });
 
-Deno.test("handleRssProxy: error body shows both raw and resolved URL on non-feed response", async () => {
+dbTest("handleRssProxy: error body shows both raw and resolved URL on non-feed response", async () => {
   const fetcher = resolveFetch(() => new Response("<html>youtube is down</html>"));
   const res = await handleRssProxy(
-    { sql: mockSql() as any, cache: await tempCache(), fetcher },
+    { sql: pg.sql, cache: await tempCache(), fetcher },
     { rssUrl: "https://www.youtube.com/@AtriocClips" },
   );
   assertEquals(res.status, 400);
@@ -899,21 +955,21 @@ Deno.test("handleThumbProxy: a body over 20 MB → fallback SVG + logs URL and c
   }
 });
 
-Deno.test("handleRssProxy: a body over 50 MB returns 502 naming the URL and the cap", async () => {
+dbTest("handleRssProxy: a body over 50 MB returns 502 naming the URL and the cap", async () => {
   const url = "https://example.com/huge.xml";
   const res = await handleRssProxy(
-    { sql: mockSql() as any, cache: await tempCache(), fetcher: mockFetch({ [url]: () => bigBody(51, {}) }) },
+    { sql: pg.sql, cache: await tempCache(), fetcher: mockFetch({ [url]: () => bigBody(51, {}) }) },
     { rssUrl: url },
   );
   assertEquals(res.status, 502);
   assertStringIncludes(await res.text(), `Feed at ${url} is larger than 50 MB. Expected a feed under 50 MB.`);
 });
 
-Deno.test("proxies: a scheme other than http or https returns 400 before any fetch or cache read", async () => {
+dbTest("proxies: a scheme other than http or https returns 400 before any fetch or cache read", async () => {
   for (const url of ["file:///etc/hostname", "resolved2:https://example.com/feed.xml", "data:text/xml,<rss>"]) {
     const fetcher = mockFetch({});
     const expected = `Expected an http or https URL, received ${url}. Encode the URL with encodeURIComponent.`;
-    const rss = await handleRssProxy({ sql: mockSql() as any, cache: await tempCache(), fetcher }, { rssUrl: url });
+    const rss = await handleRssProxy({ sql: pg.sql, cache: await tempCache(), fetcher }, { rssUrl: url });
     assertEquals([rss.status, await rss.text()], [400, expected]);
     const thumb = await handleThumbProxy({ cache: await tempCache(), fetcher }, { thumbUrl: url });
     assertEquals([thumb.status, await thumb.text()], [400, expected]);
