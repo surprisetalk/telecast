@@ -7,6 +7,9 @@ import { resolveYoutubeFeedUrl } from "../../_shared/youtube.ts";
 const CACHE_TTL_MS = 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 15_000;
 const MAX_MB = 50;
+// REVIEW: A failed upstream feed answers 500, not 502. Cloudflare replaces an origin's 502 or 504 with its own page, "error code: 502",
+// so the visitor and the status fence probe lose the message. Alternative: answer 502 and probe the fence through pc's unix socket.
+// It keeps the HTTP meaning, but every visitor still reads Cloudflare's page.
 
 export async function handleRssProxy(
   deps: { sql: Sql; cache: Cache; fetcher: typeof fetch },
@@ -29,7 +32,7 @@ export async function handleRssProxy(
       resolved = await resolveYoutubeFeedUrl(rawUrl, fetcher);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return new Response(`Resolver threw for ${rawUrl}: ${msg}`, { status: 502 });
+      return new Response(`Resolver threw for ${rawUrl}: ${msg}`, { status: 500 });
     }
     if ("error" in resolved) return new Response(resolved.error, { status: 400 });
     rssUrl = resolved.url;
@@ -51,7 +54,7 @@ export async function handleRssProxy(
       ? err.message
       : String(err);
     if (cachedText) return stale(msg);
-    return new Response(`Network error fetching ${rssUrl} (raw input: ${rawUrl}): ${msg}`, { status: 502 });
+    return new Response(`Network error fetching ${rssUrl} (raw input: ${rawUrl}): ${msg}`, { status: 500 });
   };
   let fetchResponse: Response;
   try {
@@ -62,7 +65,7 @@ export async function handleRssProxy(
   if (!fetchResponse.ok) {
     const status = `HTTP ${fetchResponse.status} ${fetchResponse.statusText}`.trim();
     if (cachedText) return stale(status);
-    return new Response(`Upstream feed fetch failed for ${rssUrl} (raw input: ${rawUrl}): ${status}`, { status: 502 });
+    return new Response(`Upstream feed fetch failed for ${rssUrl} (raw input: ${rawUrl}): ${status}`, { status: 500 });
   }
   let bytes: Uint8Array | null;
   try {
@@ -73,7 +76,7 @@ export async function handleRssProxy(
   if (!bytes) {
     const tooBig = `Feed at ${rssUrl} is larger than ${MAX_MB} MB. Expected a feed under ${MAX_MB} MB.`;
     if (cachedText) return stale(tooBig);
-    return new Response(tooBig, { status: 502 });
+    return new Response(tooBig, { status: 500 });
   }
   const text = new TextDecoder().decode(bytes);
   if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
@@ -90,7 +93,7 @@ export async function handleRssProxy(
   } catch (err) {
     return new Response(
       `Expected a parseable feed at ${rssUrl} (raw input: ${rawUrl}), received a parse error: ${err instanceof Error ? err.message : err}`,
-      { status: 502 },
+      { status: 500 },
     );
   }
   // The channel table needs rss and title, and a feed without <link> or <title> parses to null for them.
@@ -98,7 +101,7 @@ export async function handleRssProxy(
     if (!channel[column]) {
       return new Response(
         `Expected feed at ${rssUrl} (raw input: ${rawUrl}) to have a channel ${element}, received none. Fix the feed, or skip this URL.`,
-        { status: 502 },
+        { status: 500 },
       );
     }
   }

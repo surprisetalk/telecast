@@ -19,16 +19,17 @@ Requires `.env` with `DATABASE_URL`, a postgres URL. postgres.js reads a unix so
 checked/tested/formatted with `deno check|test|fmt`. Tests run with `-A`; `server.test.ts` starts the server with the flags of
 `deno task serve`, so a missing permission fails the suite.
 
-Install with `npm ci`. package.json pins `elm` and `elm-test` exactly. A range like `^0.19.1-6` admits `0.19.1`, because semver
-ranks a release above its prereleases. `elm@0.19.1` gets its binary from a postinstall script. An install that skips the script,
-like `deno install`, which also ignores package-lock.json, leaves `bin/elm` as a wrapper that spawns itself without end.
+Install with `npm ci`. package.json pins `elm` and `elm-test` exactly. A range like `^0.19.1-6` admits `0.19.1`, because semver ranks a
+release above its prereleases. `elm@0.19.1` gets its binary from a postinstall script. An install that skips the script, like
+`deno install`, which also ignores package-lock.json, leaves `bin/elm` as a wrapper that spawns itself without end.
 
 ## Architecture
 
 Telecasts is a podcast/video feed aggregator with:
 
 - **Frontend** (`src/Main.elm`): Elm 0.19.1 SPA with localStorage ports for library persistence
-- **Backend** (`server.ts`, handlers in `functions/`, the proxies' memory budget in `functions/_shared/budget.ts`): `deno serve`, with feed and thumb caches on disk in `cache/`
+- **Backend** (`server.ts`, handlers in `functions/`, the proxies' memory budget in `functions/_shared/budget.ts`): `deno serve`, with feed
+  and thumb caches on disk in `cache/`
 - **Database**: PostgreSQL (schema in `db.sql`)
 
 ### Endpoints
@@ -51,16 +52,17 @@ Supports RSS 2.0, Atom, RDF, and YouTube channel feeds. Feed parsing logic in `f
 
 ### Caches and limits
 
-`functions/_shared/cache.ts` keeps one file per key in `cache/rss` and `cache/thumb`: the name is the key's sha256, and the mtime is
-the write time. The server deletes files older than 7 days at startup and each hour. Visitors choose the URLs, so every limit is a
-constant in the handler: only http and https, 50 MB per feed, 20 MB and 25 megapixels per image.
+`functions/_shared/cache.ts` keeps one file per key in `cache/rss` and `cache/thumb`: the name is the key's sha256, and the mtime is the
+write time. The server deletes files older than 7 days at startup and each hour. Visitors choose the URLs, so every limit is a constant in
+the handler: only http and https, 50 MB per feed, 20 MB and 25 megapixels per image.
 
 ### Production
 
 The home server pc runs `deno task serve` as the systemd unit `telecast-web` (config: `surprisetalk/pc`, `/etc/nixos/flake.nix`).
-cloudflared serves `telecast.company` from the unit's unix socket. systemd drops the unit's packets to loopback, LAN, and tailnet,
-because the proxies fetch any URL. `deno task status` checks that fence and fails when it stops dropping. A pull of this repo on pc
-rebuilds `public/elm.js` and restarts the unit.
+cloudflared serves `telecast.company` from the unit's unix socket. systemd drops the unit's packets to loopback, LAN, and tailnet, because
+the proxies fetch any URL. `deno task status` checks that fence and fails when it stops dropping. A pull of this repo on pc rebuilds
+`public/elm.js` and restarts the unit. Cloudflare replaces an origin's 502 or 504 with its own page, so a handler answers a failure with
+500, or with 503 when it is busy.
 
 ### Search
 
@@ -72,21 +74,21 @@ Full-text search uses PostgreSQL `to_tsquery`. Special syntax: `tag:{tag_name}` 
 - **Tags** are inferred by `scripts/refresh.ts` (`KEYWORD_TAG_MAP` → coarse + fine-grained tags, language, content type, iTunes categories).
   The fine-grained tags match the `discoverTags` chips in `Main.elm`.
 - **`tag:featured`** drives the homepage bar (`Main.elm` loads `/search?q=tag:featured`). It is human-curated: `scripts/curate.ts` syncs the
-  `featured` tag to `scripts/curation.json` `priority` minus `blocked`. The pass is idempotent and
-  self-syncing, so hand-picks must live in `priority` to survive.
-  `search.ts` also shows `tag:featured` by recent content (not gated/ordered by the broken `quality` score, unlike other tag pages).
-- **Seeding** new channels: `scripts/seed.ts` mines YouTube channel links from Hacker News (Algolia API), samples a pinned GitHub
-  dataset of channel ids, indexes three archive.org collection feeds, and reads `scripts/lectures.json` (curated lecture channels, tagged
-  `lectures`). It resolves YouTube links via `functions/_shared/youtube.ts` and inserts rows; a row that exists only gains tags.
-  `refresh.ts` then fills in episodes/tags/quality.
+  `featured` tag to `scripts/curation.json` `priority` minus `blocked`. The pass is idempotent and self-syncing, so hand-picks must live in
+  `priority` to survive. `search.ts` also shows `tag:featured` by recent content (not gated/ordered by the broken `quality` score, unlike
+  other tag pages).
+- **Seeding** new channels: `scripts/seed.ts` mines YouTube channel links from Hacker News (Algolia API), samples a pinned GitHub dataset of
+  channel ids, indexes three archive.org collection feeds, and reads `scripts/lectures.json` (curated lecture channels, tagged `lectures`).
+  It resolves YouTube links via `functions/_shared/youtube.ts` and inserts rows; a row that exists only gains tags. `refresh.ts` then fills
+  in episodes/tags/quality.
 
 ### Scripts & timers
 
 `scripts/refresh.ts` (feeds, every 5 min), `scripts/seed.ts` (discovery, weekly), `scripts/curate.ts` (featured, daily) — each runs as a
-systemd timer on pc (`telecast-refresh`, `telecast-seed`, `telecast-curate`; config in `surprisetalk/pc`). On pc they reach
-Postgres on its socket, which Deno's permissions treat as a file: `--allow-read` and `--allow-write=/run/postgresql`. GitHub
-Actions runs only `ci.yml`, the checks. Shared helpers: `scripts/pool.ts` (concurrency), `functions/_shared/rss.ts` (parsing), `functions/_shared/body.ts` (capped body reads),
-`functions/_shared/youtube.ts` (channel-URL → feed-URL resolution, shared with the RSS proxy).
+systemd timer on pc (`telecast-refresh`, `telecast-seed`, `telecast-curate`; config in `surprisetalk/pc`). On pc they reach Postgres on its
+socket, which Deno's permissions treat as a file: `--allow-read` and `--allow-write=/run/postgresql`. GitHub Actions runs only `ci.yml`, the
+checks. Shared helpers: `scripts/pool.ts` (concurrency), `functions/_shared/rss.ts` (parsing), `functions/_shared/body.ts` (capped body
+reads), `functions/_shared/youtube.ts` (channel-URL → feed-URL resolution, shared with the RSS proxy).
 
 ## Elm Frontend
 

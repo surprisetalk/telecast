@@ -80,7 +80,7 @@ Deno.test("server: serves the app, app routes, search, and a resized thumb", asy
     await missing.body?.cancel();
 
     const search = await fetch(`${base}/search?q=rust`);
-    assertEquals(search.status, 502);
+    assertEquals(search.status, 500);
     assertStringIncludes(await search.text(), "Search failed");
 
     const thumbUrl = `http://127.0.0.1:${upstream.addr.port}/art.png`;

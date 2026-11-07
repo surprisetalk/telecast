@@ -1,7 +1,7 @@
 // Memory budget. telecast-web has MemoryMax=2G, and systemd kills it above that: the site is down for the 30 s RestartSec.
 // Measured with `systemd-run --user --scope -p MemoryMax=4G -p MemorySwapMax=0 deno serve ...` on a scratch Postgres, 45 MB
 // RSS items (/proxy/rss/ ?n=i, distinct upstream URLs) and a 25 MP, 11 MB PNG (/proxy/thumb/). VmHWM of the deno process, idle 0.10 GB:
-//   rss, parallel 1 / 4 / 8 / 16 / 30 / 60: 0.52 / 1.04 / 1.50 / 1.60 / 2.65 / 3.1 GB. Past 8, the 15 s fetch timeout answers 502 for most.
+//   rss, parallel 1 / 4 / 8 / 16 / 30 / 60: 0.52 / 1.04 / 1.50 / 1.60 / 2.65 / 3.1 GB. Past 8, the 15 s fetch timeout answers 500 for most.
 //   thumb, parallel 1 / 4 / 8: 0.14 / 0.28 / 0.43 GB.
 // 60 parallel feeds peak above 2 GB, so a cap is needed. Peak per request: 0.94 GB / 4 feeds, rounded up to 280 MB per 45 MB feed.
 // 0.34 GB / 8 thumbs, rounded up to 50 MB per 25 MP, 11 MB image. With the budget below, VmHWM peaked at: 60 parallel 45 MB feeds

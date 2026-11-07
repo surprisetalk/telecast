@@ -114,10 +114,10 @@ Deno.test("dbStats: a password with a bare % names the fix and hides the passwor
 });
 
 Deno.test("fenceHolds: only a timeout from the feed proxy means pc's loopback is unreachable", () => {
-  assertEquals(fenceHolds(502, "Network error fetching http://127.0.0.1:2/ (raw input: x): Timed out after 15000 ms fetching x"), true);
-  assertEquals(fenceHolds(502, "Network error fetching http://127.0.0.1:2/ (raw input: x): Connection refused (os error 111)"), false);
+  assertEquals(fenceHolds(500, "Network error fetching http://127.0.0.1:2/ (raw input: x): Timed out after 15000 ms fetching x"), true);
+  assertEquals(fenceHolds(500, "Network error fetching http://127.0.0.1:2/ (raw input: x): Connection refused (os error 111)"), false);
   assertEquals(fenceHolds(400, "Not a valid feed at http://127.0.0.1:2/"), false);
-  assertEquals(fenceHolds(502, "Upstream feed fetch failed for http://127.0.0.1:2/: HTTP 404"), false);
+  assertEquals(fenceHolds(500, "Upstream feed fetch failed for http://127.0.0.1:2/: HTTP 404"), false);
   assertThrows(() => fenceHolds(502, "error code: 502"), Error, "Check that telecast-web on pc serves the site.");
 });
 

@@ -12,7 +12,7 @@ const SEARCH_URL = `${SITE}/search?q=tag:featured`;
 // times out. Nothing listens on port 2, so an unfenced fetch is refused at once. fetch itself refuses port 1.
 const FENCE_TARGET = "http://127.0.0.1:2/";
 const FENCE_URL = `${SITE}/proxy/rss/${encodeURIComponent(FENCE_TARGET)}`;
-// The feed proxy waits 15 s on a dropped connection before it answers 502.
+// The feed proxy waits 15 s on a dropped connection before it answers 500.
 const FENCE_TIMEOUT_MS = 30_000;
 // systemd logs this MESSAGE_ID with JOB_RESULT=done when a unit's start job succeeds: for a oneshot, a run that exited 0.
 const JOB_DONE_ID = "39f53479d3a045ac8e11786248231fbf";
@@ -121,12 +121,12 @@ async function searchMs(): Promise<number> {
 }
 
 export function fenceHolds(status: number, body: string): boolean {
-  if (status === 502 && body.startsWith("Network error fetching")) return body.includes("Timed out after");
-  if ((status === 400 && body.startsWith("Not a valid feed")) || (status === 502 && body.startsWith("Upstream feed fetch failed"))) {
+  if (status === 500 && body.startsWith("Network error fetching")) return body.includes("Timed out after");
+  if ((status === 400 && body.startsWith("Not a valid feed")) || (status === 500 && body.startsWith("Upstream feed fetch failed"))) {
     return false;
   }
   throw new Error(
-    `Expected a 502 "Network error fetching ..." from the feed proxy at ${FENCE_URL}, received ${status}: ${
+    `Expected a 500 "Network error fetching ..." from the feed proxy at ${FENCE_URL}, received ${status}: ${
       body.slice(0, 200)
     }. Check that telecast-web on pc serves the site.`,
   );

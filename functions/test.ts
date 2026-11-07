@@ -676,19 +676,19 @@ dbTest("handleRssProxy: YouTube feed results in youtube.com/channel/... channel_
   assertEquals(rows.map((r) => ({ ...r })), [{ channel_id: "youtube.com/channel/UCtestchannelid12345", tags: ["youtube"] }]);
 });
 
-dbTest("handleRssProxy: upstream non-2xx returns 502 with URL and status in message", async () => {
+dbTest("handleRssProxy: upstream non-2xx returns 500 with URL and status in message", async () => {
   const cache = await tempCache();
   const url = "https://dead.example.com/feed.xml";
   const sql = pg.sql;
   const fetcher = mockFetch({ [url]: new Response("not found", { status: 404, statusText: "Not Found" }) });
   const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
-  assertEquals(res.status, 502);
+  assertEquals(res.status, 500);
   const body = await res.text();
   assertStringIncludes(body, url);
   assertStringIncludes(body, "404");
 });
 
-dbTest("handleRssProxy: fetch rejection returns 502 with URL and cause", async () => {
+dbTest("handleRssProxy: fetch rejection returns 500 with URL and cause", async () => {
   const cache = await tempCache();
   const url = "https://broken.example.com/feed.xml";
   const sql = pg.sql;
@@ -698,13 +698,13 @@ dbTest("handleRssProxy: fetch rejection returns 502 with URL and cause", async (
     },
   });
   const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
-  assertEquals(res.status, 502);
+  assertEquals(res.status, 500);
   const body = await res.text();
   assertStringIncludes(body, url);
   assertStringIncludes(body, "DNS lookup failed");
 });
 
-dbTest("handleRssProxy: origin timeout returns 502 naming the URL and the timeout in ms", async () => {
+dbTest("handleRssProxy: origin timeout returns 500 naming the URL and the timeout in ms", async () => {
   const cache = await tempCache();
   const url = "https://slow.example.com/feed.xml";
   const sql = pg.sql;
@@ -714,7 +714,7 @@ dbTest("handleRssProxy: origin timeout returns 502 naming the URL and the timeou
     },
   });
   const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
-  assertEquals(res.status, 502);
+  assertEquals(res.status, 500);
   assertStringIncludes(await res.text(), `Timed out after 15000 ms fetching ${url}`);
 });
 
@@ -732,7 +732,7 @@ dbTest("handleRssProxy: HTML body returns 400 with URL and missing-root-element 
   assertEquals((await sql`select channel_id from channel`).length, 0);
 });
 
-dbTest("handleRssProxy: gibberish XML bytes → 502 with the parse error, no channel row", async () => {
+dbTest("handleRssProxy: gibberish XML bytes → 500 with the parse error, no channel row", async () => {
   const cache = await tempCache();
   const url = "https://gibberish.example.com/feed.xml";
   const sql = pg.sql;
@@ -740,14 +740,14 @@ dbTest("handleRssProxy: gibberish XML bytes → 502 with the parse error, no cha
     [url]: new Response("<feed>not actually a valid atom feed at all", { status: 200 }),
   });
   const res = await handleRssProxy({ sql, cache, fetcher }, { rssUrl: url });
-  assertEquals(res.status, 502);
+  assertEquals(res.status, 500);
   const body = await res.text();
   assertStringIncludes(body, `Expected a parseable feed at ${url}`);
   assertStringIncludes(body, "received a parse error");
   assertEquals((await sql`select count(*)::int as n from channel`)[0]!.n, 0);
 });
 
-dbTest("handleRssProxy: a feed with no channel link or no title → 502 naming the feed URL and the missing element", async () => {
+dbTest("handleRssProxy: a feed with no channel link or no title → 500 naming the feed URL and the missing element", async () => {
   const sql = await freshSql();
   const url = "https://nolink.example.com/feed.xml";
   const noLink = `<rss version="2.0"><channel><title>No Link</title><description>x</description></channel></rss>`;
@@ -755,7 +755,7 @@ dbTest("handleRssProxy: a feed with no channel link or no title → 502 naming t
   for (const [xml, element] of [[noLink, "<link>"], [noTitle, "<title>"]]) {
     const cache = await tempCache();
     const res = await handleRssProxy({ sql, cache, fetcher: mockFetch({ [url]: xmlResponse(xml) }) }, { rssUrl: url });
-    assertEquals(res.status, 502);
+    assertEquals(res.status, 500);
     const body = await res.text();
     assertStringIncludes(body, url);
     assertStringIncludes(body, `to have a channel ${element}, received none`);
@@ -824,7 +824,7 @@ const stalledBody = (headers: HeadersInit = {}) =>
     { headers },
   );
 
-dbTest("handleRssProxy: body timeout after headers serves stale, else 502 naming URL and timeout", async () => {
+dbTest("handleRssProxy: body timeout after headers serves stale, else 500 naming URL and timeout", async () => {
   const url = "https://example.com/feed.xml";
   const oldXml = `<?xml version="1.0"?><rss><channel><title>old</title></channel></rss>`;
   const cache = await tempCache();
@@ -835,7 +835,7 @@ dbTest("handleRssProxy: body timeout after headers serves stale, else 502 naming
   assertEquals(stale.headers.get("x-telecast-stale"), "1");
   assertEquals(await stale.text(), oldXml);
   const res = await handleRssProxy({ sql: pg.sql, cache: await tempCache(), fetcher }, { rssUrl: url });
-  assertEquals(res.status, 502);
+  assertEquals(res.status, 500);
   assertStringIncludes(await res.text(), `Timed out after 15000 ms fetching ${url}`);
 });
 
@@ -843,7 +843,7 @@ dbTest("handleRssProxy: non-ok upstream with an unreadable body still reports th
   const url = "https://example.com/gone.xml";
   const fetcher = mockFetch({ [url]: () => new Response(stalledBody().body, { status: 404, statusText: "Not Found" }) });
   const res = await handleRssProxy({ sql: pg.sql, cache: await tempCache(), fetcher }, { rssUrl: url });
-  assertEquals(res.status, 502);
+  assertEquals(res.status, 500);
   assertStringIncludes(await res.text(), "HTTP 404 Not Found");
 });
 
@@ -960,13 +960,13 @@ Deno.test("handleThumbProxy: a body over 20 MB → fallback SVG + logs URL and c
   }
 });
 
-dbTest("handleRssProxy: a body over 50 MB returns 502 naming the URL and the cap", async () => {
+dbTest("handleRssProxy: a body over 50 MB returns 500 naming the URL and the cap", async () => {
   const url = "https://example.com/huge.xml";
   const res = await handleRssProxy(
     { sql: pg.sql, cache: await tempCache(), fetcher: mockFetch({ [url]: () => bigBody(51, {}) }) },
     { rssUrl: url },
   );
-  assertEquals(res.status, 502);
+  assertEquals(res.status, 500);
   assertStringIncludes(await res.text(), `Feed at ${url} is larger than 50 MB. Expected a feed under 50 MB.`);
 });
 
