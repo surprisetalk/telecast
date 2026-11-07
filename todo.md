@@ -30,16 +30,13 @@
   - Decision: `telecast-web` listens on `unix:/run/telecast-web/web.sock`, and the tunnel ingress for `telecast.company` points there.
     systemd `IPAddressDeny` drops its packets to loopback, LAN, tailnet, and link-local, because the proxies fetch any URL.
   - Tradeoff: the site is down when pc is down. Cloudflare still caches static files and thumbs at the edge.
-  - Status: `telecast.company` points at the tunnel, and the fence condition passes. Three conditions fail. "At most 20% ... failed." holds
-    YouTube's 6 Nov block until about 08:00 UTC 7 Nov. "10 people used telecast yesterday (UTC)." counts 7 Nov first, on 8 Nov. "pc serves
-    origin/main." waits for the push.
-  1. When only "pc serves origin/main." fails, Taylor runs `jj push`. The Tier 1 rule needs a passing status, and the push itself fixes that
-     condition.
-  2. Done when snitch logs telecast as passing: `psql snitch -c "select * from latest where project = 'telecast'"`.
-  3. Delete `~/.neon-service` on pc.
-  4. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon
+  - Status: both domains point at the tunnel, and the fence condition passes. "10 people used telecast yesterday (UTC)." fails until it
+    counts 7 Nov, on 8 Nov. Until then each push needs Taylor.
+  1. Done when snitch logs telecast as passing: `psql snitch -c "select * from latest where project = 'telecast'"`.
+  2. Delete `~/.neon-service` on pc.
+  3. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon
      project, and closes the Neon account.
-  5. Taylor deletes the Mac clone `~/Developer/telecast`. pc holds the commits, `todo.md`, and both dumps.
+  4. Taylor deletes the Mac clone `~/Developer/telecast`. pc holds the commits, `todo.md`, and both dumps.
 - [ ] Each lecture is transcribed and searchable.
   - Parked: Taylor decides how whisper.cpp shares pc's GPU with llama.cpp: a nightly window that stops llama.cpp, or CPU only.
   1. Download audio with yt-dlp and run whisper.cpp on pc's GPU. Store text in a `transcript` table with a tsvector. Blocked: a run of days
