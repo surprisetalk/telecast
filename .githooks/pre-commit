@@ -9,9 +9,15 @@ npx --no-install elm-format --validate src/ tests/
 deno fmt --check server.ts server.test.ts functions/ scripts/
 npx --no-install elm make src/Main.elm --output=/dev/null
 # elm-test exits 0 when it crashes before running a test (e.g. listen EPERM on its socket), so check its summary line.
-summary=$(npx --no-install elm-test --report=json | tail -n 1)
+# elm-test calls process.exit right after its last write. Node writes to a pipe asynchronously, so a pipe loses the tail of the
+# report in about 1 run of 25. Node writes to a file synchronously.
+report=$(mktemp)
+trap 'rm -f "$report"' EXIT
+code=0
+npx --no-install elm-test --report=json >"$report" || code=$?
+summary=$(tail -n 1 "$report")
 echo "$summary" | jq -e '.event == "runComplete" and .failed == "0" and (.passed | tonumber) > 0 and .autoFail == null' >/dev/null || {
-  echo "elm-test: expected a runComplete line with failed 0, passed > 0, autoFail null. Received: ${summary:-<no output>}. Run npx elm-test to see why." >&2
+  echo "elm-test: expected a runComplete line with failed 0, passed > 0, autoFail null. Received exit $code and: ${summary:-<no output>}. Run npx elm-test to see why." >&2
   exit 1
 }
 deno check server.ts server.test.ts functions/ scripts/

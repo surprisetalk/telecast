@@ -30,18 +30,16 @@
   - Decision: `telecast-web` listens on `unix:/run/telecast-web/web.sock`, and the tunnel ingress for `telecast.company` points there.
     systemd `IPAddressDeny` drops its packets to loopback, LAN, tailnet, and link-local, because the proxies fetch any URL.
   - Tradeoff: the site is down when pc is down. Cloudflare still caches static files and thumbs at the edge.
-  - Until step 1, Pages serves from Neon, and pc's copy drifts by each channel a visitor adds. Cloudflare also answers the fence probe with
-    its own 502, so "The feed proxy cannot reach pc's loopback." scores 0.
-  - Taylor does step 1 now. The agent then runs steps 2 to 4.
-  1. Taylor removes the `telecast.company` custom domain from Pages, then runs
-     `cloudflared tunnel route dns 5fbc95ea-fe6b-42a5-81d7-a038bea896d0 telecast.company`.
-  2. `curl -si https://telecast.company/proxy/rss/http%3A%2F%2F127.0.0.1%3A2%2F` prints `Network error fetching ... Timed out after`. Search
-     `tag:featured` on telecast.company, and run `deno task status` on pc.
-  3. Done when snitch logs telecast as passing: `psql snitch -c "select * from latest where project = 'telecast'"`.
-  4. Delete `~/.neon-service` on pc.
-  5. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon
-     project, and closes the Neon account.
-  6. Taylor deletes the Mac clone `~/Developer/telecast`. pc holds the commits, `todo.md`, and both dumps.
+  - Status: `telecast.company` points at the tunnel, and the fence condition passes. Three conditions fail. "At most 20% ... failed." holds
+    YouTube's 6 Nov block until about 08:00 UTC 7 Nov. "10 people used telecast yesterday (UTC)." counts 7 Nov first, on 8 Nov. "pc serves
+    origin/main." waits for the push.
+  1. When only "pc serves origin/main." fails, Taylor runs `jj push`. The Tier 1 rule needs a passing status, and the push itself fixes that
+     condition.
+  2. Done when snitch logs telecast as passing: `psql snitch -c "select * from latest where project = 'telecast'"`.
+  3. Delete `~/.neon-service` on pc.
+  4. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon
+     project, and closes the Neon account. Pages also serves `telecast.horse`, so its deletion drops that domain.
+  5. Taylor deletes the Mac clone `~/Developer/telecast`. pc holds the commits, `todo.md`, and both dumps.
 - [ ] Each lecture is transcribed and searchable.
   - Parked: Taylor decides how whisper.cpp shares pc's GPU with llama.cpp: a nightly window that stops llama.cpp, or CPU only.
   1. Download audio with yt-dlp and run whisper.cpp on pc's GPU. Store text in a `transcript` table with a tsvector. Blocked: a run of days

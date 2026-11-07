@@ -30,9 +30,11 @@ jobs:
           cache: "npm"
       - run: npm ci
       - run: npx elm-format --validate src/ tests/
-      # elm-test exits 0 when it crashes before running a test, so check its summary line.
+      # elm-test exits 0 when it crashes before running a test, so check its summary line. It writes to a file, not a pipe,
+      # because process.exit drops the tail of an asynchronous pipe write (see .githooks/pre-commit).
       - run: |
-          summary=$(npx elm-test --report=json | tail -n 1)
+          npx elm-test --report=json >"$RUNNER_TEMP/elm-test.json"
+          summary=$(tail -n 1 "$RUNNER_TEMP/elm-test.json")
           echo "$summary" | jq -e '.event == "runComplete" and .failed == "0" and (.passed | tonumber) > 0 and .autoFail == null' >/dev/null || {
             echo "elm-test: expected a runComplete line with failed 0, passed > 0, autoFail null. Received: ${summary:-<no output>}. Run npx elm-test to see why." >&2
             exit 1
