@@ -1,5 +1,7 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import sharp from "sharp";
+import { pgtemp } from "jsr:@surprisetalk/pgtemp@0.2.7";
+import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 
 const ROOT = import.meta.dirname!;
 const START_TIMEOUT_MS = 20_000;
@@ -103,7 +105,10 @@ Deno.test("server: exits nonzero and names DATABASE_URL when it is missing", asy
   assertStringIncludes(stderr, "DATABASE_URL is missing");
 });
 
-// Boots the server and returns its base URL, its stderr so far, and a stop function.
+// systemd waits 90 s after SIGTERM, then kills the unit. Until the server exits, cloudflared answers every visitor 502.
+const STOP_TIMEOUT_MS = 5_000;
+
+// Boots the server and returns its base URL, its stderr so far, and a stop function that sends SIGTERM as systemd does.
 async function boot(env: Record<string, string>) {
   const child = serve(env);
   let log = "";
@@ -124,9 +129,16 @@ async function boot(env: Record<string, string>) {
     base,
     log: () => log,
     async stop() {
-      if (!exited) child.kill();
+      const t0 = performance.now();
+      if (!exited) child.kill("SIGTERM");
+      const kill = setTimeout(() => child.kill("SIGKILL"), STOP_TIMEOUT_MS);
       await child.status;
+      clearTimeout(kill);
       await reading;
+      const ms = Math.round(performance.now() - t0);
+      if (ms >= STOP_TIMEOUT_MS) {
+        throw new Error(`Expected the server to exit within ${STOP_TIMEOUT_MS} ms of SIGTERM, received ${ms} ms. stderr: ${log}`);
+      }
     },
   };
 }
@@ -246,6 +258,17 @@ Deno.test("server: 40 small thumbs and 20 small feeds in parallel are never Busy
     await server.stop();
     await upstream.shutdown();
   }
+});
+
+Deno.test("server: SIGTERM after a /search exits at once, with the database connection open", async () => {
+  await using pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(`${ROOT}/db.sql`) });
+  // pgtemp rejects prepared statements. postgres.js reads its options from the URL query too.
+  const server = await boot({ DATABASE_URL: `${pg.url}?prepare=false` });
+  const res = await fetch(`${server.base}/search?q=rust`).catch((e) => {
+    throw new Error(`Expected /search to answer, received ${e}. stderr: ${server.log()}`);
+  });
+  assertEquals(res.status, 200, await res.text());
+  await server.stop();
 });
 
 Deno.test("server: /search without CF-Connecting-IP, or from the status probe, logs no visitor", async () => {

@@ -14,6 +14,9 @@ if (!url) {
   );
 }
 const sql = db(url);
+// deno serve exits on SIGTERM when the event loop drains. postgres.js keeps an idle connection open for its max_lifetime, 30 to 60
+// min, so systemd waited its 90 s and killed the unit on each deploy. end() lets running queries finish for up to 5 s.
+Deno.addSignalListener("SIGTERM", () => sql.end({ timeout: 5 }));
 const rssCache = await diskCache("cache/rss");
 const thumbCache = await diskCache("cache/thumb");
 // Visitors choose the cached URLs, so old files go, and status watches the total size and free disk.
