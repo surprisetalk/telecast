@@ -59,10 +59,10 @@ the handler: only http and https, 50 MB per feed, 20 MB and 25 megapixels per im
 ### Production
 
 The home server pc runs `deno task serve` as the systemd unit `telecast-web` (config: `surprisetalk/pc`, `/etc/nixos/flake.nix`).
-cloudflared serves `telecast.company` from the unit's unix socket. systemd drops the unit's packets to loopback, LAN, and tailnet, because
-the proxies fetch any URL. `deno task status` checks that fence and fails when it stops dropping. A pull of this repo on pc rebuilds
-`public/elm.js` and restarts the unit. Cloudflare replaces an origin's 502 or 504 with its own page, so a handler answers a failure with
-500, or with 503 when it is busy.
+cloudflared serves `telecast.company` and `telecast.horse` from the unit's unix socket. systemd drops the unit's packets to loopback, LAN,
+and tailnet, because the proxies fetch any URL. `deno task status` checks that fence and fails when it stops dropping. A pull of this repo
+on pc rebuilds `public/elm.js` and restarts the unit. Cloudflare replaces an origin's 502 or 504 with its own page, so a handler answers a
+failure with 500, or with 503 when it is busy.
 
 ### Search
 

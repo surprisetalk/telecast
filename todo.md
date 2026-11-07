@@ -38,7 +38,7 @@
   2. Done when snitch logs telecast as passing: `psql snitch -c "select * from latest where project = 'telecast'"`.
   3. Delete `~/.neon-service` on pc.
   4. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon
-     project, and closes the Neon account. Pages also serves `telecast.horse`, so its deletion drops that domain.
+     project, and closes the Neon account.
   5. Taylor deletes the Mac clone `~/Developer/telecast`. pc holds the commits, `todo.md`, and both dumps.
 - [ ] Each lecture is transcribed and searchable.
   - Parked: Taylor decides how whisper.cpp shares pc's GPU with llama.cpp: a nightly window that stops llama.cpp, or CPU only.
