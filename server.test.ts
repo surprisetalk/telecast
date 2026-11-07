@@ -264,14 +264,25 @@ Deno.test("server: /search without CF-Connecting-IP, or from the status probe, l
 });
 
 Deno.test("server: 16 parallel 30 MB feeds staggered 5 ms apart: the oldest finish and only the youngest answer 503 Busy", async () => {
-  const body = new Uint8Array(30e6).fill(120);
   // Every body starts when the last request has arrived, so all 16 bodies stream together and the arrival order stays 5 ms apart.
+  // The upstream sends each body at 2 MB per 50 ms, so all 16 bodies grow at one rate on any machine. In CI, 16 unpaced 30 MB
+  // bodies all finished with no request Busy.
   const arrived = Promise.withResolvers<void>();
   let hits = 0;
   const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async () => {
     if (++hits === 16) arrived.resolve();
     await arrived.promise;
-    return new Response(body);
+    let sent = 0;
+    return new Response(
+      new ReadableStream<Uint8Array>({
+        async pull(out) {
+          if (sent === 15) return out.close();
+          await new Promise((r) => setTimeout(r, 50));
+          out.enqueue(new Uint8Array(2e6).fill(120));
+          sent++;
+        },
+      }, { highWaterMark: 0 }),
+    );
   });
   const server = await boot(NO_DB);
   try {
