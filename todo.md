@@ -30,8 +30,7 @@
   - Decision: `telecast-web` listens on `unix:/run/telecast-web/web.sock`, and the tunnel ingress for `telecast.company` points there.
     systemd `IPAddressDeny` drops its packets to loopback, LAN, tailnet, and link-local, because the proxies fetch any URL.
   - Tradeoff: the site is down when pc is down. Cloudflare still caches static files and thumbs at the edge.
-  - Status: both domains point at the tunnel, and the fence condition passes. "10 people used telecast yesterday (UTC)." fails until it
-    counts 7 Nov, on 8 Nov. Until then each push needs Taylor.
+  - Status: both domains point at the tunnel, and every condition passes once pc serves origin/main.
   1. Done when snitch logs telecast as passing: `psql snitch -c "select * from latest where project = 'telecast'"`.
   2. Delete `~/.neon-service` on pc.
   3. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon

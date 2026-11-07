@@ -216,22 +216,6 @@ Deno.test("server: a request past the memory budget gets a 503 Busy and one busy
   }
 });
 
-Deno.test("server: logs one visitor line per IP on the first /search of the UTC day", async () => {
-  const server = await boot(NO_DB);
-  try {
-    for (const ip of ["203.0.113.7", "203.0.113.7", "203.0.113.8"]) {
-      const res = await fetch(`${server.base}/search?q=rust`, { headers: { "CF-Connecting-IP": ip } });
-      await res.body?.cancel();
-    }
-    const lines = server.log().split("\n").filter((l) => l.startsWith("visitor"));
-    assertEquals(lines.length, 2);
-    for (const l of lines) assertEquals(/^visitor [0-9a-f]{16}$/.test(l), true, l);
-    assertEquals(lines[0] !== lines[1], true);
-  } finally {
-    await server.stop();
-  }
-});
-
 Deno.test("server: 40 small thumbs and 20 small feeds in parallel are never Busy", async () => {
   const jpeg = await sharp({ create: { width: 300, height: 300, channels: 3, background: "#f80" } }).jpeg().toBuffer();
   const feed = `<rss><channel><title>t</title><!--${"x".repeat(100_000)}--></channel></rss>`;
@@ -269,21 +253,6 @@ Deno.test("server: SIGTERM after a /search exits at once, with the database conn
   });
   assertEquals(res.status, 200, await res.text());
   await server.stop();
-});
-
-Deno.test("server: /search without CF-Connecting-IP, or from the status probe, logs no visitor", async () => {
-  const server = await boot(NO_DB);
-  try {
-    for (
-      const headers of [{}, { "CF-Connecting-IP": "203.0.113.9", "user-agent": "telecast-status" }] as Record<string, string>[]
-    ) {
-      const res = await fetch(`${server.base}/search?q=rust`, { headers });
-      await res.body?.cancel();
-    }
-    assertEquals(server.log().split("\n").filter((l) => l.startsWith("visitor")).length, 0);
-  } finally {
-    await server.stop();
-  }
 });
 
 Deno.test("server: 16 parallel 30 MB feeds staggered 5 ms apart: the oldest finish and only the youngest answer 503 Busy", async () => {
@@ -328,18 +297,18 @@ Deno.test("server: 16 parallel 30 MB feeds staggered 5 ms apart: the oldest fini
   }
 });
 
-Deno.test("server: a visitor-chosen URL with a newline cannot forge a busy: or visitor line", async () => {
+Deno.test("server: a visitor-chosen URL with a newline cannot forge a busy: line", async () => {
   const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, () => new Response("gone", { status: 404 }));
   const server = await boot(NO_DB);
   try {
-    const url = `http://127.0.0.1:${upstream.addr.port}/\nbusy: forged\nvisitor 0123456789abcdef`;
+    const url = `http://127.0.0.1:${upstream.addr.port}/\nbusy: forged`;
     for (const kind of ["thumb", "rss"]) {
       const res = await fetch(`${server.base}/proxy/${kind}/${encodeURIComponent(url)}`);
       await res.body?.cancel();
     }
     const lines = server.log().split("\n");
     assertEquals(lines.some((l) => l.includes("forged")), true, server.log());
-    assertEquals(lines.filter((l) => l.startsWith("busy:") || l.startsWith("visitor")), []);
+    assertEquals(lines.filter((l) => l.startsWith("busy:")), []);
   } finally {
     await server.stop();
     await upstream.shutdown();

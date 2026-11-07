@@ -30,7 +30,6 @@ export type Measurements = {
   refresh: Measured<number | null>;
   deploy: Measured<{ head: string; origin: string; startS: number; reflogS: number }>;
   busy: Measured<number>;
-  visitors: Measured<number>;
   backup: Measured<number | null>;
   memory: Measured<{ peakBytes: number; maxBytes: number }>;
 };
@@ -62,10 +61,6 @@ export function grade(m: Measurements): { name: string; score: number }[] {
       name: `At most ${BUSY_LIMIT} proxy requests answered Busy in the past hour.`,
       score: "ok" in m.busy ? BUSY_LIMIT / Math.max(m.busy.ok, 1) : 0,
     },
-    // A goal, not a failure mode: it scores 0 until 10 people show up.
-    // REVIEW: Count yesterday's UTC day, not the past 24h. server.ts salts the hash with the UTC day, so a rolling window counts one
-    // person twice across midnight. Alternative: hash without the day. It links one visitor across days.
-    { name: "10 people used telecast yesterday (UTC).", score: "ok" in m.visitors ? m.visitors.ok / 10 : 0 },
     { name: "pg_dump backed up the database in the past 26 hours.", score: age(m.backup, 26 * 3600) },
     // server.ts budgets proxy memory from measured factors. This catches the day the factors stop matching real feeds.
     {
@@ -103,8 +98,7 @@ async function measured<T>(what: string, ms: number, f: () => Promise<T>): Promi
 async function searchMs(): Promise<number> {
   const url = SEARCH_URL;
   const t0 = performance.now();
-  // server.ts counts no visitor for this agent, so the hourly probe is not a person.
-  const res = await fetch(url, { headers: { "user-agent": "telecast-status" }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
   const body = await res.text();
   const ms = performance.now() - t0;
   if (res.status !== 200) throw new Error(`Expected HTTP 200 from ${url}, received ${res.status} ${res.statusText}.`);
@@ -235,10 +229,6 @@ export function countBusy(text: string): number {
   return text.split("\n").filter((l) => l.startsWith("busy:")).length;
 }
 
-export function countVisitors(text: string): number {
-  return new Set(text.split("\n").flatMap((l) => /^visitor ([0-9a-f]{16})\b/.exec(l)?.[1] ?? [])).size;
-}
-
 // systemd's peak since telecast-web last started: each deploy restarts it.
 export function parseMemory(text: string): { peakBytes: number; maxBytes: number } {
   const peak = /^MemoryPeak=(\d+)$/m.exec(text)?.[1], max = /^MemoryMax=(\d+)$/m.exec(text)?.[1];
@@ -286,11 +276,6 @@ const JOURNAL_LINES = 500_000;
 // journalctl --lines keeps the newest N lines. N lines back means older lines may be missing.
 export function atJournalCap(text: string): boolean {
   return text.split("\n").filter((l) => l !== "").length >= JOURNAL_LINES;
-}
-
-export function yesterdayUtc(nowMs: number): [string, string] {
-  const day = (ms: number) => `${new Date(ms).toISOString().slice(0, 10)} 00:00:00 UTC`;
-  return [day(nowMs - DAY_S * 1000), day(nowMs)];
 }
 
 async function webJournal(since: string, until: string): Promise<string> {
@@ -377,7 +362,7 @@ if (import.meta.main) {
       "DATABASE_URL is missing. Expected a postgres URL in .env. Received undefined. Copy it from the Neon console into .env.",
     );
   }
-  const [search, stats, curate, seed, fence, cache, disk, refresh, deploy, busy, visitors, backup, memory] = await Promise.all([
+  const [search, stats, curate, seed, fence, cache, disk, refresh, deploy, busy, backup, memory] = await Promise.all([
     measured(`fetching ${SEARCH_URL}`, TIMEOUT_MS, searchMs),
     measured("querying the channel table", DB_TIMEOUT_MS, () => dbStats(url)),
     measured("reading the journal for telecast-curate.service", TIMEOUT_MS, () => lastSuccessS("telecast-curate.service")),
@@ -388,11 +373,6 @@ if (import.meta.main) {
     measured("reading the journal for telecast-refresh.service", TIMEOUT_MS, () => lastSuccessS("telecast-refresh.service")),
     measured("comparing HEAD, origin/main, and telecast-web's start", TIMEOUT_MS, deployProbe),
     measured("reading the telecast-web journal for the past hour", TIMEOUT_MS, async () => countBusy(await webJournal("-1h", "now"))),
-    measured(
-      "reading the telecast-web journal for yesterday (UTC)",
-      TIMEOUT_MS,
-      async () => countVisitors(await webJournal(...yesterdayUtc(Date.now()))),
-    ),
     measured("reading nightly.dump", TIMEOUT_MS, async () => backupAgeS(await backupMtimeMs(), Date.now())),
     measured(
       "reading telecast-web's memory",
@@ -400,7 +380,7 @@ if (import.meta.main) {
       async () => parseMemory(await run("systemctl", ["show", "telecast-web", "--property=MemoryPeak,MemoryMax"])),
     ),
   ]);
-  const m: Measurements = { search, db: stats, curate, seed, fence, cache, disk, refresh, deploy, busy, visitors, backup, memory };
+  const m: Measurements = { search, db: stats, curate, seed, fence, cache, disk, refresh, deploy, busy, backup, memory };
   // snitch parses from the first line that starts with "{", so a reason line stays on one line.
   for (const [name, r] of Object.entries(m)) if ("error" in r) console.log(`${name}: ${r.error.replace(/\s+/g, " ")}`);
   if ("ok" in stats && stats.ok.freshS === null) console.log("db: no channel has a last_success_at");
