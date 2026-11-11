@@ -25,6 +25,7 @@ await sweepCaches();
 // A rejected sweep is unhandled, so the server crashes and systemd restarts it. unrefTimer lets SIGTERM's graceful shutdown
 // finish: deno serve waits for the event loop to drain, and a ref'd interval never drains.
 Deno.unrefTimer(setInterval(sweepCaches, 3_600_000));
+let feedsOpen = false;
 const PUBLIC = `${import.meta.dirname}/public`;
 
 export default {
@@ -48,6 +49,11 @@ export default {
     // misses deleted channels. Shelob checksums the body, so a changed list is the only cost. Alternative: a version counter
     // kept by a trigger.
     if (pathname === "/feeds.json") {
+      // REVIEW: One reader at a time, a second answers 503 Busy. The cursor holds one of postgres.js's 10 connections and a sort of every
+      // channel for as long as the client reads, so 10 stalled public clients would block /search. Alternative: a per-IP limit. It
+      // needs a table of IPs and trusts a proxy header. Cost: shelob and a curl check cannot read at once.
+      if (feedsOpen) return new Response("Busy. Expected one /feeds.json reader at a time. Retry in a minute.", { status: 503 });
+      feedsOpen = true;
       // "C" collation sorts by bytes, so the same set gives the same bytes on any locale. distinct drops a URL that two channels share.
       // The cursor reads 5,000 rows per round trip, and the stream pulls only as fast as the client reads.
       const batches = sql`select distinct rss collate "C" as rss from channel order by rss`.values().cursor(5000)[Symbol.asyncIterator]();
@@ -58,16 +64,22 @@ export default {
       try {
         next = await batches.next();
       } catch (e) {
+        feedsOpen = false;
         console.error(`feeds.json failed: ${e}`);
         return new Response("Feeds failed. Expected the channel table to answer. Check that postgres is up.", { status: 500 });
       }
       return new Response(
         new ReadableStream<Uint8Array>({
           async pull(out) {
-            next ??= await batches.next();
+            // A failed read ends the stream with an error, and the guard must open again.
+            next ??= await batches.next().catch((e) => {
+              feedsOpen = false;
+              throw e;
+            });
             const { done, value } = next;
             next = undefined;
             if (done) {
+              feedsOpen = false;
               out.enqueue(enc.encode(first ? "[]" : "]"));
               return out.close();
             }
@@ -78,7 +90,10 @@ export default {
             }
             out.enqueue(enc.encode(text));
           },
-          cancel: async () => void await batches.return?.(),
+          cancel: async () => {
+            feedsOpen = false;
+            await batches.return?.();
+          },
         }),
         { headers: { "content-type": "application/json" } },
       );

@@ -284,6 +284,36 @@ Deno.test("server: /feeds.json streams the rss URLs as one sorted JSON array, di
   }
 });
 
+Deno.test("server: /feeds.json serves one reader at a time: a stalled reader holds the cursor, a second request answers 503, a cancel frees it", async () => {
+  await using pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(`${ROOT}/db.sql`) });
+  const server = await boot({ DATABASE_URL: `${pg.url}?prepare=false` });
+  try {
+    const sql = db(`${pg.url}?prepare=false`);
+    try {
+      const urls = Array.from({ length: 12_000 }, (_, i) => `https://x.example/${i}`);
+      await sql`insert into channel (channel_id, rss, title) select 'c' || i, u, 't' from unnest(${urls}::text[]) with ordinality as t(u, i)`;
+    } finally {
+      await sql.end();
+    }
+    const stalled = await fetch(`${server.base}/feeds.json`);
+    assertEquals(stalled.status, 200);
+    const second = await fetch(`${server.base}/feeds.json`);
+    assertEquals(second.status, 503);
+    assertStringIncludes(await second.text(), "Busy");
+    await stalled.body!.cancel();
+    let status = 0;
+    for (let tries = 0; tries < 50 && status !== 200; tries++) {
+      const res = await fetch(`${server.base}/feeds.json`);
+      status = res.status;
+      await res.body!.cancel();
+      if (status !== 200) await new Promise((r) => setTimeout(r, 20));
+    }
+    assertEquals(status, 200);
+  } finally {
+    await server.stop();
+  }
+});
+
 Deno.test("server: /feeds.json answers 500 when the database is down", async () => {
   const server = await boot(NO_DB);
   try {
