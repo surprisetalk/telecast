@@ -57,44 +57,35 @@ export default {
       // "C" collation sorts by bytes, so the same set gives the same bytes on any locale. distinct drops a URL that two channels share.
       // The cursor reads 5,000 rows per round trip, and the stream pulls only as fast as the client reads.
       const batches = sql`select distinct rss collate "C" as rss from channel order by rss`.values().cursor(5000)[Symbol.asyncIterator]();
-      const enc = new TextEncoder();
-      let first = true;
-      let next: IteratorResult<string[][]> | undefined;
+      let head: IteratorResult<string[][]>;
       // The first batch is read before the response starts, so a database failure answers 500 and not a cut-off 200.
       try {
-        next = await batches.next();
+        head = await batches.next();
       } catch (e) {
         feedsOpen = false;
         console.error(`feeds.json failed: ${e}`);
         return new Response("Feeds failed. Expected the channel table to answer. Check that postgres is up.", { status: 500 });
       }
+      const enc = new TextEncoder();
+      // The finally opens the guard on every way out: the last batch, a failed read, and a cancel, which calls the generator's return().
       return new Response(
-        new ReadableStream<Uint8Array>({
-          async pull(out) {
-            // A failed read ends the stream with an error, and the guard must open again.
-            next ??= await batches.next().catch((e) => {
-              feedsOpen = false;
-              throw e;
-            });
-            const { done, value } = next;
-            next = undefined;
-            if (done) {
-              feedsOpen = false;
-              out.enqueue(enc.encode(first ? "[]" : "]"));
-              return out.close();
+        ReadableStream.from((async function* () {
+          try {
+            let sep = "[";
+            for (let batch = head; !batch.done; batch = await batches.next()) {
+              let text = "";
+              for (const [rss] of batch.value) {
+                text += sep + JSON.stringify(rss);
+                sep = ",";
+              }
+              yield enc.encode(text);
             }
-            let text = "";
-            for (const [rss] of value) {
-              text += (first ? "[" : ",") + JSON.stringify(rss);
-              first = false;
-            }
-            out.enqueue(enc.encode(text));
-          },
-          cancel: async () => {
+            yield enc.encode(sep === "[" ? "[]" : "]");
+          } finally {
             feedsOpen = false;
             await batches.return?.();
-          },
-        }),
+          }
+        })()),
         { headers: { "content-type": "application/json" } },
       );
     }

@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
+import { assertEquals, assertRejects, assertStringIncludes } from "jsr:@std/assert@1";
 import sharp from "sharp";
 import db from "postgres";
 import { pgtemp } from "jsr:@surprisetalk/pgtemp@0.2.7";
@@ -6,6 +6,7 @@ import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 
 const ROOT = import.meta.dirname!;
 const START_TIMEOUT_MS = 20_000;
+const RACE_MS = 5_000;
 // pc's socket form. /run/postgresql/.s.PGSQL.5432 is missing here, so /search reaches postgres.js, which fails without a
 // database, and Deno's permissions for the socket path get checked as on pc.
 const NO_DB = { DATABASE_URL: "postgres:///telecast", PGHOST: "/run/postgresql", PGUSER: "telecast", PGPASSWORD: "x" };
@@ -284,32 +285,49 @@ Deno.test("server: /feeds.json streams the rss URLs as one sorted JSON array, di
   }
 });
 
-Deno.test("server: /feeds.json serves one reader at a time: a stalled reader holds the cursor, a second request answers 503, a cancel frees it", async () => {
+Deno.test("server: /feeds.json serves one reader at a time, and a reader that leaves before its first byte frees the guard", async () => {
   await using pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(`${ROOT}/db.sql`) });
   const server = await boot({ DATABASE_URL: `${pg.url}?prepare=false` });
+  const sql = db(`${pg.url}?prepare=false`);
   try {
-    const sql = db(`${pg.url}?prepare=false`);
-    try {
-      const urls = Array.from({ length: 12_000 }, (_, i) => `https://x.example/${i}`);
-      await sql`insert into channel (channel_id, rss, title) select 'c' || i, u, 't' from unnest(${urls}::text[]) with ordinality as t(u, i)`;
-    } finally {
-      await sql.end();
-    }
-    const stalled = await fetch(`${server.base}/feeds.json`);
-    assertEquals(stalled.status, 200);
-    const second = await fetch(`${server.base}/feeds.json`);
-    assertEquals(second.status, 503);
-    assertStringIncludes(await second.text(), "Busy");
-    await stalled.body!.cancel();
-    let status = 0;
-    for (let tries = 0; tries < 50 && status !== 200; tries++) {
-      const res = await fetch(`${server.base}/feeds.json`);
-      status = res.status;
+    const urls = ["https://x.example/a", "https://x.example/b"];
+    await sql`insert into channel (channel_id, rss, title) select 'c' || i, u, 't' from unnest(${urls}::text[]) with ordinality as t(u, i)`;
+    // pgtemp is one Postgres session, so an open transaction makes every other connection wait. The request that enters first takes
+    // the guard and waits for the database, so the first answer must be the other's 503. A stall by body size instead depends on how
+    // much the kernel buffers for a client that does not read: about 4.5 MB on pc.
+    const tx = await sql.reserve();
+    await tx`begin`;
+    const aborts = [new AbortController(), new AbortController()];
+    const requests = aborts.map((a) => fetch(`${server.base}/feeds.json`, { signal: a.signal }));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const late = new Promise<never>((_, reject) =>
+      timer = setTimeout(
+        () =>
+          reject(
+            new Error(`Expected one of two /feeds.json requests to answer 503 while the other waits, received no answer in ${RACE_MS} ms.`),
+          ),
+        RACE_MS,
+      )
+    );
+    const first = await Promise.race([...requests.map((p, i) => p.then((res) => ({ res, i }))), late]).finally(() => clearTimeout(timer));
+    assertEquals([first.res.status, await first.res.text()], [503, "Busy. Expected one /feeds.json reader at a time. Retry in a minute."]);
+    aborts[1 - first.i].abort();
+    await assertRejects(() => requests[1 - first.i], DOMException);
+    await tx`commit`;
+    tx.release();
+    let res = await fetch(`${server.base}/feeds.json`);
+    for (let tries = 1; tries < 50 && res.status === 503; tries++) {
       await res.body!.cancel();
-      if (status !== 200) await new Promise((r) => setTimeout(r, 20));
+      await new Promise((r) => setTimeout(r, 20));
+      res = await fetch(`${server.base}/feeds.json`);
     }
-    assertEquals(status, 200);
+    assertEquals([res.status, await res.text()], [200, JSON.stringify(urls)], `stderr: ${server.log()}`);
+    // The generator's finally runs before the stream closes, so a request after a full read never sees 503.
+    const after = await fetch(`${server.base}/feeds.json`);
+    assertEquals([after.status, await after.text()], [200, JSON.stringify(urls)]);
   } finally {
+    // end() waits for a reserved connection without bound, and a failed assertion leaves tx reserved.
+    await sql.end({ timeout: 1 });
     await server.stop();
   }
 });
