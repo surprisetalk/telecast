@@ -1,5 +1,6 @@
 import { assertEquals, assertStringIncludes } from "jsr:@std/assert@1";
 import sharp from "sharp";
+import db from "postgres";
 import { pgtemp } from "jsr:@surprisetalk/pgtemp@0.2.7";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 
@@ -253,6 +254,45 @@ Deno.test("server: SIGTERM after a /search exits at once, with the database conn
   });
   assertEquals(res.status, 200, await res.text());
   await server.stop();
+});
+
+Deno.test("server: /feeds.json streams the rss URLs as one sorted JSON array, distinct, in byte order", async () => {
+  await using pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(`${ROOT}/db.sql`) });
+  const server = await boot({ DATABASE_URL: `${pg.url}?prepare=false` });
+  try {
+    const empty = await fetch(`${server.base}/feeds.json`);
+    assertEquals([empty.status, empty.headers.get("content-type"), await empty.text()], [200, "application/json", "[]"]);
+    // 12,000 rows span three cursor batches. "B" (0x42) sorts before "b" (0x62) in byte order. The quote and backslash test escaping.
+    const urls = Array.from({ length: 12_000 }, (_, i) => `https://x.example/${String(i).padStart(5, "0")}"q\\`);
+    urls.push("https://x.example/b", "https://x.example/B");
+    const sql = db(`${pg.url}?prepare=false`);
+    try {
+      await sql`insert into channel (channel_id, rss, title) select 'c' || i, u, 't' from unnest(${urls}::text[]) with ordinality as t(u, i)`;
+      // A second channel with an existing URL must not repeat it.
+      await sql`insert into channel (channel_id, rss, title) values ('dup', ${urls[0]}, 't')`;
+    } finally {
+      await sql.end();
+    }
+    const res = await fetch(`${server.base}/feeds.json`);
+    const body = await res.text();
+    assertEquals(res.status, 200);
+    const want = [...urls].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+    assertEquals(body, JSON.stringify(want));
+    assertEquals(await (await fetch(`${server.base}/feeds.json`)).text(), body);
+  } finally {
+    await server.stop();
+  }
+});
+
+Deno.test("server: /feeds.json answers 500 when the database is down", async () => {
+  const server = await boot(NO_DB);
+  try {
+    const res = await fetch(`${server.base}/feeds.json`);
+    assertEquals(res.status, 500);
+    assertStringIncludes(await res.text(), "Feeds failed");
+  } finally {
+    await server.stop();
+  }
 });
 
 Deno.test("server: 16 parallel 30 MB feeds staggered 5 ms apart: the oldest finish and only the youngest answer 503 Busy", async () => {

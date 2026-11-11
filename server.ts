@@ -41,6 +41,48 @@ export default {
     // Deno's file APIs throw on a NUL byte.
     if (path.includes("\0")) return new Response(`Expected a path with no %00, received ${pathname}.`, { status: 400 });
     if (pathname === "/search") return handleSearch({ sql }, { query: searchParams.get("q") });
+    // REVIEW: /feeds.json is public, like /search. Alternative: a bearer token that shelob sends. It hides the list of feed URLs
+    // from scrapers but costs a secret on both hosts and a 401 path. The list is no more private than /search, which returns
+    // channels with their rss URLs.
+    // REVIEW: No ETag or Last-Modified. A correct validator needs a hash over every row, which is the full scan, and max(updated_at)
+    // misses deleted channels. Shelob checksums the body, so a changed list is the only cost. Alternative: a version counter
+    // kept by a trigger.
+    if (pathname === "/feeds.json") {
+      // "C" collation sorts by bytes, so the same set gives the same bytes on any locale. distinct drops a URL that two channels share.
+      // The cursor reads 5,000 rows per round trip, and the stream pulls only as fast as the client reads.
+      const batches = sql`select distinct rss collate "C" as rss from channel order by rss`.values().cursor(5000)[Symbol.asyncIterator]();
+      const enc = new TextEncoder();
+      let first = true;
+      let next: IteratorResult<string[][]> | undefined;
+      // The first batch is read before the response starts, so a database failure answers 500 and not a cut-off 200.
+      try {
+        next = await batches.next();
+      } catch (e) {
+        console.error(`feeds.json failed: ${e}`);
+        return new Response("Feeds failed. Expected the channel table to answer. Check that postgres is up.", { status: 500 });
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          async pull(out) {
+            next ??= await batches.next();
+            const { done, value } = next;
+            next = undefined;
+            if (done) {
+              out.enqueue(enc.encode(first ? "[]" : "]"));
+              return out.close();
+            }
+            let text = "";
+            for (const [rss] of value) {
+              text += (first ? "[" : ",") + JSON.stringify(rss);
+              first = false;
+            }
+            out.enqueue(enc.encode(text));
+          },
+          cancel: async () => void await batches.return?.(),
+        }),
+        { headers: { "content-type": "application/json" } },
+      );
+    }
     if (pathname.startsWith("/proxy/rss/")) {
       return withSlot(
         FEED_FACTOR,
