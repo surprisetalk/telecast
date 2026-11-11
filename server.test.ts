@@ -1,4 +1,4 @@
-import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
+import { assertEquals, assertInstanceOf, assertRejects, assertStringIncludes } from "@std/assert";
 import sharp from "sharp";
 import db from "postgres";
 import { pgtemp } from "@surprisetalk/pgtemp";
@@ -329,6 +329,27 @@ Deno.test("server: /feeds.json serves one reader at a time, and a reader that le
     // end() waits for a reserved connection without bound, and a failed assertion leaves tx reserved.
     await sql.end({ timeout: 1 });
     await server.stop();
+  }
+});
+
+Deno.test("server: SIGTERM cuts a response that is still open and exits within its grace period", async () => {
+  const release = Promise.withResolvers<void>();
+  const up = stallingUpstream(release.promise);
+  const server = await boot(NO_DB);
+  try {
+    // The feed proxy waits for the upstream to finish, so this response stays open, as one to a /feeds.json client that stops reading does.
+    // Settled at once, so a slow stop reports its own error and not this fetch's rejection.
+    const held = fetch(`${server.base}/proxy/rss/${encodeURIComponent(up.url(0, 0))}`).then(
+      async (res) => `answered ${res.status}: ${await res.text()}`,
+      (e: unknown) => e,
+    );
+    await up.sentAll(1);
+    await server.stop();
+    assertStringIncludes(server.log(), "received some still open. Exiting cuts them.");
+    assertInstanceOf(await held, TypeError);
+  } finally {
+    release.resolve();
+    await up.server.shutdown();
   }
 });
 

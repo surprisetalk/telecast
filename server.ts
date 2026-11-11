@@ -14,8 +14,19 @@ if (!url) {
 }
 const sql = db(url);
 // deno serve exits on SIGTERM when the event loop drains. postgres.js keeps an idle connection open for its max_lifetime, 30 to 60
-// min, so systemd waited its 90 s and killed the unit on each deploy. end() lets running queries finish for up to 5 s.
-Deno.addSignalListener("SIGTERM", () => sql.end({ timeout: 5 }));
+// min, so systemd waited its 90 s and killed the unit on each deploy. end() lets running queries finish for up to STOP_GRACE_S.
+// deno serve also waits for every open response. A response to a client that stops reading never ends, because Deno cannot interrupt a
+// write to a full socket, and erroring the body stream leaves that write blocked.
+// REVIEW: Exit 1 STOP_GRACE_S after SIGTERM and cut the responses still open, so systemd records the cut. Alternative: TimeoutStopSec
+// in the unit on pc. systemd then kills the unit after that time and records the stop as a timeout.
+const STOP_GRACE_S = 2;
+Deno.addSignalListener("SIGTERM", () => {
+  sql.end({ timeout: STOP_GRACE_S });
+  Deno.unrefTimer(setTimeout(() => {
+    console.error(`Expected every response to finish within ${STOP_GRACE_S} s of SIGTERM, received some still open. Exiting cuts them.`);
+    Deno.exit(1);
+  }, STOP_GRACE_S * 1000));
+});
 const rssCache = await diskCache("cache/rss");
 const thumbCache = await diskCache("cache/thumb");
 // Visitors choose the cached URLs, so old files go, and status watches the total size and free disk.
