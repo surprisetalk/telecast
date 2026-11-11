@@ -1,4 +1,4 @@
-import { encodeHex } from "jsr:@std/encoding@1/hex";
+import { encodeHex } from "@std/encoding/hex";
 
 export type Cache = {
   get(key: string): Promise<{ bytes: Uint8Array<ArrayBuffer>; at: Date } | null>;

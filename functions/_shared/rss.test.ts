@@ -1,4 +1,4 @@
-import { assertEquals } from "jsr:@std/assert";
+import { assertEquals } from "@std/assert";
 import { parse, parseEpisodes } from "./rss.ts";
 
 const channelFormXml = `<?xml version="1.0" encoding="UTF-8"?>

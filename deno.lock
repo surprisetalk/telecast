@@ -80,6 +80,12 @@
     }
   },
   "workspace": {
+    "dependencies": [
+      "jsr:@std/assert@1",
+      "jsr:@std/encoding@1",
+      "jsr:@std/http@1",
+      "jsr:@surprisetalk/pgtemp@0.2.7"
+    ],
     "packageJson": {
       "dependencies": [
         "npm:@electric-sql/pglite@0.3.15",

@@ -1,4 +1,4 @@
-import { assertEquals, assertInstanceOf } from "jsr:@std/assert@1";
+import { assertEquals, assertInstanceOf } from "@std/assert";
 import { BUDGET, BYTES_PER_PIXEL, withSlot } from "./budget.ts";
 
 const wholeBudgetInPixels = Math.floor((BUDGET - 1) / BYTES_PER_PIXEL);

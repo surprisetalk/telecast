@@ -17,6 +17,7 @@ jobs:
         with:
           deno-version: v2.x
       - run: deno fmt --check server.ts server.test.ts functions/ scripts/
+      - run: deno lint server.ts server.test.ts functions/ scripts/
       - run: deno test -A --parallel server.test.ts functions/ scripts/
       - run: deno check server.ts server.test.ts functions/ scripts/
 

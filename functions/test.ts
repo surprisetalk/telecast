@@ -3,7 +3,7 @@
 //
 // Includes a fake fetch and a real Postgres from pgtemp. Caches are real temp dirs.
 
-import { assert, assertEquals, assertExists, assertMatch, assertRejects, assertStringIncludes, assertThrows } from "jsr:@std/assert@1";
+import { assert, assertEquals, assertExists, assertRejects, assertStringIncludes, assertThrows } from "@std/assert";
 
 import {
   findEpisodeThumbnail,
@@ -22,7 +22,7 @@ import { handleRssProxy } from "./proxy/rss/[[path]].ts";
 import { handleThumbProxy, transformYouTubeThumb } from "./proxy/thumb/[[path]].ts";
 import { type Cache, diskCache, sweep } from "./_shared/cache.ts";
 import sharp from "sharp";
-import { pgtemp } from "jsr:@surprisetalk/pgtemp@0.2.7";
+import { pgtemp } from "@surprisetalk/pgtemp";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 
 // ==================================================================
@@ -425,12 +425,23 @@ Deno.test("parse: RDF / RSS 1.0 feed", () => {
   assertEquals(channel.website, "https://rdf.example.com/");
 });
 
-Deno.test("parse: HTML input throws 'Unsupported feed format'", () => {
-  assertThrows(() => parse(HTML_NOT_A_FEED), Error, "Unsupported feed format");
+Deno.test("parse: a feed with no root, or no element that holds its link, throws naming the element", () => {
+  const rows = [
+    [HTML_NOT_A_FEED, "Unsupported feed format"],
+    ["", "Unsupported feed format"],
+    [`<rss version="2.0"></rss>`, "Expected <rss> to have a <channel> element, received none."],
+    [`<rss version="2.0"><channel/></rss>`, `Expected <rss> to have a <channel> element, received "".`],
+    [`<RDF><item><title>x</title></item></RDF>`, "Expected <RDF> to have a <channel> element, received none."],
+    [`<feed><title>x</title></feed>`, "Expected <feed> to have a <link>, received none."],
+    [`<feed>text</feed>`, "Expected <feed> to have a <link>, received none."],
+  ];
+  for (const [xml, message] of rows) assertThrows(() => parse(xml), Error, message);
 });
 
-Deno.test("parse: empty XML throws 'Unsupported feed format'", () => {
-  assertThrows(() => parse(""), Error, "Unsupported feed format");
+// refresh upserts episodes on episode_id, so a changed id writes a second row for the same episode.
+Deno.test("parseEpisodes: an <item> that holds only text keeps the episode_id that stored episodes carry", () => {
+  const xml = `<rss><channel><link>https://a.example/</link><title>t</title><item/><item>just text</item></channel></rss>`;
+  assertEquals(parseEpisodes(xml, "c").map((e) => e.episode_id), ["16jwoz", "16jwoz"]);
 });
 
 Deno.test("parseEpisodes: RSS 2.0 podcast extracts all items", () => {
@@ -735,7 +746,7 @@ dbTest("handleRssProxy: HTML body returns 400 with URL and missing-root-element 
 dbTest("handleRssProxy: gibberish XML bytes → 500 with the parse error, no channel row", async () => {
   const cache = await tempCache();
   const url = "https://gibberish.example.com/feed.xml";
-  const sql = pg.sql;
+  const sql = await freshSql();
   const fetcher = mockFetch({
     [url]: new Response("<feed>not actually a valid atom feed at all", { status: 200 }),
   });
@@ -807,7 +818,7 @@ dbTest("handleRssProxy: expired cache + origin failure serves stale", async () =
   await cache.put(url, oldXml);
   await age(cache.dir, TWO_HOURS_MS);
   const fetcher = mockFetch({ [url]: new Response("nope", { status: 500 }) });
-  const { result: res, logs } = await captureConsoleError(async () => handleRssProxy({ sql: pg.sql, cache, fetcher }, { rssUrl: url }));
+  const { result: res, logs } = await captureConsoleError(() => handleRssProxy({ sql: pg.sql, cache, fetcher }, { rssUrl: url }));
   assertEquals(logs, [`rss proxy: serving stale ${JSON.stringify(url)}: "HTTP 500"`]);
   assertEquals(res.status, 200);
   assertEquals(res.headers.get("x-telecast-stale"), "1");

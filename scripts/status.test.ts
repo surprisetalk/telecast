@@ -1,4 +1,4 @@
-import { assert, assertEquals, assertRejects, assertThrows } from "jsr:@std/assert";
+import { assert, assertEquals, assertRejects, assertThrows } from "@std/assert";
 import {
   atJournalCap,
   backupAgeS,

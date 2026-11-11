@@ -1,5 +1,5 @@
 import db from "postgres";
-import { serveDir, serveFile } from "jsr:@std/http@1/file-server";
+import { serveDir, serveFile } from "@std/http/file-server";
 import { diskCache, sweep } from "./functions/_shared/cache.ts";
 import { handleSearch } from "./functions/search.ts";
 import { handleRssProxy } from "./functions/proxy/rss/[[path]].ts";

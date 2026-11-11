@@ -1,7 +1,7 @@
-import { assertEquals, assertRejects } from "jsr:@std/assert";
-import { pgtemp } from "jsr:@surprisetalk/pgtemp@0.2.7";
+import { assertEquals, assertRejects } from "@std/assert";
+import { pgtemp } from "@surprisetalk/pgtemp";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
-import { refreshChannels } from "./refresh.ts";
+import { type Due, refreshChannels } from "./refresh.ts";
 import { pool } from "./pool.ts";
 
 const RSS = `<?xml version="1.0"?><rss version="2.0"><channel><title>Good</title><link>https://good.example.org/</link>
@@ -19,7 +19,7 @@ Deno.test("refreshChannels", async (t) => {
   async function seedRows(rows: { id: string; rss: string }[]) {
     await pg.sql`truncate channel, episode`;
     for (const r of rows) await pg.sql`insert into channel (channel_id, rss, title) values (${r.id}, ${r.rss}, ${r.id})`;
-    return await pg.sql`select * from channel order by channel_id`;
+    return await pg.sql<Due[]>`select channel_id, rss, consecutive_errors from channel order by channel_id`;
   }
 
   // The UULF HEAD probe answers 404, so the feed URL stays in the channel_id form. No test touches the network.

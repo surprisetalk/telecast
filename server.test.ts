@@ -1,7 +1,7 @@
-import { assertEquals, assertRejects, assertStringIncludes } from "jsr:@std/assert@1";
+import { assertEquals, assertRejects, assertStringIncludes } from "@std/assert";
 import sharp from "sharp";
 import db from "postgres";
-import { pgtemp } from "jsr:@surprisetalk/pgtemp@0.2.7";
+import { pgtemp } from "@surprisetalk/pgtemp";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
 
 const ROOT = import.meta.dirname!;

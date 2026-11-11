@@ -1,4 +1,4 @@
-import { assert, assertEquals } from "jsr:@std/assert";
+import { assert, assertEquals } from "@std/assert";
 import { preferUulfFeedUrl, resolveYoutubeFeedUrl } from "./youtube.ts";
 
 // Fetcher that responds 200 to any HEAD probe (so UULF probes succeed),

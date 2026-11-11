@@ -7,6 +7,7 @@ if [ -e /etc/NIXOS ]; then export LD_LIBRARY_PATH="$(dirname "$(gcc -print-file-
 # --no-install: a missing dev dependency fails here. Plain npx runs the newest release from the registry instead.
 npx --no-install elm-format --validate src/ tests/
 deno fmt --check server.ts server.test.ts functions/ scripts/
+deno lint server.ts server.test.ts functions/ scripts/
 npx --no-install elm make src/Main.elm --output=/dev/null
 # elm-test exits 0 when it crashes before running a test (e.g. listen EPERM on its socket), so check its summary line.
 # elm-test calls process.exit right after its last write. Node writes to a pipe asynchronously, so a pipe loses the tail of the

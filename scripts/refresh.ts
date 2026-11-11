@@ -7,10 +7,9 @@ const BATCH_SIZE = 500;
 const FETCH_TIMEOUT_MS = 15_000;
 const CONCURRENCY = 20;
 
-async function maybeUpgradeToUulf(rss: string, fetcher: typeof fetch): Promise<string> {
+function maybeUpgradeToUulf(rss: string, fetcher: typeof fetch): Promise<string> {
   const m = rss.match(/^https:\/\/www\.youtube\.com\/feeds\/videos\.xml\?channel_id=(UC[\w-]+)$/);
-  if (!m) return rss;
-  return preferUulfFeedUrl(m[1]!, fetcher);
+  return m ? preferUulfFeedUrl(m[1]!, fetcher) : Promise.resolve(rss);
 }
 
 // Language code to tag mapping
@@ -270,7 +269,7 @@ function detectLanguageFromText(episodes: Episode[]): string | null {
     [/[\u0e00-\u0e7f]/, "thai"],
     [/[\u0900-\u097f]/, "hindi"],
   ];
-  let total = text.length;
+  const total = text.length;
   for (const [re, tag] of ranges) {
     const m = text.match(new RegExp(re.source, "g"));
     if (m && m.length / total > 0.2) return tag;
@@ -317,19 +316,21 @@ function inferAllTags(channelInfo: Channel, episodes: Episode[]): string[] {
 const BLOCKED_MIN_FETCHES = 20;
 const BLOCKED_HTTP_ERROR_SHARE = 0.5;
 
-type Failure = { channel: any; msg: string; http: boolean };
+// The columns of a channel that refresh reads. db.sql makes each one not null.
+export type Due = { channel_id: string; rss: string; consecutive_errors: number };
+type Failure = { channel: Due; msg: string; http: boolean };
 
-export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channels: readonly any[]): Promise<void> {
+export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channels: readonly Due[]): Promise<void> {
   const total = channels.length;
   let completed = 0;
   let succeeded = 0;
   const failures: Failure[] = [];
   const hosts = new Map<string, { fetches: number; httpErrors: number }>();
   // The schema allows `https://` alone. Its fetch throws and is recorded like any other fetch error.
-  const hostOf = (channel: any) => (URL.canParse(channel.rss) ? new URL(channel.rss).hostname : channel.rss);
+  const hostOf = (channel: Due) => (URL.canParse(channel.rss) ? new URL(channel.rss).hostname : channel.rss);
 
   // Only fetch and parse errors are caught here. A database error or a bug rejects the pool, and the run exits nonzero.
-  await pool(channels, CONCURRENCY, async (channel: any) => {
+  await pool(channels, CONCURRENCY, async (channel) => {
     const index = ++completed;
     const shortUrl = channel.rss.replace(/^https?:\/\//, "").slice(0, 50);
     const host = hostOf(channel);
@@ -522,9 +523,9 @@ async function main() {
   // `--featured` refreshes the curated set so hand-picks don't wait behind the
   // huge never-fetched backlog; default refreshes the oldest channels by batch.
   const channels = Deno.args.includes("--featured")
-    ? await sql`SELECT * FROM channel WHERE tags @> array['featured']::text[] ORDER BY updated_at`
-    : await sql`
-      SELECT * FROM channel
+    ? await sql<Due[]>`SELECT channel_id, rss, consecutive_errors FROM channel WHERE tags @> array['featured']::text[] ORDER BY updated_at`
+    : await sql<Due[]>`
+      SELECT channel_id, rss, consecutive_errors FROM channel
       ORDER BY
         CASE WHEN last_success_at IS NULL AND last_error_at IS NULL THEN 0 ELSE 1 END,
         updated_at

@@ -1,4 +1,4 @@
-import { assertEquals, assertThrows } from "jsr:@std/assert";
+import { assertEquals, assertThrows } from "@std/assert";
 import { parseCuration, selectFeatured } from "./curate.ts";
 
 Deno.test("empty priority → empty", () => {

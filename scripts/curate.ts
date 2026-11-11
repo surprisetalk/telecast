@@ -50,8 +50,7 @@ async function main() {
   const c = parseCuration(await Deno.readTextFile(new URL("./curation.json", import.meta.url)));
   const sql = db(databaseUrl, { idle_timeout: 20, connect_timeout: 30 });
 
-  const rows: ChannelRow[] = (await sql`select channel_id, tags from channel`)
-    .map((r: any) => ({ channel_id: r.channel_id, tags: r.tags }));
+  const rows = await sql<ChannelRow[]>`select channel_id, tags from channel`;
 
   const target = new Set(selectFeatured(c, new Set(rows.map((r) => r.channel_id))));
   const current = new Set(rows.filter((r) => (r.tags ?? []).includes("featured")).map((r) => r.channel_id));

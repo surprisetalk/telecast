@@ -33,17 +33,28 @@ export interface Episode {
   explicit: boolean | null;
 }
 
+// The parser gives an element as an object with attributes under "@_" and text under "#text", a repeated tag as an array, and
+// text as a string, or as a number or boolean when the text parses as one. Its types say any, so the code below reads unknown.
 const parser = new XMLParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
 });
 
+// Follows tags through elements. An array or text on the path gives undefined, as `?.` did on the parser's any.
+const get = (node: unknown, ...path: string[]): unknown =>
+  path.reduce<unknown>(
+    (n, tag) => (n !== null && typeof n === "object" && !Array.isArray(n) ? (n as Record<string, unknown>)[tag] : undefined),
+    node,
+  );
+const list = (node: unknown): unknown[] => (!node ? [] : Array.isArray(node) ? node : [node]);
+const str = (node: unknown): string | undefined => (typeof node === "string" ? node : undefined);
+
 // fast-xml-parser returns an array for a repeated tag. The first one wins, as in sanitizeText.
-function extractText(raw: any): string {
-  if (Array.isArray(raw)) raw = raw[0];
-  const text = typeof raw === "object" ? raw?.["#text"] : String(raw);
+function extractText(raw: unknown): string {
+  const node = Array.isArray(raw) ? raw[0] : raw;
+  const text = typeof node === "object" ? get(node, "#text") : String(node);
   if (typeof text !== "string") {
-    throw new Error(`Expected text, received ${JSON.stringify(raw)?.slice(0, 80)}. The feed is malformed: report it to the publisher.`);
+    throw new Error(`Expected text, received ${JSON.stringify(node)?.slice(0, 80)}. The feed is malformed: report it to the publisher.`);
   }
   return text;
 }
@@ -117,7 +128,7 @@ function fit<T extends object>(row: T, checks: Record<keyof T, Checker>, source:
   return row;
 }
 
-export function httpsUrl(url: string | null | undefined): string | null {
+export function httpsUrl(url: unknown): string | null {
   if (!url) return null;
   if (typeof url !== "string") {
     throw new Error(
@@ -131,18 +142,11 @@ export function httpsUrl(url: string | null | undefined): string | null {
   return null;
 }
 
-export function sanitizeText(text: any): string | null {
-  if (!text) return null;
-
-  // Handle arrays - take first element (fast-xml-parser returns arrays for duplicate tags)
-  if (Array.isArray(text)) text = text[0];
-  if (!text) return null;
-
-  // Handle CDATA or object values
-  if (typeof text === "object") text = (text as any)["#text"] || String(text);
-
-  // Ensure we have a string
-  if (typeof text !== "string") text = String(text);
+export function sanitizeText(raw: unknown): string | null {
+  // fast-xml-parser returns an array for a repeated tag, and keeps CDATA, or the text of an element with attributes, under "#text".
+  const node = Array.isArray(raw) ? raw[0] : raw;
+  if (!node) return null;
+  let text = String(typeof node === "object" ? get(node, "#text") || node : node);
 
   text = text.replace(/<[^>]*>/g, "");
   for (const m of text.matchAll(/&#(?:x([0-9a-f]+)|(\d+));/gi)) {
@@ -165,7 +169,7 @@ export function sanitizeText(text: any): string | null {
   return text || null;
 }
 
-export function parseDuration(raw: any): number | null {
+export function parseDuration(raw: unknown): number | null {
   if (!raw) return null;
   const str = extractText(raw);
 
@@ -181,79 +185,57 @@ export function parseDuration(raw: any): number | null {
   return null;
 }
 
-export function parseExplicit(raw: any): boolean | null {
+export function parseExplicit(raw: unknown): boolean | null {
   if (raw === undefined || raw === null) return null;
   return ["yes", "true"].includes(extractText(raw).toLowerCase());
 }
 
-export function parseCategories(raw: any): string[] | null {
-  if (!raw) return null;
-  const cats = Array.isArray(raw) ? raw : [raw];
-  const result: string[] = [];
-  for (const cat of cats) {
-    const text = cat["@_text"];
-    if (text) result.push(text);
-    // Also check for nested subcategories
-    if (cat["itunes:category"]) {
-      const nested = Array.isArray(cat["itunes:category"]) ? cat["itunes:category"] : [cat["itunes:category"]];
-      for (const sub of nested) {
-        if (sub["@_text"]) result.push(sub["@_text"]);
-      }
-    }
-  }
+export function parseCategories(raw: unknown): string[] | null {
+  // A category may nest its subcategories.
+  const result = list(raw).flatMap((cat) => [cat, ...list(get(cat, "itunes:category"))]).flatMap((c) => str(get(c, "@_text")) || []);
   return result.length > 0 ? result : null;
 }
 
-export function parseDate(raw: any): Date | null {
+export function parseDate(raw: unknown): Date | null {
   if (!raw) return null;
-  const str = extractText(raw);
-  const date = new Date(str);
+  const date = new Date(extractText(raw));
   return isNaN(date.getTime()) ? null : date;
 }
 
-export function generateEpisodeId(item: any): string {
+// The old parser read item.link on an <item> that holds only text, received String.prototype.link, and hashed its source. Stored
+// episodes carry that id, so a text item keeps it.
+const TEXT_ITEM_KEY = "function link() { [native code] }";
+
+export function generateEpisodeId(item: unknown): string {
   // Prefer guid, then id, then link
-  const raw = item.guid?.["#text"] || item.guid || item.id || item.link?.["@_href"] || item.link || "";
-  const str = typeof raw === "object" ? JSON.stringify(raw) : String(raw);
+  const raw = typeof item === "string"
+    ? TEXT_ITEM_KEY
+    : get(item, "guid", "#text") || get(item, "guid") || get(item, "id") || get(item, "link", "@_href") || get(item, "link") ||
+      "";
+  const key = typeof raw === "object" ? JSON.stringify(raw) : String(raw);
 
   // Create a simple hash for deterministic IDs
   let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = ((hash << 5) - hash + str.charCodeAt(i)) | 0;
+  for (let i = 0; i < key.length; i++) {
+    hash = ((hash << 5) - hash + key.charCodeAt(i)) | 0;
   }
   return Math.abs(hash).toString(36);
 }
 
-export function findEpisodeThumbnail(item: any): string | null {
-  // Try itunes:image
-  if (item["itunes:image"]?.["@_href"]) return item["itunes:image"]["@_href"];
-
-  // Try media:thumbnail
-  if (item["media:thumbnail"]?.["@_url"]) return item["media:thumbnail"]["@_url"];
-
-  // Try media:content with medium="image"
-  const mediaContent = item["media:content"];
-  if (mediaContent) {
-    const contents = Array.isArray(mediaContent) ? mediaContent : [mediaContent];
-    const image = contents.find((c) => c["@_medium"] === "image" || c["@_type"]?.startsWith("image/"));
-    if (image?.["@_url"]) return image["@_url"];
-  }
-
-  // Try enclosure with image type
-  const enclosure = item.enclosure;
-  if (enclosure?.["@_type"]?.startsWith("image/") && enclosure["@_url"]) return enclosure["@_url"];
-
-  return null;
+export function findEpisodeThumbnail(item: unknown): string | null {
+  const image = list(get(item, "media:content")).find((c) => get(c, "@_medium") === "image" || str(get(c, "@_type"))?.startsWith("image/"));
+  const enclosure = get(item, "enclosure");
+  const enclosureImage = str(get(enclosure, "@_type"))?.startsWith("image/") ? str(get(enclosure, "@_url")) : undefined;
+  return str(get(item, "itunes:image", "@_href")) || str(get(item, "media:thumbnail", "@_url")) || str(get(image, "@_url")) ||
+    enclosureImage || null;
 }
 
-function extractYoutubeChannelId(feed: any): string | null {
-  const direct = feed?.["yt:channelId"];
+function extractYoutubeChannelId(feed: unknown): string | null {
+  const direct = get(feed, "yt:channelId");
   if (typeof direct === "string" && direct.startsWith("UC")) return direct;
-  const playlist = feed?.["yt:playlistId"];
+  const playlist = get(feed, "yt:playlistId");
   if (typeof playlist === "string" && playlist.startsWith("UULF")) return "UC" + playlist.slice(4);
-  const entries = feed?.entry;
-  const first = Array.isArray(entries) ? entries[0] : entries;
-  const fromEntry = first?.["yt:channelId"];
+  const fromEntry = get(list(get(feed, "entry"))[0], "yt:channelId");
   if (typeof fromEntry === "string" && fromEntry.startsWith("UC")) return fromEntry;
   return null;
 }
@@ -263,77 +245,81 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
 }
 
 function episodes(xmlText: string, channelId: string): Episode[] {
-  const xml = parser.parse(xmlText);
+  const xml: unknown = parser.parse(xmlText);
+  const feed = get(xml, "feed");
 
-  const ytChannelId = extractYoutubeChannelId(xml.feed);
-  if (ytChannelId) {
-    const entries = xml.feed.entry;
-    const items = Array.isArray(entries) ? entries : entries ? [entries] : [];
-    return items.slice(0, 50).map((item: any) => {
-      return {
-        channel_id: channelId,
-        episode_id: item["yt:videoId"] || generateEpisodeId(item),
-        title: sanitizeText(item.title) || "Untitled",
-        description: sanitizeText(item["media:group"]?.["media:description"]),
-        thumb: httpsUrl(item["media:group"]?.["media:thumbnail"]?.["@_url"]),
-        src: null, // YouTube embeds don't have direct media URLs
-        src_type: null,
-        src_size_bytes: null,
-        duration_seconds: null,
-        published_at: parseDate(item.published),
-        link: httpsUrl(item.link?.["@_href"]),
-        season: null,
-        episode: null,
-        explicit: null,
-      };
-    });
+  if (extractYoutubeChannelId(feed)) {
+    return list(get(feed, "entry")).slice(0, 50).map((item) => ({
+      channel_id: channelId,
+      // A video id of digits parses as a number.
+      episode_id: get(item, "yt:videoId") ? extractText(get(item, "yt:videoId")) : generateEpisodeId(item),
+      title: sanitizeText(get(item, "title")) || "Untitled",
+      description: sanitizeText(get(item, "media:group", "media:description")),
+      thumb: httpsUrl(get(item, "media:group", "media:thumbnail", "@_url")),
+      src: null, // YouTube embeds don't have direct media URLs
+      src_type: null,
+      src_size_bytes: null,
+      duration_seconds: null,
+      published_at: parseDate(get(item, "published")),
+      link: httpsUrl(get(item, "link", "@_href")),
+      season: null,
+      episode: null,
+      explicit: null,
+    }));
   }
 
-  // Extract items from RSS/Atom/RDF
-  let items: any[] = [];
-  if (xml.feed?.entry) items = Array.isArray(xml.feed.entry) ? xml.feed.entry : [xml.feed.entry];
-  else if (xml.rss?.channel?.item) items = Array.isArray(xml.rss.channel.item) ? xml.rss.channel.item : [xml.rss.channel.item];
-  else if (xml.RDF?.item) items = Array.isArray(xml.RDF.item) ? xml.RDF.item : [xml.RDF.item];
-
+  const items = list(get(feed, "entry") || get(xml, "rss", "channel", "item") || get(xml, "RDF", "item"));
   return items.slice(0, 50).map((item) => {
-    const thumb = findEpisodeThumbnail(item);
-    const enclosure = item.enclosure;
-    const enclosureUrl = enclosure?.["@_url"];
-    const itemLink = item.link?.["@_href"] || (typeof item.link === "string" ? item.link : null);
-    const sizeRaw = enclosure?.["@_length"];
+    const enclosure = get(item, "enclosure");
+    const link = get(item, "link");
+    const size = str(get(enclosure, "@_length"));
+    const season = get(item, "itunes:season");
+    const number = get(item, "itunes:episode");
     return {
       channel_id: channelId,
       episode_id: generateEpisodeId(item),
-      title: sanitizeText(item.title) || "Untitled",
-      description: sanitizeText(item.description || item.summary || item.content),
-      thumb: httpsUrl(thumb),
-      src: httpsUrl(enclosureUrl),
-      src_type: enclosure?.["@_type"] || null,
-      src_size_bytes: sizeRaw ? parseInt(sizeRaw, 10) || null : null,
-      duration_seconds: parseDuration(item["itunes:duration"]),
-      published_at: parseDate(item.pubDate || item.published),
-      link: httpsUrl(itemLink),
-      season: item["itunes:season"] ? parseInt(item["itunes:season"], 10) || null : null,
-      episode: item["itunes:episode"] ? parseInt(item["itunes:episode"], 10) || null : null,
-      explicit: parseExplicit(item["itunes:explicit"]),
+      title: sanitizeText(get(item, "title")) || "Untitled",
+      description: sanitizeText(get(item, "description") || get(item, "summary") || get(item, "content")),
+      thumb: httpsUrl(findEpisodeThumbnail(item)),
+      src: httpsUrl(get(enclosure, "@_url")),
+      src_type: str(get(enclosure, "@_type")) || null,
+      src_size_bytes: size ? parseInt(size, 10) || null : null,
+      duration_seconds: parseDuration(get(item, "itunes:duration")),
+      published_at: parseDate(get(item, "pubDate") || get(item, "published")),
+      link: httpsUrl(get(link, "@_href") || (typeof link === "string" ? link : null)),
+      season: season ? parseInt(String(season), 10) || null : null,
+      episode: number ? parseInt(String(number), 10) || null : null,
+      explicit: parseExplicit(get(item, "itunes:explicit")),
     };
   });
 }
 
-function generateChannelId(url: string): string {
+function generateChannelId(url: unknown): string {
   try {
-    const urlObj = new URL(url);
+    const urlObj = new URL(String(url));
     return urlObj.hostname + urlObj.pathname;
   } catch {
-    return btoa(encodeURIComponent(url)).slice(0, 32);
+    return btoa(encodeURIComponent(String(url))).slice(0, 32);
   }
 }
 
-function findThumbnail(channel: any): string | null {
-  if (channel.image?.url) return channel.image.url;
-  if (channel["itunes:image"]?.["@_href"]) return channel["itunes:image"]["@_href"];
-  if (channel["media:thumbnail"]?.["@_url"]) return channel["media:thumbnail"]["@_url"];
-  return null;
+// refresh records a throw as a failed channel. The old parser threw for a <channel> that is missing or holds only text, so such a
+// feed fails and does not refresh a channel with nothing.
+function channelOf(xml: unknown, root: "rss" | "RDF"): unknown {
+  const channel = get(xml, root, "channel");
+  if (typeof channel !== "object") {
+    throw new Error(
+      `Expected <${root}> to have a <channel> element, received ${
+        channel === undefined ? "none" : JSON.stringify(channel)?.slice(0, 80)
+      }. The feed is malformed: report it to the publisher.`,
+    );
+  }
+  return channel;
+}
+
+// The result goes to httpsUrl unnarrowed, so an image that is not text fails the feed.
+function findThumbnail(channel: unknown): unknown {
+  return get(channel, "image", "url") || get(channel, "itunes:image", "@_href") || get(channel, "media:thumbnail", "@_url") || null;
 }
 
 export function parse(xmlText: string, sourceUrl?: string): Channel {
@@ -341,24 +327,22 @@ export function parse(xmlText: string, sourceUrl?: string): Channel {
 }
 
 function channel(xmlText: string, sourceUrl?: string): Channel {
-  const xml = parser.parse(xmlText);
+  const xml: unknown = parser.parse(xmlText);
 
-  if (xml.feed) {
-    const feed = xml.feed;
+  const feed = get(xml, "feed");
+  if (feed) {
     const ytChannelId = extractYoutubeChannelId(feed);
     if (ytChannelId) {
-      const authorUri = httpsUrl(feed.author?.uri);
-      const entries = feed.entry;
-      const firstEntry = Array.isArray(entries) ? entries[0] : entries;
+      const authorUri = httpsUrl(get(feed, "author", "uri"));
       const channelUrl = `https://www.youtube.com/channel/${ytChannelId}`;
       return {
         channel_id: `youtube.com/channel/${ytChannelId}`,
         rss: sourceUrl || authorUri || channelUrl,
-        title: sanitizeText(feed.title),
-        description: sanitizeText(feed.subtitle),
-        thumb: httpsUrl(firstEntry?.["media:group"]?.["media:thumbnail"]?.["@_url"]),
+        title: sanitizeText(get(feed, "title")),
+        description: sanitizeText(get(feed, "subtitle")),
+        thumb: httpsUrl(get(list(get(feed, "entry"))[0], "media:group", "media:thumbnail", "@_url")),
         updated_at: new Date(),
-        author: sanitizeText(feed.author?.name) || null,
+        author: sanitizeText(get(feed, "author", "name")) || null,
         language: null,
         explicit: null,
         website: authorUri || channelUrl,
@@ -366,57 +350,60 @@ function channel(xmlText: string, sourceUrl?: string): Channel {
         tags: ["youtube"],
       };
     }
-    const rawLink = Array.isArray(feed.link)
-      ? feed.link.find((l: any) => l["@_rel"] === "alternate")?.["@_href"] || feed.link[0]["@_href"]
-      : feed.link["@_href"];
+    // The old parser threw for an Atom feed with no <link>. A <link> that holds text keeps its feed, which can still list entries.
+    if (get(feed, "link") === undefined) {
+      throw new Error("Expected <feed> to have a <link>, received none. The feed is malformed: report it to the publisher.");
+    }
+    const links = list(get(feed, "link"));
+    const rawLink = get(links.find((l) => get(l, "@_rel") === "alternate"), "@_href") || get(links[0], "@_href");
     const link = httpsUrl(rawLink);
     return {
       channel_id: generateChannelId(rawLink),
       rss: link!,
-      title: sanitizeText(feed.title),
-      description: sanitizeText(feed.subtitle || feed.description),
-      thumb: httpsUrl(feed.icon || feed.logo || feed["media:thumbnail"]?.["@_url"]),
+      title: sanitizeText(get(feed, "title")),
+      description: sanitizeText(get(feed, "subtitle") || get(feed, "description")),
+      thumb: httpsUrl(get(feed, "icon") || get(feed, "logo") || get(feed, "media:thumbnail", "@_url")),
       updated_at: new Date(),
-      author: sanitizeText(feed.author?.name) || null,
-      language: feed["@_xml:lang"] || null,
-      explicit: parseExplicit(feed["itunes:explicit"]),
+      author: sanitizeText(get(feed, "author", "name")) || null,
+      language: str(get(feed, "@_xml:lang")) || null,
+      explicit: parseExplicit(get(feed, "itunes:explicit")),
       website: link || null,
-      categories: parseCategories(feed["itunes:category"]),
+      categories: parseCategories(get(feed, "itunes:category")),
       tags: null,
     };
   }
 
-  if (xml.rss) {
-    const channel = xml.rss.channel;
-    const link = httpsUrl(channel.link);
+  if (get(xml, "rss")) {
+    const channel = channelOf(xml, "rss");
+    const link = httpsUrl(get(channel, "link"));
     return {
-      channel_id: generateChannelId(channel.link),
+      channel_id: generateChannelId(get(channel, "link")),
       rss: link!,
-      title: sanitizeText(channel.title),
-      description: sanitizeText(channel.description),
+      title: sanitizeText(get(channel, "title")),
+      description: sanitizeText(get(channel, "description")),
       thumb: httpsUrl(findThumbnail(channel)),
       updated_at: new Date(),
-      author: sanitizeText(channel["itunes:author"]) || null,
-      language: sanitizeText(channel.language) || null,
-      explicit: parseExplicit(channel["itunes:explicit"]),
+      author: sanitizeText(get(channel, "itunes:author")) || null,
+      language: sanitizeText(get(channel, "language")) || null,
+      explicit: parseExplicit(get(channel, "itunes:explicit")),
       website: link,
-      categories: parseCategories(channel["itunes:category"]),
+      categories: parseCategories(get(channel, "itunes:category")),
       tags: null,
     };
   }
 
-  if (xml.RDF) {
-    const channel = xml.RDF.channel;
-    const link = httpsUrl(channel.link);
+  if (get(xml, "RDF")) {
+    const channel = channelOf(xml, "RDF");
+    const link = httpsUrl(get(channel, "link"));
     return {
-      channel_id: generateChannelId(channel.link),
+      channel_id: generateChannelId(get(channel, "link")),
       rss: link!,
-      title: sanitizeText(channel.title),
-      description: sanitizeText(channel.description),
+      title: sanitizeText(get(channel, "title")),
+      description: sanitizeText(get(channel, "description")),
       thumb: httpsUrl(findThumbnail(channel)),
       updated_at: new Date(),
-      author: sanitizeText(channel["dc:creator"]) || null,
-      language: sanitizeText(channel["dc:language"]) || null,
+      author: sanitizeText(get(channel, "dc:creator")) || null,
+      language: sanitizeText(get(channel, "dc:language")) || null,
       explicit: null,
       website: link,
       categories: null,

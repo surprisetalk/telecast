@@ -5,6 +5,12 @@
     "semiColons": true,
     "useTabs": false
   },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@1",
+    "@std/encoding": "jsr:@std/encoding@1",
+    "@std/http": "jsr:@std/http@1",
+    "@surprisetalk/pgtemp": "jsr:@surprisetalk/pgtemp@0.2.7"
+  },
   "tasks": {
     "status": "deno run -A --env-file=.env scripts/status.ts",
     "serve": "deno serve --allow-net --allow-env --allow-ffi --allow-sys --allow-read=public,cache,node_modules,/run/telecast-web,/run/postgresql --allow-write=cache,/run/telecast-web,/run/postgresql --env-file=.env --host=127.0.0.1 --port=8047 server.ts"
