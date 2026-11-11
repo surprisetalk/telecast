@@ -3,7 +3,8 @@ import { XMLParser } from "fast-xml-parser";
 
 export interface Channel {
   channel_id: string;
-  rss: string;
+  // null when the feed has no https <link>. The channel table needs it, so the RSS proxy and seed skip such a feed.
+  rss: string | null;
   title: string | null;
   description: string | null;
   thumb: string | null;
@@ -359,7 +360,7 @@ function channel(xmlText: string, sourceUrl?: string): Channel {
     const link = httpsUrl(rawLink);
     return {
       channel_id: generateChannelId(rawLink),
-      rss: link!,
+      rss: link,
       title: sanitizeText(get(feed, "title")),
       description: sanitizeText(get(feed, "subtitle") || get(feed, "description")),
       thumb: httpsUrl(get(feed, "icon") || get(feed, "logo") || get(feed, "media:thumbnail", "@_url")),
@@ -378,7 +379,7 @@ function channel(xmlText: string, sourceUrl?: string): Channel {
     const link = httpsUrl(get(channel, "link"));
     return {
       channel_id: generateChannelId(get(channel, "link")),
-      rss: link!,
+      rss: link,
       title: sanitizeText(get(channel, "title")),
       description: sanitizeText(get(channel, "description")),
       thumb: httpsUrl(findThumbnail(channel)),
@@ -397,7 +398,7 @@ function channel(xmlText: string, sourceUrl?: string): Channel {
     const link = httpsUrl(get(channel, "link"));
     return {
       channel_id: generateChannelId(get(channel, "link")),
-      rss: link!,
+      rss: link,
       title: sanitizeText(get(channel, "title")),
       description: sanitizeText(get(channel, "description")),
       thumb: httpsUrl(findThumbnail(channel)),
