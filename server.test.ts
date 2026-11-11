@@ -1,53 +1,39 @@
 import { assertEquals, assertInstanceOf, assertRejects, assertStringIncludes } from "@std/assert";
 import sharp from "sharp";
-import db from "postgres";
 import { pgtemp } from "@surprisetalk/pgtemp";
 import { pg_trgm } from "@electric-sql/pglite/contrib/pg_trgm";
+import { boot, NO_DB, ROOT, serve, stallingUpstream } from "./server.harness.ts";
 
-const ROOT = import.meta.dirname!;
-const START_TIMEOUT_MS = 20_000;
 const RACE_MS = 5_000;
-// pc's socket form. /run/postgresql/.s.PGSQL.5432 is missing here, so /search reaches postgres.js, which fails without a
-// database, and Deno's permissions for the socket path get checked as on pc.
-const NO_DB = { DATABASE_URL: "postgres:///telecast", PGHOST: "/run/postgresql", PGUSER: "telecast", PGPASSWORD: "x" };
 
-// Starts the server with the flags of `deno task serve`, minus .env and on a free port, so the suite checks its permissions.
-function serve(env: Record<string, string>) {
-  const task: string = JSON.parse(Deno.readTextFileSync(`${ROOT}/deno.json`)).tasks.serve;
-  const args = task.split(" ").slice(1).filter((a) => a !== "--env-file=.env").map((a) => a === "--port=8047" ? "--port=0" : a);
-  return new Deno.Command(Deno.execPath(), {
-    args,
-    cwd: ROOT,
-    clearEnv: true,
-    // telecast-web on pc sets LD_LIBRARY_PATH, so sharp's addon finds libstdc++ on NixOS.
-    env: { HOME: Deno.env.get("HOME")!, PATH: Deno.env.get("PATH")!, LD_LIBRARY_PATH: Deno.env.get("LD_LIBRARY_PATH") ?? "", ...env },
-    stdout: "null",
-    stderr: "piped",
-  }).spawn();
+// One pgtemp serves the file, as in functions/test.ts: a pgtemp boot takes about 1 s, and the server tests ran 3 of them.
+const pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(`${ROOT}/db.sql`) });
+// pgtemp rejects prepared statements. postgres.js reads its options from the URL query too.
+const PG_ENV = { DATABASE_URL: `${pg.url}?prepare=false` };
+
+// Each test starts with no channels. The last one to finish closes pgtemp, as in functions/test.ts.
+let dbTestsLeft = 0;
+function dbTest(name: string, fn: () => Promise<void>) {
+  dbTestsLeft++;
+  Deno.test(name, async () => {
+    try {
+      await pg.sql`delete from channel`;
+      await fn();
+    } finally {
+      if (--dbTestsLeft === 0) await pg.close();
+    }
+  });
 }
 
-Deno.test("server: serves the app, app routes, search, and a resized thumb", async () => {
+Deno.test("server: serves the app, app routes, and a resized thumb, and with no database /search and /feeds.json answer 500", async () => {
   const png = await sharp({ create: { width: 600, height: 400, channels: 3, background: "#00f" } }).png().toBuffer();
+  const server = await boot(NO_DB);
   const upstream = Deno.serve(
     { hostname: "127.0.0.1", port: 0, onListen() {} },
     () => new Response(new Uint8Array(png), { headers: { "content-type": "image/png" } }),
   );
-  const child = serve(NO_DB);
-  let log = "";
-  const reading = (async () => {
-    for await (const chunk of child.stderr.pipeThrough(new TextDecoderStream())) log += chunk;
-  })();
-  let exited = false;
-  child.status.then(() => exited = true);
   try {
-    const t0 = performance.now();
-    let base: string | undefined;
-    while (!base) {
-      if (exited) throw new Error(`Server exited before it listened. stderr: ${log}`);
-      if (performance.now() - t0 > START_TIMEOUT_MS) throw new Error(`Server did not listen within ${START_TIMEOUT_MS} ms. stderr: ${log}`);
-      base = log.match(/Listening on (http:\/\/127\.0\.0\.1:\d+)/)?.[1];
-      await new Promise((r) => setTimeout(r, 50));
-    }
+    const base = server.base;
     const index = await Deno.readTextFile(`${ROOT}/public/index.html`);
     for (const path of ["/", "/episode/x", "/remix?src=http%3A%2F%2Fa.example%2Fa.mp4&t=1,2"]) {
       const res = await fetch(base + path);
@@ -86,6 +72,11 @@ Deno.test("server: serves the app, app routes, search, and a resized thumb", asy
     const search = await fetch(`${base}/search?q=rust`);
     assertEquals(search.status, 500);
     assertStringIncludes(await search.text(), "Search failed");
+    const feeds = await fetch(`${base}/feeds.json`);
+    assertEquals([feeds.status, await feeds.text()], [
+      500,
+      "Feeds failed. Expected the channel table to answer. Check that postgres is up.",
+    ]);
 
     const thumbUrl = `http://127.0.0.1:${upstream.addr.port}/art.png`;
     const thumb = await fetch(`${base}/proxy/thumb/${encodeURIComponent(thumbUrl)}`);
@@ -93,9 +84,7 @@ Deno.test("server: serves the app, app routes, search, and a resized thumb", asy
     const meta = await sharp(new Uint8Array(await thumb.arrayBuffer())).metadata();
     assertEquals([meta.format, meta.width], ["webp", 256]);
   } finally {
-    if (!exited) child.kill();
-    await child.status;
-    await reading;
+    await server.stop();
     await upstream.shutdown();
   }
 });
@@ -107,173 +96,54 @@ Deno.test("server: exits nonzero and names DATABASE_URL when it is missing", asy
   assertStringIncludes(stderr, "DATABASE_URL is missing");
 });
 
-// systemd waits 90 s after SIGTERM, then kills the unit. Until the server exits, cloudflared answers every visitor 502.
-const STOP_TIMEOUT_MS = 5_000;
-
-// Boots the server and returns its base URL, its stderr so far, and a stop function that sends SIGTERM as systemd does.
-async function boot(env: Record<string, string>) {
-  const child = serve(env);
-  let log = "";
-  const reading = (async () => {
-    for await (const chunk of child.stderr.pipeThrough(new TextDecoderStream())) log += chunk;
-  })();
-  let exited = false;
-  child.status.then(() => exited = true);
-  const t0 = performance.now();
-  let base: string | undefined;
-  while (!base) {
-    if (exited) throw new Error(`Server exited before it listened. stderr: ${log}`);
-    if (performance.now() - t0 > START_TIMEOUT_MS) throw new Error(`Server did not listen within ${START_TIMEOUT_MS} ms. stderr: ${log}`);
-    base = log.match(/Listening on (http:\/\/127\.0\.0\.1:\d+)/)?.[1];
-    await new Promise((r) => setTimeout(r, 50));
-  }
-  return {
-    base,
-    log: () => log,
-    async stop() {
-      const t0 = performance.now();
-      if (!exited) child.kill("SIGTERM");
-      const kill = setTimeout(() => child.kill("SIGKILL"), STOP_TIMEOUT_MS);
-      await child.status;
-      clearTimeout(kill);
-      await reading;
-      const ms = Math.round(performance.now() - t0);
-      if (ms >= STOP_TIMEOUT_MS) {
-        throw new Error(`Expected the server to exit within ${STOP_TIMEOUT_MS} ms of SIGTERM, received ${ms} ms. stderr: ${log}`);
-      }
-    },
-  };
-}
-
-// Streams ?bytes= bytes of text in 100 KB chunks, counts the responses that sent all of them, then waits for release.
-function stallingUpstream(release: Promise<void>) {
-  const counter = { sent: 0 };
-  const server = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, (req) => {
-    let left = Number(new URL(req.url).searchParams.get("bytes"));
-    const chunk = new TextEncoder().encode("x".repeat(100_000));
-    return new Response(
-      new ReadableStream({
-        async pull(c) {
-          if (left > 0) {
-            left -= chunk.length;
-            c.enqueue(chunk);
-            return;
-          }
-          counter.sent++;
-          await release;
-          c.close();
-        },
-      }),
-    );
-  });
-  const url = (i: number, bytes: number) => `http://127.0.0.1:${server.addr.port}/f${i}?bytes=${bytes}`;
-  const sentAll = async (n: number) => {
-    const t0 = performance.now();
-    while (counter.sent < n) {
-      if (performance.now() - t0 > 10_000) throw new Error(`Expected ${n} feeds fully sent, received ${counter.sent} after 10 s.`);
-      await new Promise((r) => setTimeout(r, 20));
+dbTest(
+  "server: on SIGTERM an idle server drains at once with its database connection open, and a busy one cuts its open response",
+  async () => {
+    const release = Promise.withResolvers<void>();
+    const up = stallingUpstream(release.promise);
+    // Both run at once: the busy server waits out its grace period, and the idle one needs none of it.
+    const [idle, busy] = await Promise.all([boot(PG_ENV), boot(NO_DB)]);
+    try {
+      const res = await fetch(`${idle.base}/search?q=rust`).catch((e) => {
+        throw new Error(`Expected /search to answer, received ${e}. stderr: ${idle.log()}`);
+      });
+      assertEquals(res.status, 200, await res.text());
+      // The feed proxy waits for the upstream to finish, so this response stays open, as one to a /feeds.json client that stops reading does.
+      // Settled at once, so a slow stop reports its own error and not this fetch's rejection.
+      const held = fetch(`${busy.base}/proxy/rss/${encodeURIComponent(up.url(0, 0))}`).then(
+        async (res) => `answered ${res.status}: ${await res.text()}`,
+        (e: unknown) => e,
+      );
+      await up.sentAll(1);
+      await Promise.all([idle.stop(), busy.stop()]);
+      // The grace exit also ends a process within the stop bound, so only its absent line shows that sql.end() let the idle loop drain.
+      assertEquals(
+        idle.log().includes("Exiting cuts them."),
+        false,
+        `Expected the idle server to exit by draining, received the grace exit. stderr: ${idle.log()}`,
+      );
+      assertStringIncludes(busy.log(), "received some still open. Exiting cuts them.");
+      assertInstanceOf(await held, TypeError);
+    } finally {
+      release.resolve();
+      await Promise.all([idle.stop(), busy.stop()]);
+      await up.server.shutdown();
     }
-  };
-  return { server, url, sentAll };
-}
+  },
+);
 
-// 7 feeds of 40 MB reserve 7 x (1 MB + 40 MB x 6.22) = 1749 MB of the 1753 MB budget. One more feed of 0.4 MB takes 3.5 MB, which leaves
-async function fillBudget(server: { base: string }, up: ReturnType<typeof stallingUpstream>) {
-  const get = (url: string) => fetch(`${server.base}/proxy/rss/${encodeURIComponent(url)}`);
-  const held = [...Array.from({ length: 7 }, (_, i) => get(up.url(i, 40e6))), get(up.url(7, 0.4e6))];
-  await up.sentAll(8);
-  // The proxy still holds the last chunks in flight when the upstream has sent them.
-  await new Promise((r) => setTimeout(r, 300));
-  return { get, held };
-}
-
-Deno.test("server: a request past the memory budget gets a 503 Busy and one busy: line each, and the slots free up after", async () => {
-  const release = Promise.withResolvers<void>();
-  const up = stallingUpstream(release.promise);
-  const server = await boot(NO_DB);
-  try {
-    const { get, held } = await fillBudget(server, up);
-    const busy = await get(up.url(8, 40e6));
-    assertEquals(busy.status, 503);
-    assertEquals(
-      /^Busy: 8 feeds and thumbs are loading and use 175\d of 1753 MB\. Retry in a few seconds\.$/.test(await busy.text()),
-      true,
-    );
-    // The YouTube resolver swallows the first rejection and fetches again. This request still logs one busy: line.
-    const youtube = await get("https://www.youtube.com/channel/UCbusyprobe0000000000000");
-    assertEquals(youtube.status, 503);
-    await youtube.body?.cancel();
-    release.resolve();
-    const responses = await Promise.all(held);
-    await Promise.all(responses.map((r) => r.body?.cancel()));
-    assertEquals(responses.map((r) => r.status), Array(8).fill(400));
-    const after = await get(up.url(9, 40e6));
-    assertEquals(after.status, 400);
-    await after.body?.cancel();
-    assertEquals(server.log().split("\n").filter((l) => l.startsWith("busy:")).length, 2);
-  } finally {
-    release.resolve();
-    await server.stop();
-    await up.server.shutdown();
-  }
-});
-
-Deno.test("server: 40 small thumbs and 20 small feeds in parallel are never Busy", async () => {
-  const jpeg = await sharp({ create: { width: 300, height: 300, channels: 3, background: "#f80" } }).jpeg().toBuffer();
-  const feed = `<rss><channel><title>t</title><!--${"x".repeat(100_000)}--></channel></rss>`;
-  // Upstream waits, so all 60 requests are in flight together.
-  const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async (req) => {
-    await new Promise((r) => setTimeout(r, 800));
-    return req.url.includes("/thumb")
-      ? new Response(new Uint8Array(jpeg), { headers: { "content-type": "image/jpeg" } })
-      : new Response(feed);
-  });
-  const server = await boot(NO_DB);
-  try {
-    const get = (kind: string, i: number) =>
-      fetch(`${server.base}/proxy/${kind}/${encodeURIComponent(`http://127.0.0.1:${upstream.addr.port}/${kind}${i}`)}`);
-    const all = [
-      ...Array.from({ length: 40 }, (_, i) => get("thumb", i)),
-      ...Array.from({ length: 20 }, (_, i) => get("rss", i)),
-    ];
-    const responses = await Promise.all(all);
-    await Promise.all(responses.map((r) => r.body?.cancel()));
-    assertEquals(responses.filter((r) => r.status === 503).length, 0);
-    assertEquals(server.log().split("\n").filter((l) => l.startsWith("busy:")).length, 0);
-  } finally {
-    await server.stop();
-    await upstream.shutdown();
-  }
-});
-
-Deno.test("server: SIGTERM after a /search exits at once, with the database connection open", async () => {
-  await using pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(`${ROOT}/db.sql`) });
-  // pgtemp rejects prepared statements. postgres.js reads its options from the URL query too.
-  const server = await boot({ DATABASE_URL: `${pg.url}?prepare=false` });
-  const res = await fetch(`${server.base}/search?q=rust`).catch((e) => {
-    throw new Error(`Expected /search to answer, received ${e}. stderr: ${server.log()}`);
-  });
-  assertEquals(res.status, 200, await res.text());
-  await server.stop();
-});
-
-Deno.test("server: /feeds.json streams the rss URLs as one sorted JSON array, distinct, in byte order", async () => {
-  await using pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(`${ROOT}/db.sql`) });
-  const server = await boot({ DATABASE_URL: `${pg.url}?prepare=false` });
+dbTest("server: /feeds.json streams the rss URLs as one sorted JSON array, distinct, in byte order", async () => {
+  const server = await boot(PG_ENV);
   try {
     const empty = await fetch(`${server.base}/feeds.json`);
     assertEquals([empty.status, empty.headers.get("content-type"), await empty.text()], [200, "application/json", "[]"]);
     // 12,000 rows span three cursor batches. "B" (0x42) sorts before "b" (0x62) in byte order. The quote and backslash test escaping.
     const urls = Array.from({ length: 12_000 }, (_, i) => `https://x.example/${String(i).padStart(5, "0")}"q\\`);
     urls.push("https://x.example/b", "https://x.example/B");
-    const sql = db(`${pg.url}?prepare=false`);
-    try {
-      await sql`insert into channel (channel_id, rss, title) select 'c' || i, u, 't' from unnest(${urls}::text[]) with ordinality as t(u, i)`;
-      // A second channel with an existing URL must not repeat it.
-      await sql`insert into channel (channel_id, rss, title) values ('dup', ${urls[0]}, 't')`;
-    } finally {
-      await sql.end();
-    }
+    await pg
+      .sql`insert into channel (channel_id, rss, title) select 'c' || i, u, 't' from unnest(${urls}::text[]) with ordinality as t(u, i)`;
+    // A second channel with an existing URL must not repeat it.
+    await pg.sql`insert into channel (channel_id, rss, title) values ('dup', ${urls[0]}, 't')`;
     const res = await fetch(`${server.base}/feeds.json`);
     const body = await res.text();
     assertEquals(res.status, 200);
@@ -285,36 +155,48 @@ Deno.test("server: /feeds.json streams the rss URLs as one sorted JSON array, di
   }
 });
 
-Deno.test("server: /feeds.json serves one reader at a time, and a reader that leaves before its first byte frees the guard", async () => {
-  await using pg = await pgtemp({ extensions: { pg_trgm }, setup: await Deno.readTextFile(`${ROOT}/db.sql`) });
-  const server = await boot({ DATABASE_URL: `${pg.url}?prepare=false` });
-  const sql = db(`${pg.url}?prepare=false`);
+dbTest("server: /feeds.json serves one reader at a time, and a reader that leaves before its first byte frees the guard", async () => {
+  const server = await boot(PG_ENV);
   try {
     const urls = ["https://x.example/a", "https://x.example/b"];
-    await sql`insert into channel (channel_id, rss, title) select 'c' || i, u, 't' from unnest(${urls}::text[]) with ordinality as t(u, i)`;
+    await pg
+      .sql`insert into channel (channel_id, rss, title) select 'c' || i, u, 't' from unnest(${urls}::text[]) with ordinality as t(u, i)`;
     // pgtemp is one Postgres session, so an open transaction makes every other connection wait. The request that enters first takes
     // the guard and waits for the database, so the first answer must be the other's 503. A stall by body size instead depends on how
     // much the kernel buffers for a client that does not read: about 4.5 MB on pc.
-    const tx = await sql.reserve();
-    await tx`begin`;
-    const aborts = [new AbortController(), new AbortController()];
-    const requests = aborts.map((a) => fetch(`${server.base}/feeds.json`, { signal: a.signal }));
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<never>((_, reject) =>
-      timer = setTimeout(
-        () =>
-          reject(
-            new Error(`Expected one of two /feeds.json requests to answer 503 while the other waits, received no answer in ${RACE_MS} ms.`),
-          ),
-        RACE_MS,
-      )
-    );
-    const first = await Promise.race([...requests.map((p, i) => p.then((res) => ({ res, i }))), late]).finally(() => clearTimeout(timer));
-    assertEquals([first.res.status, await first.res.text()], [503, "Busy. Expected one /feeds.json reader at a time. Retry in a minute."]);
-    aborts[1 - first.i].abort();
-    await assertRejects(() => requests[1 - first.i], DOMException);
-    await tx`commit`;
-    tx.release();
+    const tx = await pg.sql.reserve();
+    let open = false;
+    try {
+      await tx`begin`;
+      open = true;
+      const aborts = [new AbortController(), new AbortController()];
+      const requests = aborts.map((a) => fetch(`${server.base}/feeds.json`, { signal: a.signal }));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const late = new Promise<never>((_, reject) =>
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Expected one of two /feeds.json requests to answer 503 while the other waits, received no answer in ${RACE_MS} ms.`,
+              ),
+            ),
+          RACE_MS,
+        )
+      );
+      const first = await Promise.race([...requests.map((p, i) => p.then((res) => ({ res, i }))), late]).finally(() => clearTimeout(timer));
+      assertEquals([first.res.status, await first.res.text()], [
+        503,
+        "Busy. Expected one /feeds.json reader at a time. Retry in a minute.",
+      ]);
+      aborts[1 - first.i].abort();
+      await assertRejects(() => requests[1 - first.i], DOMException);
+      await tx`commit`;
+      open = false;
+    } finally {
+      // A failed assertion leaves tx in its transaction, and pgtemp then makes every other connection wait without bound.
+      if (open) await tx`rollback`;
+      tx.release();
+    }
     let res = await fetch(`${server.base}/feeds.json`);
     for (let tries = 1; tries < 50 && res.status === 503; tries++) {
       await res.body!.cancel();
@@ -326,100 +208,6 @@ Deno.test("server: /feeds.json serves one reader at a time, and a reader that le
     const after = await fetch(`${server.base}/feeds.json`);
     assertEquals([after.status, await after.text()], [200, JSON.stringify(urls)]);
   } finally {
-    // end() waits for a reserved connection without bound, and a failed assertion leaves tx reserved.
-    await sql.end({ timeout: 1 });
     await server.stop();
-  }
-});
-
-Deno.test("server: SIGTERM cuts a response that is still open and exits within its grace period", async () => {
-  const release = Promise.withResolvers<void>();
-  const up = stallingUpstream(release.promise);
-  const server = await boot(NO_DB);
-  try {
-    // The feed proxy waits for the upstream to finish, so this response stays open, as one to a /feeds.json client that stops reading does.
-    // Settled at once, so a slow stop reports its own error and not this fetch's rejection.
-    const held = fetch(`${server.base}/proxy/rss/${encodeURIComponent(up.url(0, 0))}`).then(
-      async (res) => `answered ${res.status}: ${await res.text()}`,
-      (e: unknown) => e,
-    );
-    await up.sentAll(1);
-    await server.stop();
-    assertStringIncludes(server.log(), "received some still open. Exiting cuts them.");
-    assertInstanceOf(await held, TypeError);
-  } finally {
-    release.resolve();
-    await up.server.shutdown();
-  }
-});
-
-Deno.test("server: /feeds.json answers 500 when the database is down", async () => {
-  const server = await boot(NO_DB);
-  try {
-    const res = await fetch(`${server.base}/feeds.json`);
-    assertEquals(res.status, 500);
-    assertStringIncludes(await res.text(), "Feeds failed");
-  } finally {
-    await server.stop();
-  }
-});
-
-Deno.test("server: 16 parallel 30 MB feeds staggered 5 ms apart: the oldest finish and only the youngest answer 503 Busy", async () => {
-  // Every body starts when the last request has arrived, so all 16 bodies stream together and the arrival order stays 5 ms apart.
-  // The upstream sends each body at 2 MB per 50 ms, so all 16 bodies grow at one rate on any machine. In CI, 16 unpaced 30 MB
-  // bodies all finished with no request Busy.
-  const arrived = Promise.withResolvers<void>();
-  let hits = 0;
-  const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, async () => {
-    if (++hits === 16) arrived.resolve();
-    await arrived.promise;
-    let sent = 0;
-    return new Response(
-      new ReadableStream<Uint8Array>({
-        async pull(out) {
-          if (sent === 15) return out.close();
-          await new Promise((r) => setTimeout(r, 50));
-          out.enqueue(new Uint8Array(2e6).fill(120));
-          sent++;
-        },
-      }, { highWaterMark: 0 }),
-    );
-  });
-  const server = await boot(NO_DB);
-  try {
-    const pending: Promise<Response>[] = [];
-    for (let i = 0; i < 16; i++) {
-      pending.push(fetch(`${server.base}/proxy/rss/${encodeURIComponent(`http://127.0.0.1:${upstream.addr.port}/f${i}`)}`));
-      await new Promise((r) => setTimeout(r, 5));
-    }
-    const responses = await Promise.all(pending);
-    await Promise.all(responses.map((r) => r.body?.cancel()));
-    const statuses = responses.map((r) => r.status);
-    // 16 x 188 MB is 3 GB against a 1753 MB budget. The oldest finish (400: not a feed), and every request after the first Busy is Busy.
-    const firstBusy = statuses.indexOf(503);
-    assertEquals(firstBusy > 0 && firstBusy < 16, true, statuses.join(" "));
-    assertEquals(statuses, statuses.map((_, i) => i < firstBusy ? 400 : 503));
-    assertEquals(server.log().split("\n").filter((l) => l.startsWith("busy:")).length, 16 - firstBusy);
-  } finally {
-    await server.stop();
-    await upstream.shutdown();
-  }
-});
-
-Deno.test("server: a visitor-chosen URL with a newline cannot forge a busy: line", async () => {
-  const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, () => new Response("gone", { status: 404 }));
-  const server = await boot(NO_DB);
-  try {
-    const url = `http://127.0.0.1:${upstream.addr.port}/\nbusy: forged`;
-    for (const kind of ["thumb", "rss"]) {
-      const res = await fetch(`${server.base}/proxy/${kind}/${encodeURIComponent(url)}`);
-      await res.body?.cancel();
-    }
-    const lines = server.log().split("\n");
-    assertEquals(lines.some((l) => l.includes("forged")), true, server.log());
-    assertEquals(lines.filter((l) => l.startsWith("busy:")), []);
-  } finally {
-    await server.stop();
-    await upstream.shutdown();
   }
 });

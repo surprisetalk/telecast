@@ -17,8 +17,9 @@ deno task status                                      # Production status; snitc
 Requires `.env` with `DATABASE_URL`, a postgres URL. postgres.js reads a unix socket only from `PGHOST`, so the socket form is
 `DATABASE_URL=postgres:///telecast` plus `PGHOST`, `PGUSER`, and `PGPASSWORD`. Deno code (`server.ts`, `functions/`, `scripts/`) is
 checked/linted/tested/formatted with `deno check|lint|test|fmt`. A jsr import goes in the `imports` map of deno.json, because `deno lint`
-rejects an inline `jsr:` specifier. Tests run with `-A`; `server.test.ts` starts the server with the flags of `deno task serve`, so a
-missing permission fails the suite.
+rejects an inline `jsr:` specifier. Tests run with `-A`; `server.harness.ts` starts the server with the flags of `deno task serve`, so a
+missing permission fails the suite. `deno test --parallel` runs files at once and the tests in one file in turn, so a slow server test goes
+in the file whose subject it tests: the memory budget's in `functions/_shared/budget.test.ts`.
 
 Install with `npm ci`. package.json pins `elm` and `elm-test` exactly. A range like `^0.19.1-6` admits `0.19.1`, because semver ranks a
 release above its prereleases. `elm@0.19.1` gets its binary from a postinstall script. An install that skips the script, like

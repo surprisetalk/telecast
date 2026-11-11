@@ -6,8 +6,8 @@ if [ -e /etc/NIXOS ]; then export LD_LIBRARY_PATH="$(dirname "$(gcc -print-file-
 
 # --no-install: a missing dev dependency fails here. Plain npx runs the newest release from the registry instead.
 npx --no-install elm-format --validate src/ tests/
-deno fmt --check server.ts server.test.ts functions/ scripts/
-deno lint server.ts server.test.ts functions/ scripts/
+deno fmt --check server*.ts functions/ scripts/
+deno lint server*.ts functions/ scripts/
 npx --no-install elm make src/Main.elm --output=/dev/null
 # elm-test exits 0 when it crashes before running a test (e.g. listen EPERM on its socket), so check its summary line.
 # elm-test calls process.exit right after its last write. Node writes to a pipe asynchronously, so a pipe loses the tail of the
@@ -21,6 +21,7 @@ echo "$summary" | jq -e '.event == "runComplete" and .failed == "0" and (.passed
   echo "elm-test: expected a runComplete line with failed 0, passed > 0, autoFail null. Received exit $code and: ${summary:-<no output>}. Run npx elm-test to see why." >&2
   exit 1
 }
-deno check server.ts server.test.ts functions/ scripts/
-deno test -A --parallel server.test.ts functions/ scripts/
+deno check server*.ts functions/ scripts/
+# --no-check: the line above checks every test file, and a second check costs about 2 s.
+deno test -A --parallel --no-check server.test.ts functions/ scripts/
 (cd tui && test -z "$(gofmt -l .)" && go vet ./... && go test ./...)
