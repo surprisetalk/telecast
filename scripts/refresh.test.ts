@@ -19,7 +19,7 @@ Deno.test("refreshChannels", async (t) => {
   async function seedRows(rows: { id: string; rss: string }[]) {
     await pg.sql`truncate channel, episode`;
     for (const r of rows) await pg.sql`insert into channel (channel_id, rss, title) values (${r.id}, ${r.rss}, ${r.id})`;
-    return await pg.sql<Due[]>`select channel_id, rss, consecutive_errors from channel order by channel_id`;
+    return await pg.sql<Due[]>`select channel_id, rss from channel order by channel_id`;
   }
 
   // The UULF HEAD probe answers 404, so the feed URL stays in the channel_id form. No test touches the network.
@@ -96,6 +96,51 @@ Deno.test("refreshChannels", async (t) => {
     assertEquals((await state("good")).last_success_at !== null, true);
   });
 
+  await t.step("a refresh writes only the episodes that changed, and quality follows the stats", async () => {
+    const rows = await seedRows([{ id: "good", rss: "https://good.example.org/feed" }]);
+    // 365 days ago is half of the 2-year freshness decay: 20 of 40 points. 1800 s is the top depth tier: 10 points.
+    const yearAgo = new Date(Date.now() - 365 * 86_400_000).toUTCString();
+    const one = (title: string) =>
+      `<item><title>${title}</title><guid>g1</guid><pubDate>${yearAgo}</pubDate><itunes:duration>1800</itunes:duration></item>`;
+    const zebra = `<item><title>Zebra</title><guid>g2</guid></item>`;
+    const feedOf = (items: string) =>
+      `<?xml version="1.0"?><rss version="2.0"><channel><title>Good</title><link>https://good.example.org/</link>${items}</channel></rss>`;
+    let [feed, status] = [feedOf(one("One")), 200];
+    const refresh = () => refreshChannels(pg.sql, fakeFetch(() => new Response(feed, { status })), rows);
+    // xmin names the transaction that wrote a row version. An equal xmin means the refresh wrote no new version.
+    const xmins = async () => (await pg.sql`select xmin::text from episode order by episode_id`).map((r) => r.xmin);
+    const stats = async () =>
+      (await pg.sql`select episode_count, quality, keywords::text as keywords from channel where channel_id = 'good'`)[0]!;
+
+    await refresh();
+    const [first, firstStats] = [await xmins(), await stats()];
+    assertEquals([firstStats.episode_count, firstStats.quality], [1, 55]);
+    await refresh();
+    assertEquals(await xmins(), first, "an unchanged feed writes no episode row");
+    assertEquals(await stats(), firstStats);
+
+    feed = feedOf(one("One") + zebra);
+    await refresh();
+    const added = await xmins();
+    assertEquals(added[0], first[0]);
+    const s = await stats();
+    assertEquals([s.episode_count, s.quality, s.keywords.includes("'zebra'")], [2, 58, true]);
+
+    feed = feedOf(one("Okapi") + zebra);
+    await refresh();
+    const edited = await xmins();
+    assertEquals([edited[0] !== added[0], edited[1]], [true, added[1]], "an edited item rewrites only its row");
+    const e = await stats();
+    assertEquals([e.episode_count, e.quality, e.keywords.includes("'okapi'"), e.keywords.includes("'one'")], [2, 58, true, false]);
+
+    // A failure drops reliability from 20 points to 10, then to 0.
+    status = 404;
+    await refresh();
+    assertEquals((await stats()).quality, 48);
+    await refresh();
+    assertEquals((await stats()).quality, 38);
+  });
+
   await t.step("a feed with a repeated guid refreshes and spares the rest", async () => {
     // One INSERT ... ON CONFLICT cannot touch the same row twice, so a repeated guid made postgres reject the whole run.
     const item =
@@ -155,6 +200,7 @@ Deno.test("refreshChannels", async (t) => {
     const rows = await seedRows([{ id: "good", rss: "https://good.example.org/feed" }]);
     await pg.sql`alter table channel add constraint no_good check (title <> 'Good')`;
     await assertRejects(() => refreshChannels(pg.sql, fakeFetch(() => new Response(RSS)), rows), Error, "no_good");
+    assertEquals((await pg.sql`select count(*)::int as n from episode`)[0]!.n, 0, "the failed channel update rolls back its episodes");
   });
 });
 

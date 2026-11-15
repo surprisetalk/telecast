@@ -317,7 +317,7 @@ const BLOCKED_MIN_FETCHES = 20;
 const BLOCKED_HTTP_ERROR_SHARE = 0.5;
 
 // The columns of a channel that refresh reads. db.sql makes each one not null.
-export type Due = { channel_id: string; rss: string; consecutive_errors: number };
+export type Due = { channel_id: string; rss: string };
 type Failure = { channel: Due; msg: string; http: boolean };
 
 export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channels: readonly Due[]): Promise<void> {
@@ -365,9 +365,16 @@ export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channe
       return;
     }
 
-    if (episodes.length > 0) {
-      await sql`
-            INSERT INTO episode ${sql(episodes)}
+    const inferredTags = inferAllTags(channelInfo, episodes);
+
+    // The stats below change only when the insert changes a row, so a crash between the statements would leave them stale until the
+    // feed changes again. The row lock serializes two refreshes of one channel, e.g. `--featured` beside the timer. Without it, each
+    // counts the episodes in a snapshot that misses the other's.
+    await sql.begin(async (tx) => {
+      await tx`SELECT 1 FROM channel WHERE channel_id = ${channel.channel_id} FOR UPDATE`;
+      // An unchanged item writes no row. RETURNING lists only the rows that the statement inserted or changed.
+      const changed = episodes.length > 0 && (await tx`
+            INSERT INTO episode ${tx(episodes)}
             ON CONFLICT (channel_id, episode_id) DO UPDATE
             SET title = EXCLUDED.title,
                 description = EXCLUDED.description,
@@ -382,14 +389,35 @@ export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channe
                 episode = EXCLUDED.episode,
                 explicit = EXCLUDED.explicit,
                 updated_at = now()
-          `;
-    }
+            WHERE (episode.title, episode.description, episode.thumb, episode.src, episode.src_type, episode.src_size_bytes,
+                   episode.duration_seconds, episode.published_at, episode.link, episode.season, episode.episode, episode.explicit)
+              IS DISTINCT FROM
+                  (EXCLUDED.title, EXCLUDED.description, EXCLUDED.thumb, EXCLUDED.src, EXCLUDED.src_type, EXCLUDED.src_size_bytes,
+                   EXCLUDED.duration_seconds, EXCLUDED.published_at, EXCLUDED.link, EXCLUDED.season, EXCLUDED.episode, EXCLUDED.explicit)
+            RETURNING 1
+          `).length > 0;
 
-    // Infer tags from channel metadata and episodes
-    const inferredTags = inferAllTags(channelInfo, episodes);
+      // REVIEW: The stats and keywords come from the channel row unless an episode changed, so an unchanged feed reads no episode
+      // rows and rewrites no keywords. Alternative: recompute them from the episodes on every success. That cost about 40 ms and
+      // 220 KB of WAL per fetch, most of it in the keywords GIN index.
+      const stats = changed
+        ? tx`SELECT count(*) AS n, max(published_at) AS latest, avg(duration_seconds)::integer AS avg_duration
+             FROM episode WHERE channel_id = ${channel.channel_id}`
+        : tx`SELECT episode_count AS n, latest_episode_at AS latest, avg_duration_seconds AS avg_duration
+             FROM channel WHERE channel_id = ${channel.channel_id}`;
+      const keywords = changed
+        ? tx`(
+            SELECT to_tsvector('english', coalesce(string_agg(title || ' ' || coalesce(description, ''), ' '), ''))
+            FROM (
+              SELECT title, description FROM episode
+              WHERE channel_id = ${channel.channel_id}
+              ORDER BY published_at DESC NULLS LAST
+              LIMIT 20
+            ) e
+          )`
+        : tx`keywords`;
 
-    // Update channel metadata and stats on success
-    await sql`
+      await tx`
           UPDATE channel SET
             title = coalesce(${channelInfo.title}, title),
             description = coalesce(${channelInfo.description}, description),
@@ -409,41 +437,32 @@ export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channe
             last_error_at = null,
             last_success_at = now(),
             updated_at = now(),
-            episode_count = (SELECT count(*) FROM episode WHERE channel_id = ${channel.channel_id}),
-            latest_episode_at = (SELECT max(published_at) FROM episode WHERE channel_id = ${channel.channel_id}),
-            avg_duration_seconds = (SELECT avg(duration_seconds)::integer FROM episode WHERE channel_id = ${channel.channel_id} AND duration_seconds IS NOT NULL),
-            keywords = (
-              SELECT to_tsvector('english', coalesce(string_agg(title || ' ' || coalesce(description, ''), ' '), ''))
-              FROM (
-                SELECT title, description FROM episode
-                WHERE channel_id = ${channel.channel_id}
-                ORDER BY published_at DESC NULLS LAST
-                LIMIT 20
-              ) e
-            ),
-            quality = (
-              SELECT GREATEST(0, LEAST(100, (
-                -- Freshness: 0-40 points (linear decay over 2 years)
-                CASE
-                  WHEN max(published_at) IS NULL THEN 0
-                  ELSE GREATEST(0, 40 - EXTRACT(EPOCH FROM (NOW() - max(published_at))) / 86400 / 730 * 40)
+            episode_count = s.n,
+            latest_episode_at = s.latest,
+            avg_duration_seconds = s.avg_duration,
+            keywords = ${keywords},
+            quality = GREATEST(0, LEAST(100, (
+              -- Freshness: 0-40 points (linear decay over 2 years)
+              CASE
+                WHEN s.latest IS NULL THEN 0
+                ELSE GREATEST(0, 40 - EXTRACT(EPOCH FROM (NOW() - s.latest)) / 86400 / 730 * 40)
+              END
+              -- Volume: 0-30 points (logarithmic)
+              + LEAST(30, LN(1 + s.n) * 7.5)
+              -- Reliability: 20 points (no errors in this success path)
+              + 20
+              -- Depth: 0-10 points
+              + CASE
+                  WHEN s.avg_duration IS NULL THEN 5
+                  WHEN s.avg_duration >= 1800 THEN 10
+                  WHEN s.avg_duration >= 600 THEN 7
+                  ELSE 3
                 END
-                -- Volume: 0-30 points (logarithmic)
-                + LEAST(30, LN(1 + count(*)) * 7.5)
-                -- Reliability: 20 points (no errors in this success path)
-                + 20
-                -- Depth: 0-10 points
-                + CASE
-                    WHEN AVG(duration_seconds) IS NULL THEN 5
-                    WHEN AVG(duration_seconds) >= 1800 THEN 10
-                    WHEN AVG(duration_seconds) >= 600 THEN 7
-                    ELSE 3
-                  END
-              )))::integer
-              FROM episode WHERE channel_id = ${channel.channel_id}
-            )
+            )))::integer
+          FROM (${stats}) s
           WHERE channel_id = ${channel.channel_id}
         `;
+    });
 
     succeeded++;
     console.log(`[${index}/${total}] ✓ ${shortUrl} (${episodes.length} episodes)`);
@@ -471,31 +490,24 @@ export async function refreshChannels(sql: db.Sql, fetcher: typeof fetch, channe
               last_error = ${msg},
               last_error_at = now(),
               updated_at = now(),
-              quality = (
-                SELECT GREATEST(0, LEAST(100, (
-                  -- Freshness: 0-40 points (linear decay over 2 years)
-                  CASE
-                    WHEN max(published_at) IS NULL THEN 0
-                    ELSE GREATEST(0, 40 - EXTRACT(EPOCH FROM (NOW() - max(published_at))) / 86400 / 730 * 40)
+              quality = GREATEST(0, LEAST(100, (
+                -- Freshness: 0-40 points (linear decay over 2 years)
+                CASE
+                  WHEN latest_episode_at IS NULL THEN 0
+                  ELSE GREATEST(0, 40 - EXTRACT(EPOCH FROM (NOW() - latest_episode_at)) / 86400 / 730 * 40)
+                END
+                -- Volume: 0-30 points (logarithmic)
+                + LEAST(30, LN(1 + episode_count) * 7.5)
+                -- Reliability: 10 points after the first error, 0 after more. SET reads the row as it was before this update.
+                + CASE WHEN consecutive_errors = 0 THEN 10 ELSE 0 END
+                -- Depth: 0-10 points
+                + CASE
+                    WHEN avg_duration_seconds IS NULL THEN 5
+                    WHEN avg_duration_seconds >= 1800 THEN 10
+                    WHEN avg_duration_seconds >= 600 THEN 7
+                    ELSE 3
                   END
-                  -- Volume: 0-30 points (logarithmic)
-                  + LEAST(30, LN(1 + count(*)) * 7.5)
-                  -- Reliability: 0-20 points (penalty based on new error count)
-                  + CASE
-                      WHEN ${channel.consecutive_errors + 1} = 0 THEN 20
-                      WHEN ${channel.consecutive_errors + 1} = 1 THEN 10
-                      ELSE 0
-                    END
-                  -- Depth: 0-10 points
-                  + CASE
-                      WHEN AVG(duration_seconds) IS NULL THEN 5
-                      WHEN AVG(duration_seconds) >= 1800 THEN 10
-                      WHEN AVG(duration_seconds) >= 600 THEN 7
-                      ELSE 3
-                    END
-                )))::integer
-                FROM episode WHERE channel_id = ${channel.channel_id}
-              )
+              )))::integer
             WHERE channel_id = ${channel.channel_id}
           `;
   }
@@ -523,9 +535,9 @@ async function main() {
   // `--featured` refreshes the curated set so hand-picks don't wait behind the
   // huge never-fetched backlog; default refreshes the oldest channels by batch.
   const channels = Deno.args.includes("--featured")
-    ? await sql<Due[]>`SELECT channel_id, rss, consecutive_errors FROM channel WHERE tags @> array['featured']::text[] ORDER BY updated_at`
+    ? await sql<Due[]>`SELECT channel_id, rss FROM channel WHERE tags @> array['featured']::text[] ORDER BY updated_at`
     : await sql<Due[]>`
-      SELECT channel_id, rss, consecutive_errors FROM channel
+      SELECT channel_id, rss FROM channel
       ORDER BY
         CASE WHEN last_success_at IS NULL AND last_error_at IS NULL THEN 0 ELSE 1 END,
         updated_at

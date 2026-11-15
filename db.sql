@@ -22,7 +22,11 @@ create table channel (
   quality integer not null default 0,
   keywords tsvector,
   primary key (channel_id)
-);
+)
+-- REVIEW: fillfactor 80 leaves room on each page, so a refresh that changes no indexed column updates the row in place (HOT) and
+-- writes no index entry. Alternative: the default 100. It saves a fifth of the heap, but most updates then move the row and write
+-- every index, GIN included.
+with (fillfactor = 80);
 
 create extension if not exists pg_trgm;
 
@@ -33,10 +37,6 @@ create index channel_title_trgm_idx on channel using gin (lower(title) gin_trgm_
 create index channel_keywords_idx on channel using gin (keywords);
 
 create index channel_tags_idx on channel using gin (tags);
-
-create index channel_updated_at_idx on channel (updated_at);
-
-create index channel_consecutive_errors_idx on channel (consecutive_errors);
 
 create index channel_quality_idx on channel (quality desc);
 
@@ -61,8 +61,9 @@ create table episode (
   foreign key (channel_id) references channel (channel_id) on delete cascade
 );
 
-create index episode_search_idx on episode using gin (to_tsvector('english', title || ' ' || coalesce(description, '')));
-
-create index episode_channel_id_idx on episode (channel_id);
+-- REVIEW: search.ts takes each channel's newest episode thumb. This index reads them in order and stops at the first match. The
+-- old index on channel_id alone read and sorted all of a channel's episodes, about 2 s for the 50 featured channels. Alternative:
+-- no index past the primary key, whose channel_id prefix finds the rows but still sorts them.
+create index episode_channel_id_published_at_idx on episode (channel_id, published_at desc nulls last);
 
 create index episode_published_at_idx on episode (published_at desc nulls last);
