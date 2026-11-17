@@ -21,18 +21,6 @@
 
 ## Blocked on you
 
-- [ ] Visitors load telecast.company from pc, and Neon, Pages, and R2 hold nothing.
-  - Decision: ship queue, layer 3 product (projects strategy, `~/Documents/tasks/todo.md`, 27 Oct). It merges into Salt later, and shelob
-    fetches its feeds.
-  - Decision: `telecast-web` listens on `unix:/run/telecast-web/web.sock`, and the tunnel ingress for `telecast.company` points there.
-    systemd `IPAddressDeny` drops its packets to loopback, LAN, tailnet, and link-local, because the proxies fetch any URL.
-  - Tradeoff: the site is down when pc is down. Cloudflare still caches static files and thumbs at the edge.
-  - Status: snitch on pc logs every condition passing. The repo holds no Neon, Pages, or wrangler references.
-  1. Taylor deletes `~/.neon-service` on pc: `rm ~/.neon-service`. The auto-mode classifier refused it, because it deletes a credential.
-  2. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon
-     project, and closes the Neon account.
-  3. Taylor deletes the Mac clone `~/Developer/telecast`. pc holds the commits, `todo.md`, and both dumps.
-  4. Asked 2026-11-17.
 - [ ] Each lecture is transcribed and searchable.
   - Parked: Taylor decides how whisper.cpp shares pc's GPU with llama.cpp: a nightly window that stops llama.cpp, or CPU only.
   1. Download audio with yt-dlp and run whisper.cpp on pc's GPU. Store text in a `transcript` table with a tsvector. Blocked: a run of days
