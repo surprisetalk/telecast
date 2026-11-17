@@ -1,7 +1,5 @@
-.dev.vars
 /node_modules
 .DS_Store
-.wrangler
 elm.json
 /elm-stuff
 public/elm.js

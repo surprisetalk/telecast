@@ -18,9 +18,6 @@
   - Today `src/Main.elm` shows `Server error: 503` for a feed and leaves a broken thumb until reload.
   1. Retry a `/proxy/rss/` answer of 503 once after 3 s. If it fails again, show the Busy body, which says what is loading.
   2. On a thumb's `error`, retry its src once after 3 s, with CSS for the waiting state.
-- [ ] The pre-commit hook and CI run `deno lint`.
-  1. In `deno.json`, exclude `no-import-prefix`: the inline `jsr:` and `npm:` imports are this repo's style. Fix the rest, which
-     `deno lint server.ts server.test.ts functions/ scripts/` prints, then add that command to `.githooks/pre-commit` and `ci.yml`.
 
 ## Blocked on you
 
@@ -30,12 +27,11 @@
   - Decision: `telecast-web` listens on `unix:/run/telecast-web/web.sock`, and the tunnel ingress for `telecast.company` points there.
     systemd `IPAddressDeny` drops its packets to loopback, LAN, tailnet, and link-local, because the proxies fetch any URL.
   - Tradeoff: the site is down when pc is down. Cloudflare still caches static files and thumbs at the edge.
-  - Status: both domains point at the tunnel, and every condition passes once pc serves origin/main.
-  1. Done when snitch logs telecast as passing: `psql snitch -c "select * from latest where project = 'telecast'"`.
-  2. Delete `~/.neon-service` on pc.
-  3. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon
+  - Status: snitch on pc logs every condition passing. The repo holds no Neon, Pages, or wrangler references.
+  1. Taylor deletes `~/.neon-service` on pc: `rm ~/.neon-service`. The auto-mode classifier refused it, because it deletes a credential.
+  2. Taylor deletes the GitHub secret `DATABASE_URL`, the Pages project, the R2 buckets `rss`, `rss-dev`, `thumb`, `thumb-dev`, and the Neon
      project, and closes the Neon account.
-  4. Taylor deletes the Mac clone `~/Developer/telecast`. pc holds the commits, `todo.md`, and both dumps.
+  3. Taylor deletes the Mac clone `~/Developer/telecast`. pc holds the commits, `todo.md`, and both dumps.
 - [ ] Each lecture is transcribed and searchable.
   - Parked: Taylor decides how whisper.cpp shares pc's GPU with llama.cpp: a nightly window that stops llama.cpp, or CPU only.
   1. Download audio with yt-dlp and run whisper.cpp on pc's GPU. Store text in a `transcript` table with a tsvector. Blocked: a run of days

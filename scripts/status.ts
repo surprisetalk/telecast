@@ -359,7 +359,7 @@ if (import.meta.main) {
   const url = Deno.env.get("DATABASE_URL");
   if (!url) {
     throw new Error(
-      "DATABASE_URL is missing. Expected a postgres URL in .env. Received undefined. Copy it from the Neon console into .env.",
+      "DATABASE_URL is missing. Expected a postgres URL in .env. Received undefined. On pc, set DATABASE_URL=postgres:///telecast plus PGHOST, PGUSER, and PGPASSWORD in .env.",
     );
   }
   const [search, stats, curate, seed, fence, cache, disk, refresh, deploy, busy, backup, memory] = await Promise.all([
