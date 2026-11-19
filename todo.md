@@ -2,6 +2,14 @@
   - Cause: `telecast-seed.timer` fires Mondays at 05:00 UTC, inside the block from about 23:00 to 07:00 UTC, so YouTube answers its resolves
     with 404 or 500.
   1. In `/etc/nixos/flake.nix`, move the timer to `Mon *-*-* 09:00:00 UTC`, and update the seed line in `readme.md`.
+- [ ] The 4:30 report shows "Seed succeeded in the past 8 days" at 1.0 on pc.
+  - Cause: pc's journal reaches back 2.4 days. `llama-cpp-embed` and `ding` write 91% of its lines (nixos todo.md, "pc's journal holds 30
+    days"). `lastSuccessS` in `scripts/status.ts` reads the journal for `telecast-seed.service`, which runs weekly. Seed ran on Monday
+    2026-11-16 and exited 0, but the journal no longer holds that run.
+  1. In `lastSuccessS`, read `systemctl show UNIT -p Result -p ExecMainExitTimestamp` for `telecast-seed.service`, not the journal. systemd
+     keeps the last run for as long as the unit stays loaded. Add a test over a sample of that output.
+  2. Keep the journal read for `telecast-curate.service` only if its message ID check catches a failure that `Result` misses. Otherwise
+     delete it.
 - [ ] The GitHub seed source reads a licensed dataset.
   - `chen-zhitao/Youtube-Channels-Dataset` has no license. Seed reads only its channel IDs, which are facts, and stores no descriptions.
   1. Search again for a channel-ID dataset under an open license (CC0, CC-BY, ODbL), and swap `GITHUB_URL` when one turns up.
