@@ -154,6 +154,11 @@ Deno.test("lastRunAgeS: reads the age of a unit's last run from systemctl show, 
   assertThrows(() => lastRunAgeS("telecast-seed.service", show("inactive", "success", "@1894805226"), now), Error, "clock");
   assertThrows(() => lastRunAgeS("telecast-seed.service", show("inactive", "success", "", "not-found"), now), Error, "LoadState=not-found");
   assertThrows(() => lastRunAgeS("telecast-seed.service", "", now), Error, "Expected");
+  assertThrows(
+    () => lastRunAgeS("telecast-seed.service", "garbage\n" + show("inactive", "success", "@1794805226"), now),
+    Error,
+    "KEY=value",
+  );
 });
 
 Deno.test("deploy: a web process older than the HEAD reflog serves no known commit", () => {

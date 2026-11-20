@@ -4,6 +4,7 @@ import Dict
 import Expect
 import Fuzz
 import Html.Attributes as A
+import Http
 import Json.Decode as D
 import Json.Encode as E
 import Main exposing (..)
@@ -254,7 +255,24 @@ libraryShape lib =
 parseHelpers : Test
 parseHelpers =
     describe "Pure parse helpers"
-        [ test "parseDuration: HH:MM:SS" <|
+        [ test "feedResponse: only a 503 is Busy, and it keeps the body that says what is loading" <|
+            \_ ->
+                let
+                    meta code =
+                        { url = "/proxy/rss/x", statusCode = code, statusText = "", headers = Dict.empty }
+                in
+                [ Main.feedResponse (Http.BadStatus_ (meta 503) "Busy: 40 MB in flight. Retry in a few seconds.")
+                , Main.feedResponse (Http.BadStatus_ (meta 503) "<!DOCTYPE html><title>Cloudflare</title>")
+                , Main.feedResponse (Http.BadStatus_ (meta 500) "Network error")
+                , Main.feedResponse (Http.GoodStatus_ (meta 200) "<rss/>")
+                ]
+                    |> Expect.equal
+                        [ Err (Main.Busy "Busy: 40 MB in flight. Retry in a few seconds.")
+                        , Err (Main.Busy "Server error: 503")
+                        , Err (Main.Failed (Http.BadStatus 500))
+                        , Ok "<rss/>"
+                        ]
+        , test "parseDuration: HH:MM:SS" <|
             \_ -> Main.parseDuration "01:02:03" |> Expect.equal 3723
         , test "parseDuration: MM:SS" <|
             \_ -> Main.parseDuration "45:30" |> Expect.equal 2730

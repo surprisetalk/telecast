@@ -587,9 +587,19 @@ a.tag:hover {
   z-index: 0 !important;
 }
 
-.thumb-error img,
-img.thumb-error {
+/* index.html sets data-thumb on a thumb that failed: "waiting" for its one retry, then "error". The placeholder shows through. */
+img[data-thumb] {
   visibility: hidden;
+}
+
+:has(> img[data-thumb="waiting"])::before {
+  animation: thumb-wait 0.8s var(--ease) infinite alternate;
+}
+
+@keyframes thumb-wait {
+  to {
+    opacity: 0.15;
+  }
 }
 
 /* Timecode badge */

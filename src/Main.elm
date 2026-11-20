@@ -462,10 +462,7 @@ update msg model =
                     ( modelWithChannel
                     , Cmd.batch
                         [ saveCmd
-                        , Http.get
-                            { url = "/proxy/rss/" ++ Url.percentEncode channelId
-                            , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> InitialFeedFetched channelId channel)
-                            }
+                        , fetchFeed channelId (InitialFeedFetched channelId channel)
                         ]
                     )
 
@@ -660,10 +657,7 @@ update msg model =
                                 targets
                                     |> List.map
                                         (\c ->
-                                            Http.get
-                                                { url = "/proxy/rss/" ++ Url.percentEncode (Url.toString c.rss)
-                                                , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> DiscoverFeedFetched c.rss)
-                                                }
+                                            fetchFeed (Url.toString c.rss) (DiscoverFeedFetched c.rss)
                                         )
 
                             pendingUrls =
@@ -717,10 +711,7 @@ update msg model =
                             rssUrls
                                 |> List.map
                                     (\rss ->
-                                        Http.get
-                                            { url = "/proxy/rss/" ++ Url.percentEncode rss
-                                            , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> RefreshFeedFetched rss)
-                                            }
+                                        fetchFeed rss (RefreshFeedFetched rss)
                                     )
                     in
                     if List.isEmpty rssUrls then
@@ -806,10 +797,7 @@ update msg model =
             case model.channel of
                 Just ( rssUrl, _ ) ->
                     ( { model | channel = Just ( rssUrl, Loadable Nothing ) }
-                    , Http.get
-                        { url = "/proxy/rss/" ++ Url.percentEncode rss
-                        , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss Nothing)
-                        }
+                    , fetchFeed rss (FeedFetched rss Nothing)
                     )
 
                 Nothing ->
@@ -1020,10 +1008,7 @@ loadChannel rss episodeId model =
                             , search = Nothing
                             , episode = Nothing
                           }
-                        , Http.get
-                            { url = "/proxy/rss/" ++ Url.percentEncode rss
-                            , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss episodeId)
-                            }
+                        , fetchFeed rss (FeedFetched rss episodeId)
                         )
 
                     else
@@ -1041,10 +1026,7 @@ loadChannel rss episodeId model =
                         , search = Nothing
                         , episode = Nothing
                       }
-                    , Http.get
-                        { url = "/proxy/rss/" ++ Url.percentEncode rss
-                        , expect = Http.expectString (Result.mapError httpErrorToString >> Result.andThen (X.run feedDecoder) >> FeedFetched rss episodeId)
-                        }
+                    , fetchFeed rss (FeedFetched rss episodeId)
                     )
 
         ( Nothing, _ ) ->
@@ -1505,7 +1487,6 @@ viewThumbInner className maybeUrl =
                 , src ("/proxy/thumb/" ++ Url.percentEncode (Url.toString url))
                 , A.attribute "loading" "lazy"
                 , A.attribute "decoding" "async"
-                , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
                 ]
                 []
 
@@ -1547,7 +1528,6 @@ viewChannelThumbLayered maybeUrl =
                 , src thumbUrl
                 , A.attribute "loading" "lazy"
                 , A.attribute "decoding" "async"
-                , A.attribute "onerror" "this.parentElement.classList.add('thumb-error')"
                 ]
                 []
             ]
@@ -1797,6 +1777,83 @@ httpErrorToString error =
             "Data error: " ++ message
 
 
+type FeedFetchError
+    = Busy String
+    | Failed Http.Error
+
+
+feedResponse : Http.Response String -> Result FeedFetchError String
+feedResponse res =
+    case res of
+        Http.GoodStatus_ _ body ->
+            Ok body
+
+        Http.BadStatus_ meta body ->
+            if meta.statusCode == 503 then
+                -- Cloudflare also answers 503, with an HTML page, while telecast-web restarts. That retry helps too, but its page is no message.
+                if String.startsWith "Busy" body then
+                    Err (Busy body)
+
+                else
+                    Err (Busy "Server error: 503")
+
+            else
+                Err (Failed (Http.BadStatus meta.statusCode))
+
+        Http.BadUrl_ url ->
+            Err (Failed (Http.BadUrl url))
+
+        Http.Timeout_ ->
+            Err (Failed Http.Timeout)
+
+        Http.NetworkError_ ->
+            Err (Failed Http.NetworkError)
+
+
+fetchFeed : String -> (Result String Feed -> msg) -> Cmd msg
+fetchFeed rss toMsg =
+    let
+        get =
+            Http.task
+                { method = "GET"
+                , headers = []
+                , url = "/proxy/rss/" ++ Url.percentEncode rss
+                , body = Http.emptyBody
+
+                -- The proxy gives up on an upstream after 15 s, so 60 s means the proxy or the network hangs.
+                , timeout = Just 60000
+                , resolver = Http.stringResolver feedResponse
+                }
+    in
+    get
+        -- REVIEW: The proxy answers 503 Busy when its memory budget is full, so retry once after 3 s, then show the Busy body, which says
+        -- what is loading. Alternative: retry until it loads. A server that stays full would then take a request every 3 s per feed.
+        |> Task.onError
+            (\err ->
+                case err of
+                    Busy _ ->
+                        -- A refresh starts many feeds at once. A per-URL offset of 0 to 2 s keeps their retries from landing together.
+                        Process.sleep (toFloat (3000 + String.foldl (\c h -> modBy 2000 (h * 31 + Char.toCode c)) 0 rss))
+                            |> Task.andThen (\_ -> get)
+
+                    Failed _ ->
+                        Task.fail err
+            )
+        |> Task.attempt
+            (Result.mapError
+                (\err ->
+                    case err of
+                        Busy body ->
+                            body
+
+                        Failed e ->
+                            httpErrorToString e
+                )
+                >> Result.andThen (X.run feedDecoder)
+                >> toMsg
+            )
+
+
 
 -- HELPERS
 
@@ -1815,15 +1872,7 @@ searchCmd query =
             normalized =
                 normalizeFeedUrl query
         in
-        Http.get
-            { url = "/proxy/rss/" ++ Url.percentEncode normalized
-            , expect =
-                Http.expectString
-                    (Result.mapError httpErrorToString
-                        >> Result.andThen (X.run feedDecoder)
-                        >> SearchUrlFetched query
-                    )
-            }
+        fetchFeed normalized (SearchUrlFetched query)
 
     else
         Http.get

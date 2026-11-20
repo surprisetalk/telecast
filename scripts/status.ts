@@ -192,7 +192,11 @@ export function lastFinishAgeS(unit: string, stdout: string, nowMs: number): num
 // REVIEW: Seed and curate read their last run from systemd, not the journal. Alternative: the journal. pc's journal holds about
 // 2 days, so it loses a weekly run. Cost: a reboot forgets the last run, so seed fails until its next Monday run or a manual start.
 export function lastRunAgeS(unit: string, text: string, nowMs: number): number | null {
-  const p = Object.fromEntries(text.trim().split("\n").map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+  const lines = text.trim().split("\n");
+  if (lines.some((l) => !/^[A-Za-z]+=/.test(l))) {
+    throw new Error(`Expected KEY=value lines from systemctl show ${unit}, received ${JSON.stringify(text.slice(0, 200))}`);
+  }
+  const p = Object.fromEntries(lines.map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
   if (p.LoadState !== "loaded") {
     throw new Error(
       `Expected LoadState=loaded from systemctl show ${unit}, received ${

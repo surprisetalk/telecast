@@ -63,6 +63,38 @@
         flags: library,
       });
 
+      // Elm renames an onerror attribute to data-onerror, so thumb errors are caught here. Error and load events do not bubble, so
+      // the listeners capture. The thumb proxy answers 503 Busy under load, so a failed thumb waits 3 s and loads once more.
+      document.addEventListener(
+        "error",
+        (event) => {
+          const img = event.target;
+          if (!(img instanceof HTMLImageElement) || !img.src.includes("/proxy/thumb/")) return;
+          if (img.dataset.retried === img.src) {
+            img.dataset.thumb = "error";
+            console.error(`Expected thumb ${img.src} to load, received an error twice, 3 s apart.`);
+            return;
+          }
+          const src = img.src;
+          img.dataset.retried = src;
+          img.dataset.thumb = "waiting";
+          setTimeout(() => {
+            // Elm may have given this element another thumb in the meantime.
+            if (img.src === src) img.src = src;
+          }, 3000);
+        },
+        true,
+      );
+      document.addEventListener(
+        "load",
+        (event) => {
+          if (!(event.target instanceof HTMLImageElement)) return;
+          delete event.target.dataset.thumb;
+          delete event.target.dataset.retried;
+        },
+        true,
+      );
+
       app.ports.librarySaving.subscribe((library) => {
         try {
           localStorage.setItem(KEY, JSON.stringify(library));
