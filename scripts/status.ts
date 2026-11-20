@@ -23,7 +23,6 @@ export type Measurements = {
   search: Measured<number>;
   db: Measured<{ freshS: number | null; refreshed: number; failed: number; bytes: number }>;
   curate: Measured<number | null>;
-  seed: Measured<number | null>;
   fence: Measured<boolean>;
   cache: Measured<number>;
   disk: Measured<{ availBytes: number; sizeBytes: number }>;
@@ -49,7 +48,8 @@ export function grade(m: Measurements): { name: string; score: number }[] {
       score: db && db.refreshed > 0 ? (1 - db.failed / db.refreshed) / 0.8 : 0,
     },
     { name: "Curate succeeded in the past 2 days.", score: age(m.curate, 2 * DAY_S) },
-    { name: "Seed succeeded in the past 8 days.", score: age(m.seed, 8 * DAY_S) },
+    // REVIEW: No seed condition. systemd forgets seed's last run on a reboot, so the weekly job read red for up to a week after one.
+    // Alternative: seed writes its finish time to Postgres, and status reads it. Cost now: nothing reports a seed that stops running.
     { name: "The database is smaller than 50 GB.", score: db ? 50e9 / db.bytes : 0 },
     { name: "The feed proxy cannot reach pc's loopback.", score: "ok" in m.fence && m.fence.ok ? 1 : 0 },
     { name: "Refresh succeeded in the past 15 min.", score: age(m.refresh, 15 * 60) },
@@ -400,11 +400,10 @@ if (import.meta.main) {
       "DATABASE_URL is missing. Expected a postgres URL in .env. Received undefined. On pc, set DATABASE_URL=postgres:///telecast plus PGHOST, PGUSER, and PGPASSWORD in .env.",
     );
   }
-  const [search, stats, curate, seed, fence, cache, disk, refresh, deploy, busy, backup, memory] = await Promise.all([
+  const [search, stats, curate, fence, cache, disk, refresh, deploy, busy, backup, memory] = await Promise.all([
     measured(`fetching ${SEARCH_URL}`, TIMEOUT_MS, searchMs),
     measured("querying the channel table", DB_TIMEOUT_MS, () => dbStats(url)),
     measured("reading systemctl show telecast-curate.service", TIMEOUT_MS, () => lastRunS("telecast-curate.service")),
-    measured("reading systemctl show telecast-seed.service", TIMEOUT_MS, () => lastRunS("telecast-seed.service")),
     measured(`fetching ${FENCE_URL}`, FENCE_TIMEOUT_MS, fenceProbe),
     measured("summing cache/", TIMEOUT_MS, () => cacheBytes(CACHE_DIRS)),
     measured("running df -Pk cache", TIMEOUT_MS, diskFree),
@@ -418,7 +417,7 @@ if (import.meta.main) {
       async () => parseMemory(await run("systemctl", ["show", "telecast-web", "--property=MemoryPeak,MemoryMax"])),
     ),
   ]);
-  const m: Measurements = { search, db: stats, curate, seed, fence, cache, disk, refresh, deploy, busy, backup, memory };
+  const m: Measurements = { search, db: stats, curate, fence, cache, disk, refresh, deploy, busy, backup, memory };
   // snitch parses from the first line that starts with "{", so a reason line stays on one line.
   for (const [name, r] of Object.entries(m)) if ("error" in r) console.log(`${name}: ${r.error.replace(/\s+/g, " ")}`);
   if ("ok" in stats && stats.ok.freshS === null) console.log("db: no channel has a last_success_at");
@@ -440,10 +439,8 @@ if (import.meta.main) {
     console.log("backup: nightly.dump is missing from the repo root. Run: sudo systemctl start telecast-backup");
   }
   if ("ok" in refresh && refresh.ok === null) console.log("refresh: no successful run of telecast-refresh.service in the journal");
-  for (const [name, r] of [["curate", curate], ["seed", seed]] as const) {
-    if ("ok" in r && r.ok === null) {
-      console.log(`${name}: no run of telecast-${name}.service since pc booted. Run: sudo systemctl start telecast-${name}`);
-    }
+  if ("ok" in curate && curate.ok === null) {
+    console.log("curate: no run of telecast-curate.service since pc booted. Run: sudo systemctl start telecast-curate");
   }
   const cs = grade(m);
   console.log(

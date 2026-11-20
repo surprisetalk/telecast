@@ -21,7 +21,6 @@ const healthy: Measurements = {
   search: { ok: 400 },
   db: { ok: { freshS: 300, refreshed: 1000, failed: 100, bytes: 5e9 } },
   curate: { ok: 3600 },
-  seed: { ok: 3 * 86_400 },
   fence: { ok: true },
   cache: { ok: 1e9 },
   disk: { ok: { availBytes: 400e9, sizeBytes: 1e12 } },
@@ -34,7 +33,7 @@ const healthy: Measurements = {
 const scores = (m: Measurements) => grade(m).map((c) => Math.round(c.score * 100) / 100);
 
 Deno.test("grade: healthy production passes every condition", () => {
-  assertEquals(scores(healthy), [5, 3, 1.13, 48, 2.67, 10, 1, 3, 1, 5, 26, 2, 5, 4]);
+  assertEquals(scores(healthy), [5, 3, 1.13, 48, 10, 1, 3, 1, 5, 26, 2, 5, 4]);
 });
 
 Deno.test("grade: each failure mode scores below 1.0", () => {
@@ -43,7 +42,6 @@ Deno.test("grade: each failure mode scores below 1.0", () => {
       search: { ok: 4000 },
       db: { ok: { freshS: 8_488_777, refreshed: 10, failed: 5, bytes: 100e9 } },
       curate: { ok: null },
-      seed: { ok: 16 * 86_400 },
       fence: { ok: false },
       cache: { ok: 10e9 },
       disk: { ok: { availBytes: 50e9, sizeBytes: 1e12 } },
@@ -53,7 +51,7 @@ Deno.test("grade: each failure mode scores below 1.0", () => {
       backup: { ok: 52 * 3600 },
       memory: { ok: { peakBytes: 1.9e9, maxBytes: 2e9 } },
     }),
-    [0.5, 0, 0.63, 0, 0.5, 0.5, 0, 0.5, 0, 0.5, 0.5, 0.95, 0.5, 0.5],
+    [0.5, 0, 0.63, 0, 0.5, 0, 0.5, 0, 0.5, 0.5, 0.95, 0.5, 0.5],
   );
 });
 
@@ -63,7 +61,6 @@ Deno.test("grade: errors and empty data score 0", () => {
       search: { error: "HTTP 500" },
       db: { error: "connect ECONNREFUSED" },
       curate: { error: "HTTP 403" },
-      seed: { ok: null },
       fence: { error: "HTTP 500" },
       cache: { error: "EACCES" },
       disk: { error: "df exited 1" },
@@ -73,14 +70,13 @@ Deno.test("grade: errors and empty data score 0", () => {
       backup: { ok: null },
       memory: { error: "systemctl failed" },
     }),
-    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
   );
   assertEquals(scores({ ...healthy, db: { ok: { freshS: null, refreshed: 0, failed: 0, bytes: 5e9 } } }), [
     5,
     0,
     0,
     48,
-    2.67,
     10,
     1,
     3,
@@ -147,15 +143,19 @@ Deno.test("lastRunAgeS: reads the age of a unit's last run from systemctl show, 
   const now = 1_794_805_326_000;
   const show = (state: string, result: string, exit: string, load = "loaded") =>
     `LoadState=${load}\nActiveState=${state}\nResult=${result}\nExecMainExitTimestamp=${exit}\n`;
-  assertEquals(lastRunAgeS("telecast-seed.service", show("inactive", "success", "@1794805226"), now), 100);
-  assertEquals(lastRunAgeS("telecast-seed.service", show("inactive", "success", ""), now), null);
-  assertThrows(() => lastRunAgeS("telecast-seed.service", show("failed", "exit-code", "@1794805226"), now), Error, "Result=exit-code");
-  assertThrows(() => lastRunAgeS("telecast-seed.service", show("activating", "success", ""), now), Error, "in progress");
-  assertThrows(() => lastRunAgeS("telecast-seed.service", show("inactive", "success", "@1894805226"), now), Error, "clock");
-  assertThrows(() => lastRunAgeS("telecast-seed.service", show("inactive", "success", "", "not-found"), now), Error, "LoadState=not-found");
-  assertThrows(() => lastRunAgeS("telecast-seed.service", "", now), Error, "Expected");
+  assertEquals(lastRunAgeS("telecast-curate.service", show("inactive", "success", "@1794805226"), now), 100);
+  assertEquals(lastRunAgeS("telecast-curate.service", show("inactive", "success", ""), now), null);
+  assertThrows(() => lastRunAgeS("telecast-curate.service", show("failed", "exit-code", "@1794805226"), now), Error, "Result=exit-code");
+  assertThrows(() => lastRunAgeS("telecast-curate.service", show("activating", "success", ""), now), Error, "in progress");
+  assertThrows(() => lastRunAgeS("telecast-curate.service", show("inactive", "success", "@1894805226"), now), Error, "clock");
   assertThrows(
-    () => lastRunAgeS("telecast-seed.service", "garbage\n" + show("inactive", "success", "@1794805226"), now),
+    () => lastRunAgeS("telecast-curate.service", show("inactive", "success", "", "not-found"), now),
+    Error,
+    "LoadState=not-found",
+  );
+  assertThrows(() => lastRunAgeS("telecast-curate.service", "", now), Error, "Expected");
+  assertThrows(
+    () => lastRunAgeS("telecast-curate.service", "garbage\n" + show("inactive", "success", "@1794805226"), now),
     Error,
     "KEY=value",
   );
