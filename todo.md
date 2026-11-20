@@ -16,10 +16,12 @@
   1. Add `/episodes/` to `server.ts`, through the same memory budget and cache as `/proxy/rss/`, with a test in `server.test.ts`.
   2. In `tui/main.go`, read `/episodes/` and decode its JSON into the checked `{title, src}` record. Delete the XML structs, the charset
      reader, and their tests.
-- [ ] A visitor who meets a 503 Busy gets the feed or thumb a few seconds later, without a reload.
-  - Today `src/Main.elm` shows `Server error: 503` for a feed and leaves a broken thumb until reload.
-  1. Retry a `/proxy/rss/` answer of 503 once after 3 s. If it fails again, show the Busy body, which says what is loading.
-  2. On a thumb's `error`, retry its src once after 3 s, with CSS for the waiting state.
+- [ ] The pre-commit suite passes on pc under load.
+  - Fact (2026-11-20): at load average 30, the suite failed 2 runs of 4. One log was lost. In the other, `budget.test.ts` "16 parallel 30 MB
+    feeds staggered 5 ms apart" saw requests 8 and 9 answer 503, but the test expects only the youngest to.
+  - Cause to confirm: under load, the server does not see the requests in the order they leave 5 ms apart.
+  1. Write a test that runs the case under `nice` alongside a CPU burner, and check that it fails.
+  2. Order the arrivals by the upstream hit order, not by send time: send request i+1 only after the upstream logs hit i.
 
 ## Blocked on you
 
