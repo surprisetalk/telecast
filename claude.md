@@ -41,6 +41,7 @@ Telecasts is a podcast/video feed aggregator with:
 | `/search`               | `functions/search.ts`               | Full-text search via PostgreSQL `to_tsquery` |
 | `/proxy/rss/[[path]]`   | `functions/proxy/rss/[[path]].ts`   | RSS/Atom/RDF fetch, parse, cache             |
 | `/proxy/thumb/[[path]]` | `functions/proxy/thumb/[[path]].ts` | Image proxy: sharp resize to 256 px webp     |
+| `/episodes/[[path]]`    | `server.ts`                         | The feed's episodes as JSON, for the TUI      |
 
 ### Feed Formats
 

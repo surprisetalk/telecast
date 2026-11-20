@@ -71,7 +71,9 @@ async function reserve(slot: Slot, bytes: number): Promise<void> {
 // A reservation past the budget aborts the handler, and the answer is 503.
 export async function withSlot(
   factor: number,
-  handler: (deps: { fetcher: typeof fetch; reservePixels: (pixels: number) => Promise<void> }) => Promise<Response>,
+  handler: (
+    deps: { fetcher: typeof fetch; reservePixels: (pixels: number) => Promise<void>; holdAtLeast: (bytes: number) => Promise<void> },
+  ) => Promise<Response>,
 ): Promise<Response> {
   const slot: Slot = { held: 0, state: { kind: "running" } };
   const fetcher: typeof fetch = async (input, init) => {
@@ -93,7 +95,12 @@ export async function withSlot(
     return new Response(`Busy: ${why}. Retry in a few seconds.`, { status: 503 });
   };
   try {
-    const res = await handler({ fetcher, reservePixels: (pixels) => reserve(slot, pixels * BYTES_PER_PIXEL) });
+    const res = await handler({
+      fetcher,
+      reservePixels: (pixels) => reserve(slot, pixels * BYTES_PER_PIXEL),
+      // A cache miss already holds its body times the factor, and that covers one more parse after the first ends.
+      holdAtLeast: (bytes) => reserve(slot, Math.max(0, bytes - slot.held)),
+    });
     // An evicted request that finished before its next reserve keeps its answer and logs nothing.
     const state = slot.state;
     return state.kind === "refused" ? busy(state.why) : res;

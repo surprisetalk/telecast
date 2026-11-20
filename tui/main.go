@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,7 +13,6 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"golang.org/x/text/encoding/charmap"
 )
 
 const baseURL = "https://telecast.company"
@@ -30,47 +27,23 @@ type rawChannel struct {
 	RSS   string `json:"rss"`
 }
 
+// rss.ts on the server parsed these. A YouTube entry has no src, only a page link. src and link are https: rss.ts rewrites http to https
+// and drops other schemes, so an enclosure it drops looks like no enclosure.
+// REVIEW: Trust rss.ts's https rewrite, as the web app does. Alternative: play the http URL as the feed wrote it. It needs a field rss.ts
+// does not keep, and a host with no TLS is rare.
 type rawEpisode struct {
-	Titles []struct {
-		XMLName xml.Name
-		Text    string `xml:",chardata"`
-	} `xml:"title"`
-	Links []struct {
-		Rel  string `xml:"rel,attr"`
-		Href string `xml:"href,attr"` // Atom (YouTube)
-		Text string `xml:",chardata"` // RSS
-	} `xml:"link"`
-	Encl struct {
-		URL string `xml:"url,attr"`
-	} `xml:"enclosure"`
-}
-
-// Go matches "title" in any namespace, so <itunes:title> would overwrite <title>. Only RSS and Atom titles count.
-func (e rawEpisode) title() string {
-	for _, t := range e.Titles {
-		if t.XMLName.Space == "" || t.XMLName.Space == "http://www.w3.org/2005/Atom" {
-			return t.Text
-		}
-	}
-	return ""
+	Title string  `json:"title"`
+	Src   *string `json:"src"`
+	Link  *string `json:"link"`
 }
 
 // REVIEW: Play the enclosure URL, else the page link (mpv hands YouTube links to yt-dlp). Alternative: skip episodes without an enclosure. It hides every YouTube channel.
 func (e rawEpisode) src() string {
-	if u := strings.TrimSpace(e.Encl.URL); u != "" {
-		return u
+	if e.Src != nil {
+		return *e.Src
 	}
-	// Atom entries and RSS items may carry several <link>s (rel=replies, rel=self). Only the page link plays.
-	for _, l := range e.Links {
-		if l.Rel != "" && l.Rel != "alternate" {
-			continue
-		}
-		if u := strings.TrimSpace(l.Href); u != "" {
-			return u
-		}
-		if u := strings.TrimSpace(l.Text); u != "" {
-			return u
-		}
+	if e.Link != nil {
+		return *e.Link
 	}
 	return ""
 }
@@ -89,7 +62,7 @@ func cleanTitle(s string) (string, bool) {
 
 // REVIEW: An item that fails is dropped and counted under the list. Alternative: show it with the bad characters replaced. It hides which feeds are broken.
 func decodeEpisode(r rawEpisode) (episode, bool) {
-	t, ok := cleanTitle(r.title())
+	t, ok := cleanTitle(r.Title)
 	src := r.src()
 	return episode{t, src}, ok && isHTTP(src)
 }
@@ -107,15 +80,6 @@ func clean(s string) string {
 		}
 		return r
 	}, s)
-}
-
-// Go's XML decoder knows only UTF-8. Many RSS feeds declare ISO-8859-1; browsers read that label as windows-1252.
-func charsetReader(label string, in io.Reader) (io.Reader, error) {
-	switch strings.ToLower(label) {
-	case "iso-8859-1", "latin1", "windows-1252":
-		return charmap.Windows1252.NewDecoder().Reader(in), nil
-	}
-	return nil, fmt.Errorf("expected feed charset utf-8, iso-8859-1 or windows-1252, received %q", label)
 }
 
 type model struct {
@@ -187,22 +151,16 @@ func (m model) fetchChannels() tea.Msg {
 func (m model) fetchEpisodes(c channel) tea.Cmd {
 	return func() tea.Msg {
 		// Same encoding as Elm Url.percentEncode: ":" and "/" escaped, space as %20.
-		body, err := get(m.base + "/proxy/rss/" + strings.ReplaceAll(url.QueryEscape(c.RSS), "+", "%20"))
+		body, err := get(m.base + "/episodes/" + strings.ReplaceAll(url.QueryEscape(c.RSS), "+", "%20"))
 		if err != nil {
 			return episodesMsg{rss: c.RSS, err: err}
 		}
-		// Atom (YouTube) wraps items in <entry>, RSS in <item>. Decode both.
-		var feed struct {
-			Items   []rawEpisode `xml:"channel>item"`
-			Entries []rawEpisode `xml:"entry"`
-		}
-		dec := xml.NewDecoder(bytes.NewReader(body))
-		dec.CharsetReader = charsetReader
-		if err := dec.Decode(&feed); err != nil {
-			return episodesMsg{rss: c.RSS, err: fmt.Errorf("expected feed XML for %s, received %w", c.RSS, err)}
+		var raw []rawEpisode
+		if err := json.Unmarshal(body, &raw); err != nil {
+			return episodesMsg{rss: c.RSS, err: fmt.Errorf("expected a JSON array of episodes from /episodes/ for %s, received %w", c.RSS, err)}
 		}
 		msg := episodesMsg{rss: c.RSS}
-		for _, r := range append(feed.Items, feed.Entries...) {
+		for _, r := range raw {
 			if e, ok := decodeEpisode(r); ok {
 				msg.eps = append(msg.eps, e)
 			} else {

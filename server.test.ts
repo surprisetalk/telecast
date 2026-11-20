@@ -132,6 +132,41 @@ dbTest(
   },
 );
 
+dbTest(
+  "server: /episodes/ answers the feed's episodes as parsed by rss.ts, for RSS and RDF, and passes a proxy error through",
+  async () => {
+    const feeds: Record<string, string> = {
+      "/rss": `<rss><channel><title>T</title><link>https://t.example/</link>
+      <item><title>Ep 1</title><enclosure url="https://example.com/1.mp3"/></item>
+      <item><title>Ep 2</title><link>https://t.example/2</link></item></channel></rss>`,
+      "/rdf": `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/">
+      <channel><title>R</title><link>https://r.example/</link></channel>
+      <item><title>Item 1</title><link>https://r.example/1</link></item></rdf:RDF>`,
+      "/html": "<html></html>",
+    };
+    const upstream = Deno.serve({ hostname: "127.0.0.1", port: 0, onListen() {} }, (req) => new Response(feeds[new URL(req.url).pathname]));
+    const server = await boot(PG_ENV);
+    try {
+      const get = async (path: string) => {
+        const res = await fetch(`${server.base}/episodes/${encodeURIComponent(`http://127.0.0.1:${upstream.addr.port}${path}`)}`);
+        return { status: res.status, type: res.headers.get("content-type"), body: await res.text() };
+      };
+      const pick = (body: string) => JSON.parse(body).map((e: { title: string; src: string; link: string }) => [e.title, e.src, e.link]);
+      const rss = await get("/rss");
+      assertEquals([rss.status, rss.type], [200, "application/json"], rss.body);
+      assertEquals(pick(rss.body), [["Ep 1", "https://example.com/1.mp3", null], ["Ep 2", null, "https://t.example/2"]]);
+      const rdf = await get("/rdf");
+      assertEquals([rdf.status, pick(rdf.body)], [200, [["Item 1", null, "https://r.example/1"]]], rdf.body);
+      const html = await get("/html");
+      assertEquals(html.status, 400);
+      assertStringIncludes(html.body, "Not a valid feed");
+    } finally {
+      await server.stop();
+      await upstream.shutdown();
+    }
+  },
+);
+
 dbTest("server: /feeds.json streams the rss URLs as one sorted JSON array, distinct, in byte order", async () => {
   const server = await boot(PG_ENV);
   try {

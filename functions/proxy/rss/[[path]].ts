@@ -79,7 +79,8 @@ export async function handleRssProxy(
     return new Response(tooBig, { status: 500 });
   }
   const text = new TextDecoder().decode(bytes);
-  if (!/<(feed|rss|RDF)[\s>]/.test(text)) {
+  // RSS 1.0 roots carry a prefix: <rdf:RDF>.
+  if (!/<(feed|rss|RDF|rdf:RDF)[\s>]/.test(text)) {
     if (cachedText) return stale("missing <rss>, <feed>, or <RDF> root element");
     const snippet = text.slice(0, 200).replace(/\s+/g, " ").trim();
     return new Response(

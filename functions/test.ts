@@ -444,6 +444,13 @@ Deno.test("parseEpisodes: an <item> that holds only text keeps the episode_id th
   assertEquals(parseEpisodes(xml, "c").map((e) => e.episode_id), ["16jwoz", "16jwoz"]);
 });
 
+Deno.test("parseEpisodes: an Atom entry with several <link>s keeps its alternate link, as Blogger and WordPress write them", () => {
+  const xml = `<feed><title>t</title><link href="https://b.example/"/>
+    <entry><title>A</title><link rel="replies" href="https://b.example/a#comments"/><link rel="alternate" href="https://b.example/a"/></entry>
+    <entry><title>B</title><link href="https://b.example/b"/><link rel="self" href="https://b.example/feeds/b"/></entry></feed>`;
+  assertEquals(parseEpisodes(xml, "c").map((e) => e.link), ["https://b.example/a", "https://b.example/b"]);
+});
+
 Deno.test("parseEpisodes: RSS 2.0 podcast extracts all items", () => {
   const episodes = parseEpisodes(PODCAST_ITUNES_XML, "test-podcast");
   assertEquals(episodes.length, 2);

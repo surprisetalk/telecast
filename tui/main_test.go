@@ -47,8 +47,7 @@ func TestBrowseAndPlay(t *testing.T) {
 			w.Write([]byte(`[{"title":"One","rss":"https://one.test/a b.xml"},{"title":"Two","rss":"https://two.test/feed.xml"}]`))
 		default:
 			feedPath = r.URL.EscapedPath()
-			w.Write([]byte(`<rss><channel><item><title>Ep1</title><enclosure url="https://cdn.test/ep1.mp3"/></item>
-<item><title>Ep2</title><enclosure url="https://cdn.test/ep2.mp3"/></item></channel></rss>`))
+			w.Write([]byte(`[{"title":"Ep1","src":"https://cdn.test/ep1.mp3","link":null},{"title":"Ep2","src":"https://cdn.test/ep2.mp3","link":null}]`))
 		}
 	}))
 	defer site.Close()
@@ -76,7 +75,7 @@ func TestBrowseAndPlay(t *testing.T) {
 	if got := m.(model).err; got != nil {
 		t.Fatalf("expected no error, received %v", got)
 	}
-	if want := "/proxy/rss/https%3A%2F%2Ftwo.test%2Ffeed.xml"; feedPath != want {
+	if want := "/episodes/https%3A%2F%2Ftwo.test%2Ffeed.xml"; feedPath != want {
 		t.Fatalf("expected feed path %s, received %s", want, feedPath)
 	}
 	args, err := os.ReadFile(record)
@@ -112,23 +111,21 @@ func TestStaleFeed(t *testing.T) {
 
 // Raw feed data reaches the model only through the decoder. A bad title or src is counted, never shown or played.
 func TestDecodeEpisodes(t *testing.T) {
-	msg := feedFrom(t, `<?xml version="1.0" encoding="ISO-8859-1"?><rss xmlns:atom="http://www.w3.org/2005/Atom"><channel>
-<item><title>Caf`+"\xe9"+`</title><enclosure url="https://cdn.test/a.mp3"/></item>
-<item><title>page link</title><link>https://a.test/ep</link><atom:link rel="replies" href="https://a.test/comments"/></item>
-<item><title>option</title><enclosure url="--script=/tmp/x.lua"/></item>
-<item><title>file</title><enclosure url="file:///etc/passwd"/></item>
-<item><title>path</title><enclosure url="/etc/passwd"/></item>
-<item><title>ytdl</title><enclosure url="ytdl://x"/></item>
-<item><title>blank</title><enclosure url="  "/></item>
-<item><title>C1&#133;CSI</title><enclosure url="https://cdn.test/b.mp3"/></item>
-</channel></rss>`).(episodesMsg)
+	msg := feedFrom(t, `[
+{"title":"Café","src":"https://cdn.test/a.mp3","link":"https://a.test/a"},
+{"title":"page link","src":null,"link":"https://a.test/ep"},
+{"title":"option","src":"--script=/tmp/x.lua","link":null},
+{"title":"file","src":"file:///etc/passwd","link":null},
+{"title":"nohost","src":"http://:80/x","link":null},
+{"title":"none","src":null,"link":null},
+{"title":"C1\u0085CSI","src":"https://cdn.test/b.mp3","link":null}
+]`).(episodesMsg)
 	want := []episode{{"Café", "https://cdn.test/a.mp3"}, {"page link", "https://a.test/ep"}}
-	if msg.err != nil || !reflect.DeepEqual(msg.eps, want) || msg.bad != 6 {
-		t.Fatalf("expected episodes %v and 6 failures, received %+v", want, msg)
+	if msg.err != nil || !reflect.DeepEqual(msg.eps, want) || msg.bad != 5 {
+		t.Fatalf("expected episodes %v and 5 failures, received %+v", want, msg)
 	}
-	atom := feedFrom(t, `<feed><entry><title>V</title><link rel="alternate" href="https://youtube.com/watch?v=1"/><link rel="replies" href="https://y.test/c"/></entry></feed>`).(episodesMsg)
-	if want := []episode{{"V", "https://youtube.com/watch?v=1"}}; !reflect.DeepEqual(atom.eps, want) || atom.bad != 0 {
-		t.Fatalf("expected %v, received %+v", want, atom)
+	if bad := feedFrom(t, `{"error":"x"}`).(episodesMsg); bad.err == nil || !strings.Contains(bad.err.Error(), "JSON array of episodes") {
+		t.Fatalf("expected a JSON array error, received %+v", bad)
 	}
 }
 
@@ -203,18 +200,6 @@ func TestPlayErrorHasContext(t *testing.T) {
 	}
 }
 
-// "https://:80/x" has a Host but no hostname, and a link with both href and text must not glue them together.
-func TestDecodeRejectsEmptyHostnameAndGluedLinks(t *testing.T) {
-	msg := feedFrom(t, `<rss><channel>
-<item><title>nohost</title><enclosure url="http://:80/x"/></item>
-<item><title>glue</title><link href="https://a.test/1">https://b.test/2</link></item>
-</channel></rss>`).(episodesMsg)
-	want := []episode{{"glue", "https://a.test/1"}}
-	if !reflect.DeepEqual(msg.eps, want) || msg.bad != 1 {
-		t.Fatalf("expected %v and 1 failure, received %+v", want, msg)
-	}
-}
-
 // The failure count takes two lines. With it and an error showing, the list must still fit the terminal.
 func TestViewFitsWithFailureCountAndError(t *testing.T) {
 	var titles []string
@@ -236,15 +221,4 @@ func TestViewEmptyListSmallTerminal(t *testing.T) {
 	var tm tea.Model = model{}
 	tm, _ = tm.Update(tea.WindowSizeMsg{Width: 80, Height: 5})
 	tm.View()
-}
-
-func TestDecodeIgnoresNamespacedTitle(t *testing.T) {
-	msg := feedFrom(t, `<rss xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd"><channel>
-<item><title>Real</title><itunes:title>Other</itunes:title><enclosure url="https://c.test/a.mp3"/></item>
-<item><title>Kept</title><itunes:title></itunes:title><enclosure url="https://c.test/b.mp3"/></item>
-</channel></rss>`).(episodesMsg)
-	want := []episode{{"Real", "https://c.test/a.mp3"}, {"Kept", "https://c.test/b.mp3"}}
-	if !reflect.DeepEqual(msg.eps, want) || msg.bad != 0 {
-		t.Fatalf("expected %v, received %+v", want, msg)
-	}
 }

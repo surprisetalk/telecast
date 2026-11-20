@@ -41,6 +41,13 @@ const parser = new XMLParser({
   attributeNamePrefix: "@_",
 });
 
+// RSS 1.0 feeds have the root <rdf:RDF>, and the parser keeps the prefix in the tag name. The code below reads it as <RDF>.
+function parseXml(text: string): unknown {
+  const xml: unknown = parser.parse(text);
+  const rdf = get(xml, "rdf:RDF");
+  return rdf === undefined ? xml : { ...(xml as Record<string, unknown>), RDF: rdf };
+}
+
 // Follows tags through elements. An array or text on the path gives undefined, as `?.` did on the parser's any.
 const get = (node: unknown, ...path: string[]): unknown =>
   path.reduce<unknown>(
@@ -246,7 +253,7 @@ export function parseEpisodes(xmlText: string, channelId: string): Episode[] {
 }
 
 function episodes(xmlText: string, channelId: string): Episode[] {
-  const xml: unknown = parser.parse(xmlText);
+  const xml = parseXml(xmlText);
   const feed = get(xml, "feed");
 
   if (extractYoutubeChannelId(feed)) {
@@ -272,7 +279,8 @@ function episodes(xmlText: string, channelId: string): Episode[] {
   const items = list(get(feed, "entry") || get(xml, "rss", "channel", "item") || get(xml, "RDF", "item"));
   return items.slice(0, 50).map((item) => {
     const enclosure = get(item, "enclosure");
-    const link = get(item, "link");
+    // An Atom entry may carry several <link>s (rel=replies, rel=self). The page is the one with rel=alternate or no rel.
+    const link = list(get(item, "link")).find((l) => typeof l === "string" || [undefined, "alternate"].includes(get(l, "@_rel") as string));
     const size = str(get(enclosure, "@_length"));
     const season = get(item, "itunes:season");
     const number = get(item, "itunes:episode");
@@ -328,7 +336,7 @@ export function parse(xmlText: string, sourceUrl?: string): Channel {
 }
 
 function channel(xmlText: string, sourceUrl?: string): Channel {
-  const xml: unknown = parser.parse(xmlText);
+  const xml = parseXml(xmlText);
 
   const feed = get(xml, "feed");
   if (feed) {

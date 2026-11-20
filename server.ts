@@ -1,6 +1,7 @@
 import db from "postgres";
 import { serveDir, serveFile } from "@std/http/file-server";
 import { diskCache, sweep } from "./functions/_shared/cache.ts";
+import * as rss from "./functions/_shared/rss.ts";
 import { handleSearch } from "./functions/search.ts";
 import { handleRssProxy } from "./functions/proxy/rss/[[path]].ts";
 import { handleThumbProxy } from "./functions/proxy/thumb/[[path]].ts";
@@ -105,6 +106,29 @@ export default {
         FEED_FACTOR,
         ({ fetcher }) => handleRssProxy({ sql, cache: rssCache, fetcher }, { rssUrl: path.slice("/proxy/rss/".length) }),
       );
+    }
+    // The TUI reads this, so feeds parse once, in rss.ts, and not again in Go.
+    if (pathname.startsWith("/episodes/")) {
+      const rssUrl = path.slice("/episodes/".length);
+      return withSlot(FEED_FACTOR, async ({ fetcher, holdAtLeast }) => {
+        const feed = await handleRssProxy({ sql, cache: rssCache, fetcher }, { rssUrl });
+        if (!feed.ok) return feed;
+        const bytes = new Uint8Array(await feed.arrayBuffer());
+        // A cache hit fetches nothing, so it holds no reservation, and /proxy/rss/ does not parse on a hit.
+        await holdAtLeast(bytes.length * FEED_FACTOR);
+        const text = new TextDecoder().decode(bytes);
+        try {
+          // The proxy's stale flag says the upstream failed and this is the cached copy.
+          const stale = feed.headers.get("x-telecast-stale");
+          return Response.json(rss.parseEpisodes(text, rss.parse(text, rssUrl).channel_id), {
+            headers: stale ? { "x-telecast-stale": stale } : {},
+          });
+        } catch (e) {
+          const msg = `Expected the feed at ${rssUrl} to parse to episodes, received: ${e instanceof Error ? e.message : e}`;
+          console.error(`episodes: ${JSON.stringify(msg)}`);
+          return new Response(msg, { status: 500 });
+        }
+      });
     }
     if (pathname.startsWith("/proxy/thumb/")) {
       return withSlot(THUMB_FACTOR, ({ fetcher, reservePixels }) =>

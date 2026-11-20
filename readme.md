@@ -56,10 +56,10 @@ deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys script
 # refresh feeds: fetch episodes, infer tags, recompute quality (every 5 min on pc: telecast-refresh.timer)
 deno run --env-file=.env --allow-net --allow-env --allow-read --allow-sys scripts/refresh.ts
 
-# seed new channels from HN, GitHub, archive.org, and scripts/lectures.json (Mondays 05:00 UTC on pc: telecast-seed.timer)
+# seed new channels from HN, GitHub, archive.org, and scripts/lectures.json (Mondays 09:30 UTC on pc, after YouTube's nightly block: telecast-seed.timer)
 deno run --env-file=.env --allow-net --allow-env --allow-read scripts/seed.ts --dry-run
 
-# curate: sync tag:featured to scripts/curation.json priority minus blocked (06:00 UTC on pc: telecast-curate.timer)
+# curate: sync tag:featured to scripts/curation.json priority minus blocked (06:30 UTC on pc: telecast-curate.timer)
 deno run --env-file=.env --allow-net --allow-env --allow-read scripts/curate.ts --dry-run
 
 # production status: site, feed freshness, refresh/curate/seed runs, deploy match, Busy answers, backup, DB size; exits 1 when any score is below 1.0
@@ -72,7 +72,8 @@ seeder.
 
 ## tui
 
-browse `tag:featured` and play with `mpv` (must be on PATH)
+browse `tag:featured` and play with `mpv` (must be on PATH). It reads `/episodes/{url}`, the first 50 episodes of the feed as JSON, parsed by
+`functions/_shared/rss.ts`.
 
 ```bash
 cd tui && go run .
