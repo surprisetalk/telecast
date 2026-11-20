@@ -8,6 +8,7 @@ import {
   fenceHolds,
   grade,
   lastFinishAgeS,
+  lastRunAgeS,
   Measurements,
   parseDf,
   parseLsRemote,
@@ -140,6 +141,19 @@ Deno.test("lastFinishAgeS: reads the age of a unit's last finished job from jour
     Error,
     "clock",
   );
+});
+
+Deno.test("lastRunAgeS: reads the age of a unit's last run from systemctl show, and a failed or running run throws", () => {
+  const now = 1_794_805_326_000;
+  const show = (state: string, result: string, exit: string, load = "loaded") =>
+    `LoadState=${load}\nActiveState=${state}\nResult=${result}\nExecMainExitTimestamp=${exit}\n`;
+  assertEquals(lastRunAgeS("telecast-seed.service", show("inactive", "success", "@1794805226"), now), 100);
+  assertEquals(lastRunAgeS("telecast-seed.service", show("inactive", "success", ""), now), null);
+  assertThrows(() => lastRunAgeS("telecast-seed.service", show("failed", "exit-code", "@1794805226"), now), Error, "Result=exit-code");
+  assertThrows(() => lastRunAgeS("telecast-seed.service", show("activating", "success", ""), now), Error, "in progress");
+  assertThrows(() => lastRunAgeS("telecast-seed.service", show("inactive", "success", "@1894805226"), now), Error, "clock");
+  assertThrows(() => lastRunAgeS("telecast-seed.service", show("inactive", "success", "", "not-found"), now), Error, "LoadState=not-found");
+  assertThrows(() => lastRunAgeS("telecast-seed.service", "", now), Error, "Expected");
 });
 
 Deno.test("deploy: a web process older than the HEAD reflog serves no known commit", () => {

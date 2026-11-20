@@ -187,7 +187,38 @@ export function lastFinishAgeS(unit: string, stdout: string, nowMs: number): num
   return ageS;
 }
 
-// The journal outlives a reboot, so a weekly job keeps its last success across one.
+// systemctl show UNIT -p LoadState,ActiveState,Result,ExecMainExitTimestamp --timestamp=unix. systemd keeps only the last run,
+// and a new run resets Result and ExecMainExitTimestamp, so a run in progress hides the run before it.
+// REVIEW: Seed and curate read their last run from systemd, not the journal. Alternative: the journal. pc's journal holds about
+// 2 days, so it loses a weekly run. Cost: a reboot forgets the last run, so seed fails until its next Monday run or a manual start.
+export function lastRunAgeS(unit: string, text: string, nowMs: number): number | null {
+  const p = Object.fromEntries(text.trim().split("\n").map((l) => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)]));
+  if (p.LoadState !== "loaded") {
+    throw new Error(
+      `Expected LoadState=loaded from systemctl show ${unit}, received ${
+        JSON.stringify(text.slice(0, 200))
+      }. Check that ${unit} exists on this host.`,
+    );
+  }
+  if (p.ActiveState !== "inactive" && p.ActiveState !== "failed") {
+    throw new Error(
+      `Expected ${unit} to be idle, received ActiveState=${p.ActiveState}. A run is in progress, and systemd keeps no result of the run before it. Check again after it ends.`,
+    );
+  }
+  if (p.Result !== "success") {
+    throw new Error(`Expected Result=success for the last ${unit} run, received Result=${p.Result}. Run: journalctl -u ${unit}`);
+  }
+  if (p.ExecMainExitTimestamp === "") return null;
+  const m = /^@(\d+)$/.exec(p.ExecMainExitTimestamp ?? "");
+  if (!m) throw new Error(`Expected ExecMainExitTimestamp=@<unix seconds> for ${unit}, received ${JSON.stringify(text.slice(0, 200))}`);
+  const ageS = nowMs / 1000 - Number(m[1]);
+  if (ageS < -SKEW_S) {
+    throw new Error(`Expected the last ${unit} run in the past, received unix ${m[1]}. Check this host's clock.`);
+  }
+  return ageS;
+}
+
+// Refresh runs every 5 min, so the status check often meets a run in progress, and the journal holds its last success.
 async function lastSuccessS(unit: string): Promise<number | null> {
   const out = await new Deno.Command("journalctl", {
     args: [`--unit=${unit}`, `MESSAGE_ID=${JOB_DONE_ID}`, "JOB_RESULT=done", "--lines=1", "--output=json", "--no-pager"],
@@ -259,6 +290,11 @@ async function run(cmd: string, args: string[]): Promise<string> {
     );
   }
   return new TextDecoder().decode(out.stdout);
+}
+
+async function lastRunS(unit: string): Promise<number | null> {
+  const props = "--property=LoadState,ActiveState,Result,ExecMainExitTimestamp";
+  return lastRunAgeS(unit, await run("systemctl", ["show", unit, props, "--timestamp=unix"]), Date.now());
 }
 
 async function deployProbe() {
@@ -365,8 +401,8 @@ if (import.meta.main) {
   const [search, stats, curate, seed, fence, cache, disk, refresh, deploy, busy, backup, memory] = await Promise.all([
     measured(`fetching ${SEARCH_URL}`, TIMEOUT_MS, searchMs),
     measured("querying the channel table", DB_TIMEOUT_MS, () => dbStats(url)),
-    measured("reading the journal for telecast-curate.service", TIMEOUT_MS, () => lastSuccessS("telecast-curate.service")),
-    measured("reading the journal for telecast-seed.service", TIMEOUT_MS, () => lastSuccessS("telecast-seed.service")),
+    measured("reading systemctl show telecast-curate.service", TIMEOUT_MS, () => lastRunS("telecast-curate.service")),
+    measured("reading systemctl show telecast-seed.service", TIMEOUT_MS, () => lastRunS("telecast-seed.service")),
     measured(`fetching ${FENCE_URL}`, FENCE_TIMEOUT_MS, fenceProbe),
     measured("summing cache/", TIMEOUT_MS, () => cacheBytes(CACHE_DIRS)),
     measured("running df -Pk cache", TIMEOUT_MS, diskFree),
@@ -403,7 +439,9 @@ if (import.meta.main) {
   }
   if ("ok" in refresh && refresh.ok === null) console.log("refresh: no successful run of telecast-refresh.service in the journal");
   for (const [name, r] of [["curate", curate], ["seed", seed]] as const) {
-    if ("ok" in r && r.ok === null) console.log(`${name}: no successful run of telecast-${name}.service in the journal`);
+    if ("ok" in r && r.ok === null) {
+      console.log(`${name}: no run of telecast-${name}.service since pc booted. Run: sudo systemctl start telecast-${name}`);
+    }
   }
   const cs = grade(m);
   console.log(
