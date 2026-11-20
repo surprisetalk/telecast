@@ -189,8 +189,6 @@ export function lastFinishAgeS(unit: string, stdout: string, nowMs: number): num
 
 // systemctl show UNIT -p LoadState,ActiveState,Result,ExecMainExitTimestamp --timestamp=unix. systemd keeps only the last run,
 // and a new run resets Result and ExecMainExitTimestamp, so a run in progress hides the run before it.
-// REVIEW: Seed and curate read their last run from systemd, not the journal. Alternative: the journal. pc's journal holds about
-// 2 days, so it loses a weekly run. Cost: a reboot forgets the last run, so seed fails until its next Monday run or a manual start.
 export function lastRunAgeS(unit: string, text: string, nowMs: number): number | null {
   const lines = text.trim().split("\n");
   if (lines.some((l) => !/^[A-Za-z]+=/.test(l))) {
