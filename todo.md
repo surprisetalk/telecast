@@ -3,11 +3,6 @@
   - Ruled out (2026-11-20): `PleIAs/YouTube-Commons` (CC-BY 4.0, but transcript parquet, over seed's cap); Common Pile `youtube_filtered`
     (its 2,000 curated channels live in a SQLite DB, not a published file); `jwywoo/Korean-Youtuber-Channel-ID-Handles` (MIT, Korean only).
   1. Search again for a channel-ID dataset under an open license (CC0, CC-BY, ODbL), and swap `GITHUB_URL` when one turns up.
-- [ ] You subscribe to an RSS 1.0 feed (root `<rdf:RDF>`) in the web app and see its episodes.
-  - Today the proxy passes it through, and `feedDecoder` in `src/Main.elm` knows only `<rss>` and `<feed>`, so the app shows a decode error.
-  1. Add a failing elm-test with an `<rdf:RDF>` feed: one `<channel>`, then `<item>`s with `<title>` and `<link>`, as siblings of the
-     channel.
-  2. Add the RDF branch to `feedDecoder`.
 - [ ] The pre-commit suite passes on pc under load.
   - Fact (2026-11-20): at load average 30, the suite failed 2 runs of 4. One log was lost. In the other, `budget.test.ts` "16 parallel 30 MB
     feeds staggered 5 ms apart" saw requests 8 and 9 answer 503, but the test expects only the youngest to.

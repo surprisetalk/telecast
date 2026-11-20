@@ -515,6 +515,26 @@ feedDecoders =
                 X.run Main.feedDecoder podcastXml
                     |> Result.map (\f -> ( f.channel.title, Dict.size f.episodes ))
                     |> Expect.equal (Ok ( "Test Podcast", 2 ))
+        , test "feedDecoder parses an RSS 1.0 feed, whose items are siblings of its channel" <|
+            \_ ->
+                X.run Main.feedDecoder
+                    """<?xml version="1.0"?>
+<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/">
+  <channel rdf:about="https://r.example/"><title>R</title><link>https://r.example/</link><description>d</description></channel>
+  <item rdf:about="https://r.example/1"><title>Item 1</title><link>https://r.example/1</link></item>
+  <item rdf:about="https://r.example/2"><title>Item 2</title><link>https://r.example/2</link></item>
+</rdf:RDF>"""
+                    |> Result.map (\f -> ( f.channel.title, f.episodes |> Dict.values |> List.map (.src >> Url.toString) |> List.sort ))
+                    |> Expect.equal (Ok ( "R", [ "https://r.example/1", "https://r.example/2" ] ))
+        , test "feedDecoder fails an RSS 1.0 feed with a bad item, and does not show it as an empty RSS 2.0 feed" <|
+            \_ ->
+                X.run Main.feedDecoder
+                    """<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/">
+  <channel><title>R</title><link>https://r.example/</link></channel>
+  <item><title>No link</title></item>
+</rdf:RDF>"""
+                    |> Result.toMaybe
+                    |> Expect.equal Nothing
         , test "podcast feed: episode durations parsed" <|
             \_ ->
                 X.run Main.feedDecoder podcastXml

@@ -2303,11 +2303,22 @@ urlDecoder_ str =
 
 feedDecoder : X.Decoder Feed
 feedDecoder =
-    X.oneOf
-        [ youtubeFormatDecoder
-        , rssDecoder "lastBuildDate" podcastItemDecoder
-        , rssDecoder "pubDate" standardItemDecoder
-        ]
+    -- RSS 1.0 (<rdf:RDF>) puts its items beside the channel.
+    -- REVIEW: A feed with root <item>s decodes as RSS 1.0 only, so a bad item is an error. Alternative: one more oneOf branch. Its failure
+    -- falls through to RSS 2.0, which finds no items and shows an empty feed.
+    X.path [ "item" ] (X.list (X.succeed ()))
+        |> X.andThen
+            (\rootItems ->
+                if List.isEmpty rootItems then
+                    X.oneOf
+                        [ youtubeFormatDecoder
+                        , rssDecoder "lastBuildDate" [ "channel", "item" ] podcastItemDecoder
+                        , rssDecoder "pubDate" [ "channel", "item" ] standardItemDecoder
+                        ]
+
+                else
+                    rssDecoder "dc:date" [ "item" ] standardItemDecoder
+            )
 
 
 youtubeFormatDecoder : X.Decoder Feed
@@ -2375,8 +2386,8 @@ youtubeEntryDecoder =
         )
 
 
-rssDecoder : String -> X.Decoder Episode -> X.Decoder Feed
-rssDecoder dateKey itemDecoder =
+rssDecoder : String -> List String -> X.Decoder Episode -> X.Decoder Feed
+rssDecoder dateKey itemPath itemDecoder =
     X.map3 (\channel live items -> Feed channel (makeEpisodeDict (mergeLive (List.filterMap identity live) items)))
         (X.succeed mkChannel
             |> X.requiredPath [ "channel", "title" ] (X.single X.string)
@@ -2386,7 +2397,7 @@ rssDecoder dateKey itemDecoder =
             |> X.optionalPath [ "channel", dateKey ] (X.single X.string) ""
         )
         (X.path [ "channel", "podcast:liveItem" ] (X.list liveItemDecoder))
-        (X.path [ "channel", "item" ] (X.list itemDecoder))
+        (X.path itemPath (X.list itemDecoder))
 
 
 liveStatusDecoder : D.Decoder LiveStatus
