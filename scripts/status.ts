@@ -25,7 +25,6 @@ export type Measurements = {
   curate: Measured<number | null>;
   fence: Measured<boolean>;
   cache: Measured<number>;
-  disk: Measured<{ availBytes: number; sizeBytes: number }>;
   refresh: Measured<number | null>;
   deploy: Measured<{ head: string; origin: string; startS: number; reflogS: number }>;
   busy: Measured<number>;
@@ -35,7 +34,6 @@ export type Measurements = {
 
 export function grade(m: Measurements): { name: string; score: number }[] {
   const db = "ok" in m.db ? m.db.ok : null;
-  const disk = "ok" in m.disk ? m.disk.ok : null;
   const age = (r: Measured<number | null>, limitS: number) => "ok" in r && r.ok !== null ? limitS / Math.max(r.ok, 1) : 0;
   // REVIEW: At most 10 Busy answers per hour. Alternative: 0. One crawler burst would then fail every hour. 10 is a guess; tune it from real counts.
   const BUSY_LIMIT = 10;
@@ -68,7 +66,7 @@ export function grade(m: Measurements): { name: string; score: number }[] {
       score: "ok" in m.memory ? 0.9 * m.memory.ok.maxBytes / Math.max(m.memory.ok.peakBytes, 1) : 0,
     },
     { name: "cache/ holds less than 5 GB.", score: "ok" in m.cache ? 5e9 / Math.max(m.cache.ok, 1) : 0 },
-    { name: "The disk that holds cache/ has 10% free.", score: disk ? disk.availBytes / disk.sizeBytes / 0.1 : 0 },
+    // NOTE: The status check grades no free disk space. Alternative: grade it here. It turns red in every project on the host when one disk fills.
   ];
   for (const c of cs) {
     if (!Number.isFinite(c.score)) {
@@ -148,25 +146,6 @@ export async function cacheBytes(dirs: string[]): Promise<number> {
     }
   }
   return total;
-}
-
-// POSIX df -P: a header line, then "filesystem 1024-blocks used available capacity mountpoint". The file system name can hold
-// spaces (macOS "map auto_home"), so the columns count back from the capacity field, the one that ends in %.
-export function parseDf(text: string): { availBytes: number; sizeBytes: number } {
-  const fields = text.trim().split("\n")[1]?.trim().split(/\s+/) ?? [];
-  const cap = fields.findIndex((f) => /^\d+%$/.test(f));
-  const sizeBytes = Number(fields[cap - 3]) * 1024, availBytes = Number(fields[cap - 1]) * 1024;
-  if (cap < 3 || !(sizeBytes > 0) || !(availBytes >= 0)) {
-    throw new Error(`Expected df -Pk cache to print a size and free space in KiB, received: ${text.slice(0, 200)}`);
-  }
-  return { availBytes, sizeBytes };
-}
-
-async function diskFree(): Promise<{ availBytes: number; sizeBytes: number }> {
-  const out = await new Deno.Command("df", { args: ["-Pk", "cache"], signal: AbortSignal.timeout(TIMEOUT_MS) }).output();
-  const text = new TextDecoder().decode(out.stdout) + new TextDecoder().decode(out.stderr);
-  if (!out.success) throw new Error(`Expected df -Pk cache to exit 0, received exit ${out.code}: ${text.slice(0, 200)}`);
-  return parseDf(text);
 }
 
 export function lastFinishAgeS(unit: string, stdout: string, nowMs: number): number | null {
@@ -400,13 +379,12 @@ if (import.meta.main) {
       "DATABASE_URL is missing. Expected a postgres URL in .env. Received undefined. On pc, set DATABASE_URL=postgres:///telecast plus PGHOST, PGUSER, and PGPASSWORD in .env.",
     );
   }
-  const [search, stats, curate, fence, cache, disk, refresh, deploy, busy, backup, memory] = await Promise.all([
+  const [search, stats, curate, fence, cache, refresh, deploy, busy, backup, memory] = await Promise.all([
     measured(`fetching ${SEARCH_URL}`, TIMEOUT_MS, searchMs),
     measured("querying the channel table", DB_TIMEOUT_MS, () => dbStats(url)),
     measured("reading systemctl show telecast-curate.service", TIMEOUT_MS, () => lastRunS("telecast-curate.service")),
     measured(`fetching ${FENCE_URL}`, FENCE_TIMEOUT_MS, fenceProbe),
     measured("summing cache/", TIMEOUT_MS, () => cacheBytes(CACHE_DIRS)),
-    measured("running df -Pk cache", TIMEOUT_MS, diskFree),
     measured("reading the journal for telecast-refresh.service", TIMEOUT_MS, () => lastSuccessS("telecast-refresh.service")),
     measured("comparing HEAD, origin/main, and telecast-web's start", TIMEOUT_MS, deployProbe),
     measured("reading the telecast-web journal for the past hour", TIMEOUT_MS, async () => countBusy(await webJournal("-1h", "now"))),
@@ -417,7 +395,7 @@ if (import.meta.main) {
       async () => parseMemory(await run("systemctl", ["show", "telecast-web", "--property=MemoryPeak,MemoryMax"])),
     ),
   ]);
-  const m: Measurements = { search, db: stats, curate, fence, cache, disk, refresh, deploy, busy, backup, memory };
+  const m: Measurements = { search, db: stats, curate, fence, cache, refresh, deploy, busy, backup, memory };
   // snitch parses from the first line that starts with "{", so a reason line stays on one line.
   for (const [name, r] of Object.entries(m)) if ("error" in r) console.log(`${name}: ${r.error.replace(/\s+/g, " ")}`);
   if ("ok" in stats && stats.ok.freshS === null) console.log("db: no channel has a last_success_at");
